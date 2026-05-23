@@ -2,10 +2,12 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
+import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
 import { isLoopbackAddress } from "../../auth/http-auth"
 
 interface RouteDeps {
   authManager: AuthManager
+  starGuardJwtHandler?: StarGuardJwtHandler
 }
 
 const LoginSchema = z.object({
@@ -66,6 +68,32 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     const status = deps.authManager.getStatus()
     reply.type("text/html").send(getLoginHtml(status.username))
+  })
+
+  app.get("/auth/starguard", async (request, reply) => {
+    const handler = deps.starGuardJwtHandler
+    if (!handler?.isEnabled()) {
+      reply.code(503).type("text/plain").send("StarGuard JWT not configured (set AUTH_SECRET)")
+      return
+    }
+
+    const query = request.query as { token?: string; starguard_token?: string }
+    const token = (query.starguard_token ?? query.token)?.trim()
+    if (!token) {
+      reply.redirect("/login")
+      return
+    }
+
+    const payload = await handler.verify(token)
+    if (!payload) {
+      reply.code(401).type("text/plain").send("Invalid or expired StarGuard session")
+      return
+    }
+
+    const username = payload.email ?? payload.walletAddress ?? deps.authManager.getStatus().username
+    const session = deps.authManager.createSession(username)
+    deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
+    reply.redirect("/")
   })
 
   app.get("/auth/token", async (request, reply) => {

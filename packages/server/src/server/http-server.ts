@@ -209,14 +209,14 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: deps.logger.child({ component: "background-processes" }),
   })
 
-  registerAuthRoutes(app, { authManager: deps.authManager })
+  registerAuthRoutes(app, { authManager: deps.authManager, starGuardJwtHandler: deps.starGuardJwtHandler })
 
   app.addHook("preHandler", async (request, reply) => {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
-    const publicPagePaths = new Set(["/login"])
+    const publicPagePaths = new Set(["/login", "/auth/starguard"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
     }
