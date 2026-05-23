@@ -23,6 +23,10 @@ const PasswordSchema = z.object({
   password: z.string().min(8),
 })
 
+const QuickLoginSchema = z.object({
+  ticket: z.string().min(1),
+})
+
 const LOGIN_TEMPLATE_URL = new URL("./auth-pages/login.html", import.meta.url)
 const TOKEN_TEMPLATE_URL = new URL("./auth-pages/token.html", import.meta.url)
 
@@ -35,13 +39,16 @@ function readTemplate(url: URL, cache: string | null): string {
   return content
 }
 
-function getLoginHtml(defaultUsername: string): string {
+function getLoginHtml(defaultUsername: string, autoLoginTicket?: string): string {
   if (!cachedLoginTemplate) {
     cachedLoginTemplate = readTemplate(LOGIN_TEMPLATE_URL, null)
   }
 
   const escapedUsername = escapeHtml(defaultUsername)
-  return cachedLoginTemplate.replace(/\{\{DEFAULT_USERNAME\}\}/g, escapedUsername)
+  const escapedTicket = escapeHtml(autoLoginTicket ?? "")
+  return cachedLoginTemplate
+    .replace(/\{\{DEFAULT_USERNAME\}\}/g, escapedUsername)
+    .replace(/\{\{AUTO_LOGIN_TICKET\}\}/g, escapedTicket)
 }
 
 function getTokenHtml(): string {
@@ -61,13 +68,23 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
+    const query = request.query as { starguard_token?: string; token?: string }
+    const ssoToken = (query.starguard_token ?? query.token)?.trim()
+    if (ssoToken) {
+      reply.redirect(`/auth/starguard?starguard_token=${encodeURIComponent(ssoToken)}`)
+      return
+    }
+
     // Avoid caching the login page (helps with bfcache/back behavior).
     reply.header("Cache-Control", "no-store")
     reply.header("Pragma", "no-cache")
     reply.header("Expires", "0")
 
     const status = deps.authManager.getStatus()
-    reply.type("text/html").send(getLoginHtml(status.username))
+    const autoLoginTicket = deps.authManager.isDevAutoLoginEnabled()
+      ? deps.authManager.issueAutoLoginTicket() ?? undefined
+      : undefined
+    reply.type("text/html").send(getLoginHtml(status.username, autoLoginTicket))
   })
 
   app.get("/auth/starguard", async (request, reply) => {
@@ -133,6 +150,25 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const session = deps.authManager.createSession(body.username)
+    deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
+    reply.send({ ok: true })
+  })
+
+  app.post("/api/auth/quick-login", async (request, reply) => {
+    if (!deps.authManager.isDevAutoLoginEnabled()) {
+      reply.code(404).send({ error: "Not found" })
+      return
+    }
+
+    const body = QuickLoginSchema.parse(request.body ?? {})
+    const ok = deps.authManager.consumeAutoLoginTicket(body.ticket)
+    if (!ok) {
+      reply.code(401).send({ error: "Invalid or expired login ticket" })
+      return
+    }
+
+    const username = deps.authManager.getStatus().username
+    const session = deps.authManager.createSession(username)
     deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })

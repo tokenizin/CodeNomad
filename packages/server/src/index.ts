@@ -66,6 +66,7 @@ interface CliOptions {
   authCookieName: string
   generateToken: boolean
   dangerouslySkipAuth: boolean
+  devAutoLogin: boolean
   upgrade?: string | boolean
 }
 
@@ -128,6 +129,14 @@ function parseCliOptions(argv: string[]): CliOptions {
         .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
+    .addOption(
+      new Option(
+        "--dev-auto-login",
+        "Issue one-time login tickets on /login for automatic session bootstrap (dev/tunnel only).",
+      )
+        .env("CODENOMAD_DEV_AUTO_LOGIN")
+        .default(false),
+    )
     .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
 
   program.parse(argv, { from: "user" })
@@ -158,6 +167,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: string
     generateToken?: boolean
     dangerouslySkipAuth?: boolean
+    devAutoLogin?: boolean
     upgrade?: string | boolean
   }>()
 
@@ -207,6 +217,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: parsed.authCookieName,
     generateToken: Boolean(parsed.generateToken),
     dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    devAutoLogin: parseBooleanEnv(String(parsed.devAutoLogin ?? false)),
     upgrade,
   }
 }
@@ -295,6 +306,7 @@ async function main() {
       password: options.authPassword,
       cookieName: options.authCookieName,
       generateToken: options.generateToken,
+      devAutoLogin: options.devAutoLogin,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
     logger.child({ component: "auth" }),

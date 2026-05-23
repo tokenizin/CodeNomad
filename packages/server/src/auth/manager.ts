@@ -15,6 +15,8 @@ export interface AuthManagerInit {
   username: string
   password?: string
   generateToken: boolean
+  /** Issue one-time login tickets on /login for automatic session bootstrap (dev/tunnel). */
+  devAutoLogin?: boolean
   dangerouslySkipAuth?: boolean
   cookieName?: string
 }
@@ -22,17 +24,21 @@ export interface AuthManagerInit {
 export class AuthManager {
   private readonly authStore: AuthStore | null
   private readonly tokenManager: TokenManager | null
+  private readonly autoLoginTicketManager: TokenManager | null
   private readonly sessionManager = new SessionManager()
   private readonly cookieName: string
   private readonly authEnabled: boolean
+  private readonly devAutoLogin: boolean
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
     this.cookieName = sanitizeCookieName(init.cookieName)
     this.authEnabled = !Boolean(init.dangerouslySkipAuth)
+    this.devAutoLogin = Boolean(init.devAutoLogin)
 
     if (!this.authEnabled) {
       this.authStore = null
       this.tokenManager = null
+      this.autoLoginTicketManager = null
       return
     }
 
@@ -47,10 +53,25 @@ export class AuthManager {
     })
 
     this.tokenManager = init.generateToken ? new TokenManager(60_000) : null
+    this.autoLoginTicketManager = this.devAutoLogin ? new TokenManager(60_000) : null
   }
 
   isAuthEnabled(): boolean {
     return this.authEnabled
+  }
+
+  isDevAutoLoginEnabled(): boolean {
+    return this.authEnabled && this.devAutoLogin
+  }
+
+  issueAutoLoginTicket(): string | null {
+    if (!this.autoLoginTicketManager) return null
+    return this.autoLoginTicketManager.generate()
+  }
+
+  consumeAutoLoginTicket(token: string): boolean {
+    if (!this.autoLoginTicketManager) return false
+    return this.autoLoginTicketManager.consume(token)
   }
 
   getCookieName(): string {
