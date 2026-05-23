@@ -20,6 +20,7 @@ import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
+import { StarGuardJwtHandler } from "./auth/starguard-jwt"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
@@ -299,6 +300,14 @@ async function main() {
     logger.child({ component: "auth" }),
   )
 
+  const starGuardJwtHandler = new StarGuardJwtHandler(
+    process.env.AUTH_SECRET,
+    logger.child({ component: "starguard-jwt" }),
+  )
+  if (starGuardJwtHandler.isEnabled()) {
+    logger.info("StarGuard JWT authentication enabled (AUTH_SECRET)")
+  }
+
   if (options.generateToken && !options.dangerouslySkipAuth) {
     const token = authManager.issueBootstrapToken()
     if (token) {
@@ -439,6 +448,7 @@ async function main() {
         sidecarManager,
         previewManager,
         authManager,
+        starGuardJwtHandler,
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,
@@ -466,6 +476,7 @@ async function main() {
         sidecarManager,
         previewManager,
         authManager,
+        starGuardJwtHandler,
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,

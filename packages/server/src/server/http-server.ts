@@ -34,6 +34,7 @@ import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
+import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
@@ -61,6 +62,7 @@ interface HttpServerDeps {
   sidecarManager: SideCarManager
   previewManager: PreviewManager
   authManager: AuthManager
+  starGuardJwtHandler?: StarGuardJwtHandler
   clientConnectionManager: ClientConnectionManager
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
@@ -88,6 +90,19 @@ export function createHttpServer(deps: HttpServerDeps) {
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
+
+  async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
+    const handler = deps.starGuardJwtHandler
+    if (!handler?.isEnabled()) return false
+    const authHeader = Array.isArray(request.headers.authorization)
+      ? request.headers.authorization[0]
+      : request.headers.authorization
+    if (!authHeader?.startsWith("Bearer ")) return false
+    const token = authHeader.slice("Bearer ".length).trim()
+    if (!token) return false
+    const payload = await handler.verify(token)
+    return payload !== null
+  }
 
   const sseClients = new Set<() => void>()
   const registerSseClient = (cleanup: () => void) => {
@@ -196,7 +211,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
-  app.addHook("preHandler", (request, reply, done) => {
+  app.addHook("preHandler", async (request, reply) => {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
@@ -212,7 +227,6 @@ export function createHttpServer(deps: HttpServerDeps) {
       deps.authManager.isLoopbackRequest(request)
 
     if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete) {
-      done()
       return
     }
 
@@ -220,6 +234,11 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
+      // Allow StarGuard JWT (Authorization: Bearer <token>).
+      if (await checkStarGuardJwt(request)) {
+        return
+      }
+
       // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
       const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
       if (pluginMatch) {
@@ -230,7 +249,6 @@ export function createHttpServer(deps: HttpServerDeps) {
           : request.headers.authorization
 
         if (expected && provided && provided === expected) {
-          done()
           return
         }
       }
@@ -243,8 +261,6 @@ export function createHttpServer(deps: HttpServerDeps) {
       reply.redirect("/login")
       return
     }
-
-    done()
   })
 
   app.get("/", async (request, reply) => {

@@ -97,6 +97,21 @@ You can configure the server using flags or environment variables:
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true` |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
 
+### Shared JWT Bridge (StarGuard)
+
+CodeNomad can accept JWTS issued by **StarGuard** (the Tokenizin web portal) as an alternative authentication method. When enabled, any request with `Authorization: Bearer <token>` using a valid StarGuard JWT is allowed through — no CodeNomad session cookie required.
+
+To enable, set the same `AUTH_SECRET` environment variable that StarGuard uses:
+
+```sh
+export AUTH_SECRET=<same UUID as StarGuard's .env>
+codenomad --launch
+```
+
+The server logs `StarGuard JWT authentication enabled (AUTH_SECRET)` on startup if the variable is set.
+
+StarGuard's JWT payload includes `userId`, `walletAddress`, `role`, and optional `email`. The bridge verifies the HS256 signature and `exp` claim via the `jose` library. Invalid, expired, or wrong-secret tokens are rejected with a 401 response.
+
 ### Dev Releases (Advanced)
 
 If you want the latest bleeding-edge builds (published as GitHub pre-releases), use the dev package:
@@ -109,6 +124,7 @@ These environment variables control how CodeNomad checks for dev updates:
 
 | Env Variable | Description |
 |-------------|-------------|
+| `AUTH_SECRET` | Shared HS256 secret for validating StarGuard JWTs. Same value as StarGuard's `.env`. Optional — no JWT bridge when unset. |
 | `CODENOMAD_UPDATE_CHANNEL` | Update channel (use `dev` to enable dev build update checks) |
 | `CODENOMAD_GITHUB_REPO` | GitHub repo used for dev release checks (default `NeuralNomadsAI/CodeNomad`) |
 
