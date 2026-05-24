@@ -1,4 +1,5 @@
 import { execSync } from "child_process"
+import { createHash } from "node:crypto"
 import * as fs from "fs"
 import * as path from "path"
 import type { FastifyInstance } from "fastify"
@@ -801,7 +802,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 
     // Accept the WebSocket upgrade
     const key = request.headers["sec-websocket-key"] || ""
-    const accept = require("crypto").createHash("sha1")
+    const accept = createHash("sha1")
       .update(key + "258EAFA5-E914-47DA-95CA-5AB5-4BDC3B1B1E07")
       .digest("base64")
 

@@ -46,6 +46,7 @@ import type {
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { appendStarGuardTokenToUrl, getStarGuardBearerToken } from "./starguard-auth"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -145,6 +146,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
+  const bearer = getStarGuardBearerToken()
+  if (bearer && !headers["Authorization"] && !headers["authorization"]) {
+    headers["Authorization"] = `Bearer ${bearer}`
+  }
+
   try {
     const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
@@ -174,6 +180,11 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase()
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
+
+  const bearer = getStarGuardBearerToken()
+  if (bearer && !headers["Authorization"] && !headers["authorization"]) {
+    headers["Authorization"] = `Bearer ${bearer}`
+  }
 
   const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
@@ -565,6 +576,7 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   const url = new URL(EVENTS_URL, typeof window !== "undefined" ? window.location.origin : "http://localhost")
   url.searchParams.set("clientId", identity.clientId)
   url.searchParams.set("connectionId", identity.connectionId)
+  appendStarGuardTokenToUrl(url)
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }

@@ -85,7 +85,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const forwardedFor = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
     const visitorIp = forwardedFor || request.socket.remoteAddress
     if (!isLoopbackAddress(visitorIp)) {
-      reply.redirect("https://starguard.vercel.app")
+      const starguardBase = (process.env.STARGUARD_PUBLIC_URL ?? "https://starguard.vercel.app").replace(/\/$/, "")
+      reply.redirect(`${starguardBase}/?codenomad=signin`)
       return
     }
 
@@ -119,7 +120,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const username = payload.email ?? payload.walletAddress ?? deps.authManager.getStatus().username
     const session = deps.authManager.createSession(username)
     deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
-    reply.redirect("/")
+    // Pass JWT to UI via hash (not logged server-side); session cookie covers SSE when valid.
+    reply.redirect(`/#starguard_token=${encodeURIComponent(token)}`)
   })
 
   app.get("/auth/token", async (request, reply) => {
@@ -230,6 +232,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
 }
 
 function isSecureRequest(request: any) {
+  const forwarded = request.headers?.["x-forwarded-proto"]
+  if (typeof forwarded === "string" && forwarded.split(",")[0]?.trim().toLowerCase() === "https") {
+    return true
+  }
   if (request.protocol === "https") {
     return true
   }

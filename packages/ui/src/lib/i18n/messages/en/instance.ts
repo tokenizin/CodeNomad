@@ -3,6 +3,8 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "New instance",
   "instanceTabs.remote.title": "Remote connect",
   "instanceTabs.remote.ariaLabel": "Remote connect",
+  "instanceTabs.starguardBack.title": "Back to StarGuard",
+  "instanceTabs.starguardBack.ariaLabel": "Back to StarGuard portal",
 
   "instanceInfo.title": "Instance Information",
   "instanceInfo.labels.folder": "Folder",

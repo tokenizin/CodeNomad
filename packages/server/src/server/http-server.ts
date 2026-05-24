@@ -85,6 +85,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify(
     ({
       logger: false,
+      trustProxy: true,
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
@@ -95,11 +96,20 @@ export function createHttpServer(deps: HttpServerDeps) {
   async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
     const handler = deps.starGuardJwtHandler
     if (!handler?.isEnabled()) return false
+
+    let token: string | null = null
     const authHeader = Array.isArray(request.headers.authorization)
       ? request.headers.authorization[0]
       : request.headers.authorization
-    if (!authHeader?.startsWith("Bearer ")) return false
-    const token = authHeader.slice("Bearer ".length).trim()
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.slice("Bearer ".length).trim()
+    }
+
+    if (!token) {
+      const query = request.query as { token?: string; starguard_token?: string } | undefined
+      token = query?.starguard_token?.trim() || query?.token?.trim() || null
+    }
+
     if (!token) return false
     const payload = await handler.verify(token)
     return payload !== null

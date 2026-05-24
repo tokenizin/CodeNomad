@@ -15,6 +15,7 @@ import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
+import StarGuardBackLink from "./starguard-back-link"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
@@ -158,6 +159,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 />
               </div>
             </Show>
+            <StarGuardBackLink />
+
              <button
                class="new-tab-button"
                onClick={() => openSettings("appearance")}
