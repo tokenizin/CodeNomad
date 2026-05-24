@@ -11,6 +11,18 @@ import {
   endVoiceSession,
   getRealtimeSession,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
+import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
+import {
+  createApprovalRequest,
+  waitForApprovalDecision,
+  resolveApproval,
+  submitApprovalDecision,
+  fetchPendingApprovals,
+  getPendingApprovals,
+} from "../../plugins/tokidapp/orchestrator/approval-queue"
+import { rollbackToPreviousCommit } from "../../plugins/tokidapp/orchestrator/rollback"
+import { apiPost, apiGet, apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
+import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -246,30 +258,17 @@ async function gitCommitPush(commitMsg: string, send: (msg: string) => void): Pr
 async function rollbackDeploy(send: (msg: string) => void): Promise<string> {
   send(JSON.stringify({ type: "stream", delta: "Rolling back to previous commit..." }))
 
-  try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-
-    // Get the previous commit hash
-    const prevHash = execSync("git rev-parse HEAD~1", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    const prevMsg = execSync(`git log --oneline -1 ${prevHash}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-
-    // Hard revert to previous commit
-    execSync(`git reset --hard ${prevHash}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
-    execSync(`git push origin ${branch} --force`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000 })
-
-    send(JSON.stringify({ type: "stream", delta: "Rollback pushed. Triggering deploy..." }))
-
-    const deployResult = await triggerVercelDeploy(send)
-
-    return [
-      `⏪ **Rolled back to:** ${prevHash.slice(0, 7)}`,
-      `Previous commit: ${prevMsg}`,
-      "",
-      deployResult,
-    ].join("\n")
-  } catch (err) {
-    return `Rollback error: ${(err as Error).message}`
+  const result = await rollbackToPreviousCommit(true)
+  if (!result.success) {
+    return `Rollback error: ${result.error}`
   }
+
+  return [
+    `⏪ **Rolled back to:** ${result.previousHash}`,
+    `Previous commit: ${result.previousMsg}`,
+    "",
+    "Redeploy triggered.",
+  ].join("\n")
 }
 
 async function triggerVercelDeploy(send: (msg: string) => void): Promise<string> {
@@ -678,6 +677,93 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       return { error: "token required" }
     }
   })
+
+  // ── Orchestrator Routes ────────────────────────────────────
+
+  app.post("/api/tokidapp/orchestrator", async (request, reply) => {
+    try {
+      const { sessionId, voiceMode = true } = (request.body || {}) as Record<string, unknown>
+
+      const res = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode })
+
+      if (!res.ok) {
+        reply.code(res.status)
+        return { error: "Failed to create orchestrator session" }
+      }
+
+      const orchestrator = await res.json()
+      return orchestrator
+    } catch (error) {
+      reply.code(500)
+      return { error: (error as Error).message }
+    }
+  })
+
+  app.get("/api/tokidapp/orchestrator/:id", async (request, reply) => {
+    try {
+      const { id } = request.params as Record<string, string>
+      const res = await apiGet(`/api/tokidapp/orchestrator/${id}`)
+      if (!res.ok) {
+        reply.code(res.status)
+        return { error: "Not found" }
+      }
+      return await res.json()
+    } catch (error) {
+      reply.code(500)
+      return { error: (error as Error).message }
+    }
+  })
+
+  // ── Approval Routes ────────────────────────────────────────
+
+  app.get("/api/tokidapp/approvals", async (request, reply) => {
+    try {
+      const query = request.query as Record<string, string>
+      const params = new URLSearchParams()
+      if (query.status) params.set("status", query.status)
+      if (query.orchestratorId) params.set("orchestratorId", query.orchestratorId)
+      if (query.assignedTo) params.set("assignedTo", query.assignedTo)
+
+      const res = await apiGet("/api/tokidapp/approvals", Object.fromEntries(params))
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      reply.code(500)
+      return { error: "Failed to fetch approvals" }
+    }
+  })
+
+  app.post("/api/tokidapp/approvals/:id/approve", async (request, reply) => {
+    try {
+      const { id } = request.params as Record<string, string>
+      const { comment } = (request.body || {}) as Record<string, string>
+      const success = await submitApprovalDecision(id, "approve", comment)
+      if (!success) {
+        reply.code(409)
+        return { error: "Could not approve" }
+      }
+      return { approved: id }
+    } catch (error) {
+      reply.code(500)
+      return { error: (error as Error).message }
+    }
+  })
+
+  app.post("/api/tokidapp/approvals/:id/reject", async (request, reply) => {
+    try {
+      const { id } = request.params as Record<string, string>
+      const { comment } = (request.body || {}) as Record<string, string>
+      const success = await submitApprovalDecision(id, "reject", comment)
+      if (!success) {
+        reply.code(409)
+        return { error: "Could not reject" }
+      }
+      return { rejected: id }
+    } catch (error) {
+      reply.code(500)
+      return { error: (error as Error).message }
+    }
+  })
 }
 
 // ── WebSocket Upgrade Handler ────────────────────────────────
@@ -728,11 +814,25 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 
     activeSockets.set(sessionId, socketRef)
 
-    // Send welcome
+    // Send welcome — auto-greet with orchestrator mode
     socketRef.send(JSON.stringify({
-      type: "message",
-      content: "TokiDAPP Concierge connected. I can investigate code, generate features, run tests, deploy to Vercel, spawn agents (OpenCode/OpenCoder/OpenAgent), schedule tasks, and assign work to users.",
+      type: "orchestrator_greeting",
+      sessionId,
+      voiceMode: REALTIME_ENABLED,
+      content: "TokiDAPP Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
     }))
+
+    // Auto-initiate voice greeting if Realtime is enabled
+    if (REALTIME_ENABLED) {
+      const greetingText = "Hello, I am your StarCARD orchestrator. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
+      socketRef.send(JSON.stringify({
+        type: "stream",
+        delta: greetingText,
+      }))
+    }
+
+    // Track orchestrator sessions per socket
+    const orchestratorSessions = new Map<string, string>() // socket -> orchestratorId
 
     // Handle incoming data (simple line-delimited JSON)
     let buffer = ""
@@ -784,6 +884,215 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
             continue
           }
 
+          if (msg.type === "orchestrate" && msg.intent) {
+            // Start orchestrator session + DAG execution
+            ;(async () => {
+              const intent = msg.intent as string
+              const context = (msg.context as Record<string, unknown>) || {}
+
+              // Create orchestrator session via StarGuard
+              try {
+                const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: REALTIME_ENABLED })
+
+                if (!orchRes.ok) {
+                  socketRef.send(JSON.stringify({ type: "error", content: "Failed to create orchestrator session" }))
+                  return
+                }
+
+                const orchestrator = await orchRes.json()
+                const orchestratorId = orchestrator.id
+                orchestratorSessions.set(sessionId, orchestratorId)
+
+                socketRef.send(JSON.stringify({ type: "orchestrator_state", orchestratorId, status: "created", voiceMode: REALTIME_ENABLED }))
+
+                // Build DAG from intent
+                const { nodes, phases } = buildLifecycleDAG(
+                  (context.intentType as string) || "QUERY_INFO",
+                  intent,
+                  (context.entities as Record<string, string>) || {},
+                )
+
+                const dag: DAGDefinition = {
+                  id: `dag_${Date.now()}`,
+                  nodes,
+                  createdAt: new Date().toISOString(),
+                }
+
+                socketRef.send(JSON.stringify({
+                  type: "message",
+                  content: `Analyzing: ${phases.join(" → ")}`,
+                }))
+
+                // Notify each node as it starts
+                const callbacks: ExecutionCallbacks = {
+                  onNodeStart: (node: DAGNode) => {
+                    socketRef.send(JSON.stringify({
+                      type: "dag_node_status",
+                      nodeId: node.title,
+                      nodeName: node.title,
+                      status: "RUNNING",
+                      progress: 0,
+                    }))
+                  },
+                  onNodeComplete: (node: DAGNode) => {
+                    socketRef.send(JSON.stringify({
+                      type: "dag_node_status",
+                      nodeId: node.title,
+                      nodeName: node.title,
+                      status: "COMPLETED",
+                      progress: 100,
+                      output: node.toolOutput,
+                    }))
+                  },
+                  onNodeFail: (node: DAGNode, error: string) => {
+                    socketRef.send(JSON.stringify({
+                      type: "dag_node_status",
+                      nodeId: node.title,
+                      nodeName: node.title,
+                      status: "FAILED",
+                      progress: 0,
+                      error,
+                    }))
+                  },
+                  onApprovalRequired: async (node: DAGNode, ctx: Record<string, unknown>) => {
+                    // Create approval request
+                    const approvalId = await createApprovalRequest(
+                      orchestratorId,
+                      node,
+                      ctx,
+                      (node.metadata?.assignedToUserId as string) || undefined,
+                    )
+
+                    socketRef.send(JSON.stringify({
+                      type: "approval_request",
+                      approvalId,
+                      title: node.title,
+                      context: ctx,
+                      nodeId: node.title,
+                    }))
+
+                    // Wait for decision (polls StarGuard)
+                    const decision = await waitForApprovalDecision(approvalId)
+
+                    socketRef.send(JSON.stringify({
+                      type: "approval_update",
+                      approvalId,
+                      status: decision === "approved" ? "APPROVED" : "REJECTED",
+                    }))
+
+                    return decision
+                  },
+                  onBroadcast: (channel: string, event: string, data: unknown) => {
+                    socketRef.send(JSON.stringify({
+                      type: "broadcast",
+                      channel,
+                      event,
+                      data,
+                    }))
+                  },
+                  onLog: (eventType: string, severity: string, title: string, metadata?: Record<string, unknown>) => {
+                    socketRef.send(JSON.stringify({
+                      type: "event_log",
+                      eventType,
+                      severity,
+                      summary: title,
+                      metadata,
+                      timestamp: new Date().toISOString(),
+                    }))
+
+                    // Also persist to StarGuard
+                    apiPost("/api/tokidapp/events", {
+                      orchestratorId,
+                      eventType,
+                      severity,
+                      title,
+                      metadata,
+                    }).catch(() => {})
+                  },
+                }
+
+                // Execute the DAG
+                const result = await executeDAG(orchestratorId, dag, callbacks)
+
+                socketRef.send(JSON.stringify({
+                  type: "orchestrator_state",
+                  orchestratorId,
+                  status: result.success ? "completed" : "failed",
+                  result: {
+                    success: result.success,
+                    completedNodes: result.completedNodes,
+                    failedNodes: result.failedNodes,
+                    skippedNodes: result.skippedNodes,
+                    totalNodes: result.totalNodes,
+                    durationMs: result.durationMs,
+                  },
+                }))
+
+                if (result.success) {
+                  socketRef.send(JSON.stringify({
+                    type: "message",
+                    content: `✅ Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s.`,
+                  }))
+                } else {
+                  socketRef.send(JSON.stringify({
+                    type: "error",
+                    content: `Orchestration finished with errors: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}`,
+                  }))
+                }
+              } catch (e) {
+                socketRef.send(JSON.stringify({
+                  type: "error",
+                  content: `Orchestration error: ${(e as Error).message}`,
+                }))
+              }
+            })()
+            continue
+          }
+
+          if (msg.type === "approval_decision" && msg.approvalId) {
+            // Resolve an approval decision in real-time
+            ;(async () => {
+              const decision = msg.decision as string
+              if (decision === "approve" || decision === "reject") {
+                resolveApproval(
+                  msg.approvalId as string,
+                  decision === "approve" ? "approved" : "rejected",
+                )
+
+                // Also persist to StarGuard
+                await submitApprovalDecision(
+                  msg.approvalId as string,
+                  decision as "approve" | "reject",
+                  msg.comment as string | undefined,
+                )
+
+                socketRef.send(JSON.stringify({
+                  type: "approval_update",
+                  approvalId: msg.approvalId,
+                  status: decision === "approve" ? "APPROVED" : "REJECTED",
+                }))
+              }
+            })()
+            continue
+          }
+
+          if (msg.type === "dag_query") {
+            // Return current DAG state
+            ;(async () => {
+              const orchestratorId = orchestratorSessions.get(sessionId)
+              if (orchestratorId) {
+                try {
+                  const res = await apiGet(`/api/tokidapp/orchestrator/${orchestratorId}`)
+                  if (res.ok) {
+                    const data = await res.json()
+                    socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
+                  }
+                } catch { /* ignore */ }
+              }
+            })()
+            continue
+          }
+
           if (msg.type === "message" && msg.content) {
             routeMessage(
               msg.content,
@@ -812,12 +1121,14 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 
     socket.on("close", () => {
       activeSockets.delete(sessionId)
+      orchestratorSessions.delete(sessionId)
       clearAudioBuffer(sessionId)
       endVoiceSession(sessionId)
     })
 
     socket.on("error", () => {
       activeSockets.delete(sessionId)
+      orchestratorSessions.delete(sessionId)
       clearAudioBuffer(sessionId)
       endVoiceSession(sessionId)
     })

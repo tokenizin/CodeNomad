@@ -118,8 +118,17 @@ export default defineConfig({
       "@": resolve(__dirname, "./src"),
     },
   },
+  // virtua/solid ships raw JSX with @jsxImportSource solid-js; esbuild needs automatic runtime.
+  esbuild: {
+    jsx: "automatic",
+    jsxImportSource: "solid-js",
+  },
   optimizeDeps: {
     exclude: ["lucide-solid"],
+    esbuildOptions: {
+      jsx: "automatic",
+      jsxImportSource: "solid-js",
+    },
   },
   ssr: {
     noExternal: ["lucide-solid"],
