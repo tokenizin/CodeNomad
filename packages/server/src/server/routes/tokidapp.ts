@@ -9,6 +9,7 @@ const VERCEL_DEPLOY_HOOK_URL = process.env.VERCEL_DEPLOY_HOOK_URL
 const VERCEL_TOKEN = process.env.VERCEL_TOKEN
 const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
 const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
 
 interface TokiDAPPWebSocket {
   send: (msg: string) => void
@@ -250,6 +251,200 @@ async function checkDeployStatus(): Promise<string> {
   }
 }
 
+// ── Agent Spawning ────────────────────────────────────────────
+
+async function spawnAgent(prompt: string, send: (msg: string) => void): Promise<string> {
+  send(JSON.stringify({ type: "stream", delta: "Spawning agent workspace..." }))
+
+  if (!STARGUARD_BASE) return "StarGuard API not configured."
+
+  // Parse agent type from prompt
+  const agentType = prompt.includes("opencoder")
+    ? "OPENCODER"
+    : prompt.includes("openagent")
+      ? "OPENAGENT"
+      : prompt.includes("buildmate")
+        ? "BUILDMATE"
+        : "OPENCODE"
+
+  const match = prompt.match(/in\s+([\w/-]+)/i)
+  const workspacePath = match ? path.join(WORKSPACE_ROOT, match[1]) : WORKSPACE_ROOT
+
+  try {
+    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/agents/spawn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: `codenomad_${Date.now()}`,
+        workspacePath,
+        agentType,
+        workspaceName: `Agent-${agentType}-${Date.now()}`,
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      return `Failed to spawn agent: ${err}`
+    }
+
+    const workspace = await res.json()
+    return [
+      `✅ **${agentType} agent spawned!**`,
+      ``,
+      `Workspace ID: \`${workspace.codenomadWorkspaceId || workspace.id}\``,
+      workspace.codenomadProxyUrl ? `Proxy URL: ${workspace.codenomadProxyUrl}` : "",
+      `Status: ${workspace.status}`,
+      ``,
+      `The agent is ready. Assign tasks to it using "assign task to <agent>".`,
+    ].filter(Boolean).join("\n")
+  } catch (err) {
+    return `Error spawning agent: ${(err as Error).message}`
+  }
+}
+
+// ── Task Scheduling ───────────────────────────────────────────
+
+async function scheduleTask(prompt: string, send: (msg: string) => void): Promise<string> {
+  send(JSON.stringify({ type: "stream", delta: "Creating scheduled task..." }))
+
+  if (!STARGUARD_BASE) return "StarGuard API not configured."
+
+  // Parse task info from prompt
+  const titleMatch = prompt.match(/(?:task|to)\s+[""]?([^""]+?)[""]?\s*(?:for|at|with|$)/i)
+  const title = titleMatch ? titleMatch[1].trim() : prompt.replace(/schedule|create|add|task/gi, "").trim()
+  const priorityMatch = prompt.match(/priority\s*[:\s]*(\d+)/i)
+  const priority = priorityMatch ? parseInt(priorityMatch[1]) : 0
+
+  // Parse scheduled time
+  let scheduledFor: string | undefined
+  const timeMatch = prompt.match(/(?:at|for)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/i) || prompt.match(/(?:at|for)\s+(\d{4}-\d{2}-\d{2})/i)
+  if (timeMatch) scheduledFor = timeMatch[1]
+
+  // Parse agent type
+  const agentType = prompt.includes("opencoder")
+    ? "OPENCODER" : prompt.includes("openagent")
+      ? "OPENAGENT" : "OPENCODE"
+
+  // Parse assignee
+  const assignMatch = prompt.match(/(?:assign|to|for)\s+user\s+(\S+@\S+)/i)
+  const assignedToUserId = assignMatch ? assignMatch[1] : undefined
+
+  try {
+    const body: Record<string, unknown> = {
+      sessionId: `codenomad_${Date.now()}`,
+      title,
+      agentType,
+      priority,
+    }
+    if (scheduledFor) body.scheduledFor = scheduledFor
+    if (assignedToUserId) body.assignedToUserId = assignedToUserId
+
+    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      return `Failed to schedule task: ${err}`
+    }
+
+    const task = await res.json()
+    return [
+      `✅ **Task scheduled!**`,
+      ``,
+      `Title: ${task.title}`,
+      `ID: \`${task.id}\``,
+      `Agent: ${task.agentType}`,
+      `Priority: ${task.priority}`,
+      scheduledFor ? `Scheduled: ${scheduledFor}` : "Status: PENDING (no schedule set)",
+      assignedToUserId ? `Assigned to: ${assignedToUserId}` : "",
+      ``,
+      `Use "list tasks" to see all scheduled tasks.`,
+    ].filter(Boolean).join("\n")
+  } catch (err) {
+    return `Error scheduling task: ${(err as Error).message}`
+  }
+}
+
+async function listTasks(filter: string, send: (msg: string) => void): Promise<string> {
+  send(JSON.stringify({ type: "stream", delta: "Fetching tasks..." }))
+
+  if (!STARGUARD_BASE) return "StarGuard API not configured."
+
+  try {
+    const params = new URLSearchParams()
+    if (filter.includes("pending")) params.set("status", "PENDING")
+    else if (filter.includes("assigned")) params.set("status", "ASSIGNED")
+    else if (filter.includes("in progress")) params.set("status", "IN_PROGRESS")
+    else if (filter.includes("complete")) params.set("status", "COMPLETED")
+
+    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks?${params}`, {
+      headers: { "Content-Type": "application/json" },
+    })
+
+    if (!res.ok) return "Could not fetch tasks."
+    const tasks: any[] = await res.json()
+
+    if (tasks.length === 0) return "No tasks found."
+
+    return [
+      `📋 **${tasks.length} task(s)**`,
+      "",
+      ...tasks.map((t, i) =>
+        `**${i + 1}. ${t.title}**` +
+        `\n   Status: ${t.status} | Agent: ${t.agentType} | Priority: ${t.priority}` +
+        (t.assignedToUserId ? `\n   Assigned to: \`${t.assignedToUserId}\`` : "") +
+        (t.scheduledFor ? `\n   Scheduled: ${new Date(t.scheduledFor).toISOString()}` : "") +
+        (t.resultSummary ? `\n   Result: ${t.resultSummary}` : ""),
+      ),
+    ].join("\n")
+  } catch (err) {
+    return `Error listing tasks: ${(err as Error).message}`
+  }
+}
+
+async function assignTask(prompt: string, send: (msg: string) => void): Promise<string> {
+  send(JSON.stringify({ type: "stream", delta: "Assigning task..." }))
+
+  if (!STARGUARD_BASE) return "StarGuard API not configured."
+
+  // Parse task ID and assignee
+  const taskIdMatch = prompt.match(/task\s+(\S+)/i)
+  const userMatch = prompt.match(/(?:to|user)\s+(\S+@\S+|\S+)/i)
+
+  if (!taskIdMatch) return "Please specify a task ID. Example: assign task abc123 to user@example.com"
+  if (!userMatch) return "Please specify a user. Example: assign task abc123 to user@example.com"
+
+  const taskId = taskIdMatch[1]
+  const assignee = userMatch[1]
+
+  try {
+    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks/${taskId}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignedToUserId: assignee }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      return `Failed to assign task: ${err}`
+    }
+
+    const task = await res.json()
+    return [
+      `✅ **Task assigned!**`,
+      ``,
+      `Task: ${task.title}`,
+      `Assigned to: ${assignee}`,
+      `Status: ${task.status}`,
+    ].join("\n")
+  } catch (err) {
+    return `Error assigning task: ${(err as Error).message}`
+  }
+}
+
 // ── Message Router ────────────────────────────────────────────
 
 async function routeMessage(content: string, send: (msg: string) => void): Promise<void> {
@@ -279,6 +474,22 @@ async function routeMessage(content: string, send: (msg: string) => void): Promi
     send(JSON.stringify({ type: "tool_call", id: "6", tool: "trigger_deploy", status: "running", summary: "Triggering Vercel deploy..." }))
     const deployResult = await triggerVercelDeploy(send)
     send(JSON.stringify({ type: "tool_result", id: "6", tool: "trigger_deploy", status: "complete", summary: deployResult }))
+  } else if (lower.includes("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
+    send(JSON.stringify({ type: "tool_call", id: "7", tool: "spawn_agent", status: "running", summary: "Spawning agent..." }))
+    const result = await spawnAgent(content, send)
+    send(JSON.stringify({ type: "tool_result", id: "7", tool: "spawn_agent", status: "complete", summary: result }))
+  } else if (lower.includes("schedule") || lower.includes("create task") || (lower.includes("add task") && !lower.includes("add a page"))) {
+    send(JSON.stringify({ type: "tool_call", id: "8", tool: "schedule_task", status: "running", summary: "Scheduling task..." }))
+    const result = await scheduleTask(content, send)
+    send(JSON.stringify({ type: "tool_result", id: "8", tool: "schedule_task", status: "complete", summary: result }))
+  } else if (lower.includes("list task") || lower.includes("show task") || lower.includes("my tasks") || lower.includes("all tasks")) {
+    send(JSON.stringify({ type: "tool_call", id: "9", tool: "list_tasks", status: "running", summary: "Fetching tasks..." }))
+    const result = await listTasks(content, send)
+    send(JSON.stringify({ type: "tool_result", id: "9", tool: "list_tasks", status: "complete", summary: result }))
+  } else if (lower.includes("assign task") || lower.includes("assign to")) {
+    send(JSON.stringify({ type: "tool_call", id: "10", tool: "assign_task", status: "running", summary: "Assigning task..." }))
+    const result = await assignTask(content, send)
+    send(JSON.stringify({ type: "tool_result", id: "10", tool: "assign_task", status: "complete", summary: result }))
   } else {
     send(JSON.stringify({
       type: "message",
@@ -288,6 +499,10 @@ async function routeMessage(content: string, send: (msg: string) => void): Promi
 • **Test** — run the test suite
 • **Git status** — check branch, changes, history
 • **Deploy** — commit, push, and deploy to Vercel
+• **Spawn agent** — launch OpenCode/OpenCoder/OpenAgent workspaces
+• **Schedule task** — create and schedule tasks for agents or users
+• **List tasks** — view all pending/assigned/completed tasks
+• **Assign task** — assign a task to a specific user
 
 What would you like to do?`,
     }))
@@ -391,7 +606,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
     // Send welcome
     socketRef.send(JSON.stringify({
       type: "message",
-      content: "TokiDAPP Concierge connected. I can investigate code, generate features, run tests, and deploy to Vercel.",
+      content: "TokiDAPP Concierge connected. I can investigate code, generate features, run tests, deploy to Vercel, spawn agents (OpenCode/OpenCoder/OpenAgent), schedule tasks, and assign work to users.",
     }))
 
     // Handle incoming data (simple line-delimited JSON)
