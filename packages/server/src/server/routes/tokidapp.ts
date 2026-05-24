@@ -3,8 +3,17 @@ import * as fs from "fs"
 import * as path from "path"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
+import {
+  createRealtimeSession,
+  sendAudioChunk,
+  commitAudioBuffer,
+  clearAudioBuffer,
+  endVoiceSession,
+  getRealtimeSession,
+} from "../../plugins/tokidapp/concierge/openai-realtime"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const VERCEL_DEPLOY_HOOK_URL = process.env.VERCEL_DEPLOY_HOOK_URL
 const VERCEL_TOKEN = process.env.VERCEL_TOKEN
 const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
@@ -690,6 +699,32 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
             continue
           }
 
+          if (msg.type === "voice_start") {
+            if (REALTIME_ENABLED) {
+              if (!getRealtimeSession(sessionId)) {
+                createRealtimeSession(
+                  sessionId,
+                  (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
+                  (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
+                  (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
+                )
+              }
+            } else {
+              socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+            }
+            continue
+          }
+
+          if (msg.type === "voice_stop") {
+            commitAudioBuffer(sessionId)
+            continue
+          }
+
+          if (msg.type === "audio" && msg.data) {
+            sendAudioChunk(sessionId, msg.data)
+            continue
+          }
+
           if (msg.type === "message" && msg.content) {
             routeMessage(
               msg.content,
@@ -718,10 +753,14 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 
     socket.on("close", () => {
       activeSockets.delete(sessionId)
+      clearAudioBuffer(sessionId)
+      endVoiceSession(sessionId)
     })
 
     socket.on("error", () => {
       activeSockets.delete(sessionId)
+      clearAudioBuffer(sessionId)
+      endVoiceSession(sessionId)
     })
   })
 }
