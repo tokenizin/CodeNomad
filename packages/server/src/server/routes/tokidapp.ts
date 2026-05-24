@@ -11,6 +11,11 @@ const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
 const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
 
+// Cache for workflow definitions fetched from StarGuard
+let workflowDefinitionsCache: any = null
+let workflowCacheTime = 0
+const WORKFLOW_CACHE_TTL = 300_000 // 5 minutes
+
 interface TokiDAPPWebSocket {
   send: (msg: string) => void
   close: (code?: number, reason?: string) => void
@@ -530,9 +535,40 @@ What would you like to do?`,
   }
 }
 
+// ── Workflow Definitions (fetched from StarGuard) ──────────────
+
+async function fetchWorkflowDefinitions(): Promise<any[]> {
+  try {
+    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/workflows`, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return []
+    const data: any = await res.json()
+    return data.workflows || []
+  } catch {
+    return []
+  }
+}
+
+async function getWorkflowDefinitions(): Promise<any[]> {
+  const now = Date.now()
+  if (!workflowDefinitionsCache || now - workflowCacheTime > WORKFLOW_CACHE_TTL) {
+    workflowDefinitionsCache = await fetchWorkflowDefinitions()
+    workflowCacheTime = now
+  }
+  return workflowDefinitionsCache
+}
+
 // ── Routes ────────────────────────────────────────────────────
 
 export function registerTokidappRoutes(app: FastifyInstance) {
+  // Proxy: serve workflow definitions from StarGuard with local cache
+  app.get("/api/tokidapp/workflows", async () => {
+    const workflows = await getWorkflowDefinitions()
+    return { version: 1, updatedAt: new Date().toISOString().split("T")[0], workflows, digitalAssets: [] }
+  })
+
   // Health / status
   app.get("/api/tokidapp/status", async () => ({
     status: "ok",
