@@ -447,7 +447,28 @@ async function assignTask(prompt: string, send: (msg: string) => void): Promise<
 
 // ── Message Router ────────────────────────────────────────────
 
-async function routeMessage(content: string, send: (msg: string) => void): Promise<void> {
+async function routeMessage(
+  content: string,
+  send: (msg: string) => void,
+  workflowSlug?: string,
+  workflowStep?: number,
+): Promise<void> {
+  // If workflow context is provided, route by workflow slug
+  if (workflowSlug && workflowStep) {
+    const slugToHint: Record<string, string> = {
+      "investigate-code": "investigate",
+      "generate-feature": "generate",
+      "run-tests": "test",
+      "deploy-app": "deploy",
+      "spawn-agent": "spawn agent",
+      "schedule-task": "schedule task",
+      "assign-task": "assign task",
+    }
+    const hint = slugToHint[workflowSlug]
+    if (hint) {
+      content = hint + " " + content
+    }
+  }
   const lower = content.toLowerCase()
 
   if (lower.includes("investigate") || lower.includes("find") || lower.includes("search") || lower.includes("look")) {
@@ -634,7 +655,12 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
           }
 
           if (msg.type === "message" && msg.content) {
-            routeMessage(msg.content, (outgoing) => socketRef.send(outgoing))
+            routeMessage(
+              msg.content,
+              (outgoing) => socketRef.send(outgoing),
+              msg.workflowSlug,
+              msg.workflowStep,
+            )
             continue
           }
 
