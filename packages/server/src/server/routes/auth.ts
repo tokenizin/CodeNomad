@@ -80,6 +80,15 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.header("Pragma", "no-cache")
     reply.header("Expires", "0")
 
+    // Remote visitors without SSO token → send them back to StarGuard.
+    // Local visitors (dev auto-login, token bootstrap) see the login page.
+    const forwardedFor = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+    const visitorIp = forwardedFor || request.socket.remoteAddress
+    if (!isLoopbackAddress(visitorIp)) {
+      reply.redirect("https://starguard.vercel.app")
+      return
+    }
+
     const status = deps.authManager.getStatus()
     const autoLoginTicket = deps.authManager.isDevAutoLoginEnabled()
       ? deps.authManager.issueAutoLoginTicket() ?? undefined
