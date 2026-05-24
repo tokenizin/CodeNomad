@@ -200,10 +200,19 @@ async function gitStatus(): Promise<string> {
   }
 }
 
+async function captureGitDiff(): Promise<string> {
+  try {
+    return execSync("git diff --cached --stat 2>/dev/null || echo '(no changes)'", {
+      cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024,
+    })
+  } catch { return "(could not capture diff)" }
+}
+
 async function gitCommitPush(commitMsg: string, send: (msg: string) => void): Promise<string> {
   send(JSON.stringify({ type: "stream", delta: "Committing changes..." }))
 
   try {
+    const diff = captureGitDiff()
     const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
     execSync("git add -A", { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
     execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
@@ -212,9 +221,54 @@ async function gitCommitPush(commitMsg: string, send: (msg: string) => void): Pr
     execSync(`git push origin ${branch}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000 })
 
     const hash = execSync("git rev-parse HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    return `Committed and pushed: ${hash.slice(0, 7)} on ${branch}`
+
+    // Store diff as blob if STARGUARD_BASE configured
+    try {
+      await fetch(`${STARGUARD_BASE}/api/tokidapp/deploy-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "store_diff",
+          commitHash: hash,
+          commitMsg,
+          diff,
+          branch,
+        }),
+      })
+    } catch { /* non-critical */ }
+
+    return `Committed and pushed: ${hash.slice(0, 7)} on ${branch}\n\nFiles changed:\n${diff}`
   } catch (err) {
     return `Git error: ${(err as Error).message}`
+  }
+}
+
+async function rollbackDeploy(send: (msg: string) => void): Promise<string> {
+  send(JSON.stringify({ type: "stream", delta: "Rolling back to previous commit..." }))
+
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
+
+    // Get the previous commit hash
+    const prevHash = execSync("git rev-parse HEAD~1", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
+    const prevMsg = execSync(`git log --oneline -1 ${prevHash}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
+
+    // Hard revert to previous commit
+    execSync(`git reset --hard ${prevHash}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
+    execSync(`git push origin ${branch} --force`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000 })
+
+    send(JSON.stringify({ type: "stream", delta: "Rollback pushed. Triggering deploy..." }))
+
+    const deployResult = await triggerVercelDeploy(send)
+
+    return [
+      `⏪ **Rolled back to:** ${prevHash.slice(0, 7)}`,
+      `Previous commit: ${prevMsg}`,
+      "",
+      deployResult,
+    ].join("\n")
+  } catch (err) {
+    return `Rollback error: ${(err as Error).message}`
   }
 }
 
@@ -525,6 +579,10 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "10", tool: "assign_task", status: "running", summary: "Assigning task..." }))
     const result = await assignTask(content, send)
     send(JSON.stringify({ type: "tool_result", id: "10", tool: "assign_task", status: "complete", summary: result }))
+  } else if (lower.includes("rollback") || lower.includes("undo deploy") || lower.includes("revert")) {
+    send(JSON.stringify({ type: "tool_call", id: "11", tool: "rollback_deploy", status: "running", summary: "Rolling back deploy..." }))
+    const result = await rollbackDeploy(send)
+    send(JSON.stringify({ type: "tool_result", id: "11", tool: "rollback_deploy", status: "complete", summary: result }))
   } else {
     send(JSON.stringify({
       type: "message",
@@ -538,6 +596,7 @@ async function routeMessage(
 • **Schedule task** — create and schedule tasks for agents or users
 • **List tasks** — view all pending/assigned/completed tasks
 • **Assign task** — assign a task to a specific user
+• **Rollback deploy** — revert to the previous commit and redeploy
 
 What would you like to do?`,
     }))
