@@ -21,6 +21,7 @@ interface RealtimeSession {
   sessionId: string
   connected: boolean
   toolCallbacks: Map<string, (args: string) => Promise<string>>
+  audioBytes: number // track appended audio to prevent empty commits
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -175,6 +176,7 @@ export function createRealtimeSession(
     sessionId,
     connected: false,
     toolCallbacks: new Map(),
+    audioBytes: 0,
   }
 
   ws.addEventListener("open", () => {
@@ -183,6 +185,7 @@ export function createRealtimeSession(
     const config = {
       type: "session.update",
       session: {
+        type: "realtime",
         modalities: ["text", "audio"],
         instructions: [
           `You are TokiDAPP, an AI assistant for the StarCARD ecosystem.`,
@@ -286,6 +289,9 @@ export function sendAudioChunk(sessionId: string, base64: string): boolean {
   const session = sessions.get(sessionId)
   if (!session?.connected) return false
 
+  // Track bytes: base64 expands ~33%, pcm16 = 2 bytes/sample, 24kHz
+  session.audioBytes += Math.floor(base64.length * 0.75)
+
   session.ws.send(
     JSON.stringify({
       type: "input_audio_buffer.append",
@@ -299,7 +305,18 @@ export function commitAudioBuffer(sessionId: string): boolean {
   const session = sessions.get(sessionId)
   if (!session?.connected) return false
 
+  // OpenAI requires >=100ms of audio. At 24kHz pcm16 (2 bytes/sample),
+  // 100ms = 2400 samples × 2 bytes = 4800 bytes minimum.
+  const MIN_AUDIO_BYTES = 4800
+  if (session.audioBytes < MIN_AUDIO_BYTES) {
+    // Not enough audio accumulated — clear instead of committing
+    session.ws.send(JSON.stringify({ type: "input_audio_buffer.clear" }))
+    session.audioBytes = 0
+    return false
+  }
+
   session.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }))
+  session.audioBytes = 0
   return true
 }
 
