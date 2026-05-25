@@ -1,5 +1,5 @@
 import { execSync } from "child_process"
-import { createHash } from "node:crypto"
+import { WebSocket, WebSocketServer } from "ws"
 import * as fs from "fs"
 import * as path from "path"
 import type { FastifyInstance } from "fastify"
@@ -44,6 +44,7 @@ interface TokiDAPPWebSocket {
 }
 
 const activeSockets = new Map<string, TokiDAPPWebSocket>()
+const tokidappWss = new WebSocketServer({ noServer: true })
 
 // ── Tool Implementations ─────────────────────────────────────
 
@@ -771,7 +772,6 @@ export function registerTokidappRoutes(app: FastifyInstance) {
 
 export function registerTokidappWebSocket(app: FastifyInstance) {
   app.server.on("upgrade", (request, socket, head) => {
-    // Only handle /api/tokidapp/ws paths
     const rawUrl = request.url ?? "/"
     let parsed: URL
     try {
@@ -782,7 +782,6 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 
     if (!parsed.pathname.startsWith("/api/tokidapp/ws")) return
 
-    // Validate token
     const token = parsed.searchParams.get("token") || ""
     if (!token) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
@@ -790,73 +789,66 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
       return
     }
 
-    const sessionId = `tokidapp_${token}`
-    const socketRef: TokiDAPPWebSocket = {
-      send: (msg: string) => {
-        try { socket.write(msg + "\n") } catch { /* ignore */ }
-      },
-      close: (code, reason) => {
-        try { socket.destroy() } catch { /* ignore */ }
-      },
-    }
+    tokidappWss.handleUpgrade(request, socket, head, (ws) => {
+      attachTokidappSocket(ws, token)
+    })
+  })
+}
 
-    // Accept the WebSocket upgrade
-    const key = request.headers["sec-websocket-key"] || ""
-    const accept = createHash("sha1")
-      .update(key + "258EAFA5-E914-47DA-95CA-5AB5-4BDC3B1B1E07")
-      .digest("base64")
+function attachTokidappSocket(ws: WebSocket, token: string) {
+  const sessionId = `tokidapp_${token}`
+  const socketRef: TokiDAPPWebSocket = {
+    send: (msg: string) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(msg)
+    },
+    close: (code?: number, reason?: string) => {
+      ws.close(code, reason)
+    },
+  }
 
-    socket.write(
-      "HTTP/1.1 101 Switching Protocols\r\n" +
-      "Upgrade: websocket\r\n" +
-      "Connection: Upgrade\r\n" +
-      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
-    )
+  activeSockets.set(sessionId, socketRef)
 
-    activeSockets.set(sessionId, socketRef)
+  socketRef.send(JSON.stringify({
+    type: "orchestrator_greeting",
+    sessionId,
+    voiceMode: REALTIME_ENABLED,
+    content: "TokiDAPP Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
+  }))
 
-    // Send welcome — auto-greet with orchestrator mode
+  if (REALTIME_ENABLED) {
+    const greetingText = "Hello, I am your StarCARD orchestrator. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
     socketRef.send(JSON.stringify({
-      type: "orchestrator_greeting",
-      sessionId,
-      voiceMode: REALTIME_ENABLED,
-      content: "TokiDAPP Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
+      type: "stream",
+      delta: greetingText,
     }))
+  }
 
-    // Auto-initiate voice greeting if Realtime is enabled
-    if (REALTIME_ENABLED) {
-      const greetingText = "Hello, I am your StarCARD orchestrator. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
-      socketRef.send(JSON.stringify({
-        type: "stream",
-        delta: greetingText,
-      }))
-    }
+  const orchestratorSessions = new Map<string, string>()
 
-    // Track orchestrator sessions per socket
-    const orchestratorSessions = new Map<string, string>() // socket -> orchestratorId
+  const cleanup = () => {
+    activeSockets.delete(sessionId)
+    orchestratorSessions.delete(sessionId)
+    clearAudioBuffer(sessionId)
+    endVoiceSession(sessionId)
+  }
 
-    // Handle incoming data (simple line-delimited JSON)
-    let buffer = ""
-    socket.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString()
-      const lines = buffer.split("\n")
-      buffer = lines.pop() || ""
+  ws.on("message", (data, isBinary) => {
+    if (isBinary) return
+    const raw = typeof data === "string" ? data : data.toString("utf8")
+    const trimmed = raw.trim()
+    if (!trimmed) return
 
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-
-        try {
-          const msg = JSON.parse(trimmed)
+    try {
+      const msg = JSON.parse(trimmed)
 
           if (msg.type === "ping") {
             socketRef.send(JSON.stringify({ type: "pong" }))
-            continue
+            return
           }
 
           if (msg.type === "cancel") {
             socketRef.send(JSON.stringify({ type: "message", content: "Cancelled." }))
-            continue
+            return
           }
 
           if (msg.type === "voice_start") {
@@ -872,17 +864,17 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
             } else {
               socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
             }
-            continue
+            return
           }
 
           if (msg.type === "voice_stop") {
             commitAudioBuffer(sessionId)
-            continue
+            return
           }
 
           if (msg.type === "audio" && msg.data) {
             sendAudioChunk(sessionId, msg.data)
-            continue
+            return
           }
 
           if (msg.type === "orchestrate" && msg.intent) {
@@ -1047,7 +1039,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
                 }))
               }
             })()
-            continue
+            return
           }
 
           if (msg.type === "approval_decision" && msg.approvalId) {
@@ -1074,7 +1066,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
                 }))
               }
             })()
-            continue
+            return
           }
 
           if (msg.type === "dag_query") {
@@ -1091,7 +1083,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
                 } catch { /* ignore */ }
               }
             })()
-            continue
+            return
           }
 
           if (msg.type === "message" && msg.content) {
@@ -1101,7 +1093,7 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
               msg.workflowSlug,
               msg.workflowStep,
             )
-            continue
+            return
           }
 
           if (msg.type === "deploy" && msg.commitMsg) {
@@ -1112,26 +1104,13 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
               const deployResult = await triggerVercelDeploy((outgoing) => socketRef.send(outgoing))
               socketRef.send(JSON.stringify({ type: "deploy_status", status: deployResult.includes("failed") ? "failed" : "building", logs: deployResult }))
             })()
-            continue
+            return
           }
         } catch {
           // Ignore malformed JSON
         }
-      }
-    })
-
-    socket.on("close", () => {
-      activeSockets.delete(sessionId)
-      orchestratorSessions.delete(sessionId)
-      clearAudioBuffer(sessionId)
-      endVoiceSession(sessionId)
-    })
-
-    socket.on("error", () => {
-      activeSockets.delete(sessionId)
-      orchestratorSessions.delete(sessionId)
-      clearAudioBuffer(sessionId)
-      endVoiceSession(sessionId)
-    })
   })
+
+  ws.on("close", cleanup)
+  ws.on("error", cleanup)
 }

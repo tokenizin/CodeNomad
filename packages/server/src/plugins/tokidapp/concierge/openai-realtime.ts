@@ -11,6 +11,9 @@ declare const WebSocket: {
 }
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
+/** Default: gpt-realtime-mini (GA). Override with OPENAI_REALTIME_MODEL. */
+const REALTIME_MODEL =
+  process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-mini"
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 
 interface RealtimeSession {
@@ -154,7 +157,7 @@ async function executeTool(name: string, argsStr: string): Promise<string> {
 
 // ── Realtime Session Manager ─────────────────────────────────
 
-const REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
+const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`
 
 export function createRealtimeSession(
   sessionId: string,
