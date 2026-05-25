@@ -186,22 +186,28 @@ export function createRealtimeSession(
       type: "session.update",
       session: {
         type: "realtime",
-        modalities: ["text", "audio"],
+        output_modalities: ["text", "audio"],
         instructions: [
           `You are TokiDAPP, an AI assistant for the StarCARD ecosystem.`,
           `You can investigate the codebase, generate pages/components,`,
           `run tests, and check git status using the provided tools.`,
           `Be concise and helpful. When asked to do code tasks, use the tools.`,
         ].join(" "),
-        voice: "alloy",
-        input_audio_format: "pcm16",
-        output_audio_format: "pcm16",
-        input_audio_transcription: { enabled: true },
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
+        audio: {
+          input: {
+            format: { type: "audio/pcm", rate: 24000 },
+            transcription: { model: "gpt-4o-mini-transcribe" },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+            },
+          },
+          output: {
+            format: { type: "audio/pcm", rate: 24000 },
+            voice: "alloy",
+          },
         },
         tools,
         tool_choice: "auto",
@@ -219,14 +225,17 @@ export function createRealtimeSession(
         case "session.created":
           break
 
+        case "response.output_audio.delta":
         case "response.audio.delta":
           if (parsed.delta) onAudioDelta(parsed.delta)
           break
 
+        case "response.output_audio_transcript.delta":
         case "response.audio_transcript.delta":
           if (parsed.delta) onTextDelta(parsed.delta)
           break
 
+        case "response.output_text.delta":
         case "response.text.delta":
           if (parsed.delta) onTextDelta(parsed.delta)
           break
