@@ -21,7 +21,9 @@ interface RealtimeSession {
   sessionId: string
   connected: boolean
   toolCallbacks: Map<string, (args: string) => Promise<string>>
-  audioBytes: number // track appended audio to prevent empty commits
+  audioBytes: number
+  pendingChunks: string[]
+  onReady?: () => void
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -160,11 +162,25 @@ async function executeTool(name: string, argsStr: string): Promise<string> {
 
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`
 
+const MIN_AUDIO_BYTES = 4800 // 100ms @ 24kHz pcm16 mono
+
+function flushPendingForSession(session: RealtimeSession) {
+  if (!session.connected || session.pendingChunks.length === 0) return
+  for (const chunk of session.pendingChunks) {
+    session.ws.send(
+      JSON.stringify({ type: "input_audio_buffer.append", audio: chunk }),
+    )
+    session.audioBytes += Math.floor(chunk.length * 0.75)
+  }
+  session.pendingChunks = []
+}
+
 export function createRealtimeSession(
   sessionId: string,
   onAudioDelta: (base64: string) => void,
   onTextDelta: (text: string) => void,
   onError: (error: string) => void,
+  onReady?: () => void,
 ): RealtimeSession {
   const ws = new WebSocket(REALTIME_URL, [
     "realtime",
@@ -177,10 +193,13 @@ export function createRealtimeSession(
     connected: false,
     toolCallbacks: new Map(),
     audioBytes: 0,
+    pendingChunks: [],
+    onReady,
   }
 
   ws.addEventListener("open", () => {
     session.connected = true
+    flushPendingForSession(session)
 
     const config = {
       type: "session.update",
@@ -197,12 +216,8 @@ export function createRealtimeSession(
           input: {
             format: { type: "audio/pcm", rate: 24000 },
             transcription: { model: "gpt-4o-mini-transcribe" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
-            },
+            // Push-to-talk: client commits on voice_stop (server VAD commits empty buffers).
+            turn_detection: null,
           },
           output: {
             format: { type: "audio/pcm", rate: 24000 },
@@ -223,6 +238,9 @@ export function createRealtimeSession(
 
       switch (parsed.type) {
         case "session.created":
+        case "session.updated":
+          session.onReady?.()
+          session.onReady = undefined
           break
 
         case "response.output_audio.delta":
@@ -266,9 +284,12 @@ export function createRealtimeSession(
           break
         }
 
-        case "error":
-          onError(parsed.error?.message || "OpenAI Realtime error")
+        case "error": {
+          const message = parsed.error?.message || "OpenAI Realtime error"
+          if (/buffer too small|buffer only has 0/i.test(message)) break
+          onError(message)
           break
+        }
 
         case "rate_limits.updated":
           break
@@ -296,11 +317,14 @@ export function createRealtimeSession(
 
 export function sendAudioChunk(sessionId: string, base64: string): boolean {
   const session = sessions.get(sessionId)
-  if (!session?.connected) return false
+  if (!session) return false
 
-  // Track bytes: base64 expands ~33%, pcm16 = 2 bytes/sample, 24kHz
+  if (!session.connected) {
+    session.pendingChunks.push(base64)
+    return true
+  }
+
   session.audioBytes += Math.floor(base64.length * 0.75)
-
   session.ws.send(
     JSON.stringify({
       type: "input_audio_buffer.append",
@@ -310,24 +334,44 @@ export function sendAudioChunk(sessionId: string, base64: string): boolean {
   return true
 }
 
+export function resetInputAudio(sessionId: string): void {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.audioBytes = 0
+  session.pendingChunks = []
+  if (session.connected) {
+    session.ws.send(JSON.stringify({ type: "input_audio_buffer.clear" }))
+  }
+}
+
+export function hasEnoughInputAudio(sessionId: string): boolean {
+  const session = sessions.get(sessionId)
+  if (!session) return false
+  const pendingBytes = session.pendingChunks.reduce(
+    (sum, c) => sum + Math.floor(c.length * 0.75),
+    0,
+  )
+  return session.audioBytes + pendingBytes >= MIN_AUDIO_BYTES
+}
+
 export function commitAudioBuffer(sessionId: string): boolean {
   const session = sessions.get(sessionId)
   if (!session?.connected) return false
 
-  // OpenAI requires >=100ms of audio. At 24kHz pcm16 (2 bytes/sample),
-  // 100ms = 2400 samples × 2 bytes = 4800 bytes minimum.
-  const MIN_AUDIO_BYTES = 4800
+  if (session.pendingChunks.length > 0) flushPendingForSession(session)
+
   if (session.audioBytes < MIN_AUDIO_BYTES) {
-    // Not enough audio accumulated — clear instead of committing
     session.ws.send(JSON.stringify({ type: "input_audio_buffer.clear" }))
     session.audioBytes = 0
     return false
   }
 
   session.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }))
+  session.ws.send(JSON.stringify({ type: "response.create" }))
   session.audioBytes = 0
   return true
 }
+
 
 export function clearAudioBuffer(sessionId: string): boolean {
   const session = sessions.get(sessionId)

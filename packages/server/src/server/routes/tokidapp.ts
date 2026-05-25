@@ -8,6 +8,8 @@ import {
   createRealtimeSession,
   sendAudioChunk,
   commitAudioBuffer,
+  resetInputAudio,
+  hasEnoughInputAudio,
   clearAudioBuffer,
   endVoiceSession,
   getRealtimeSession,
@@ -853,13 +855,20 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
           if (msg.type === "voice_start") {
             if (REALTIME_ENABLED) {
+              resetInputAudio(sessionId)
+              const notifyReady = () => {
+                socketRef.send(JSON.stringify({ type: "voice_ready" }))
+              }
               if (!getRealtimeSession(sessionId)) {
                 createRealtimeSession(
                   sessionId,
                   (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
                   (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
                   (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
+                  notifyReady,
                 )
+              } else {
+                notifyReady()
               }
             } else {
               socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
@@ -868,7 +877,15 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_stop") {
-            commitAudioBuffer(sessionId)
+            if (hasEnoughInputAudio(sessionId)) {
+              commitAudioBuffer(sessionId)
+            } else {
+              resetInputAudio(sessionId)
+              socketRef.send(JSON.stringify({
+                type: "voice_cancelled",
+                content: "No speech detected. Hold the microphone a little longer.",
+              }))
+            }
             return
           }
 
