@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Radio, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -23,6 +23,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import { useRealtimeVoiceInput } from "./prompt-input/useRealtimeVoiceInput"
 import {
   canUseConversationMode,
   clearConversationPlaybackForInstance,
@@ -654,6 +655,14 @@ export default function PromptInput(props: PromptInputProps) {
     enabled: () => preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled),
   })
+  const realtimeVoice = useRealtimeVoiceInput({
+    instanceId: props.instanceId,
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    enabled: () => preferences().showPromptVoiceInput,
+    disabled: () => Boolean(props.disabled),
+  })
   const showVoiceInput = () =>
     preferences().showPromptVoiceInput &&
     (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
@@ -881,6 +890,19 @@ export default function PromptInput(props: PromptInputProps) {
                     }
                   >
                     <Mic class="h-4 w-4" aria-hidden="true" />
+                  </Show>
+                </button>
+              </Show>
+              <Show when={realtimeVoice.isSupported()}>
+                <button
+                  type="button"
+                  class={`prompt-voice-button prompt-nav-voice-button ${realtimeVoice.isActive() ? "is-active" : ""}`}
+                  onClick={() => realtimeVoice.toggleRecording()}
+                  aria-label={realtimeVoice.buttonTitle()}
+                  title={realtimeVoice.buttonTitle()}
+                >
+                  <Show when={realtimeVoice.state() === "connecting" || realtimeVoice.state() === "recording"} fallback={<Radio class="h-4 w-4" aria-hidden="true" />}>
+                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
                   </Show>
                 </button>
               </Show>

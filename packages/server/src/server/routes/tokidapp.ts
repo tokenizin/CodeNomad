@@ -4,6 +4,7 @@ import * as fs from "fs"
 import * as path from "path"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
+import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
 import {
   createRealtimeSession,
   sendAudioChunk,
@@ -47,6 +48,155 @@ interface TokiDAPPWebSocket {
 
 const activeSockets = new Map<string, TokiDAPPWebSocket>()
 const tokidappWss = new WebSocketServer({ noServer: true })
+
+// ── CodeNomad Voice Realtime WebSocket ─────────────────────
+
+const voiceWss = new WebSocketServer({ noServer: true })
+
+interface VoiceRealtimeSocket {
+  send: (msg: string) => void
+  close: (code?: number, reason?: string) => void
+}
+
+const voiceSockets = new Map<string, VoiceRealtimeSocket>()
+
+function attachVoiceSocket(ws: WebSocket, userId: string) {
+  const sessionId = `voice_${userId}`
+  const socketRef: VoiceRealtimeSocket = {
+    send: (msg: string) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(msg)
+    },
+    close: (code?: number, reason?: string) => {
+      ws.close(code, reason)
+    },
+  }
+
+  voiceSockets.set(sessionId, socketRef)
+
+  socketRef.send(JSON.stringify({
+    type: "voice_ready",
+    sessionId,
+  }))
+
+  const cleanup = () => {
+    voiceSockets.delete(sessionId)
+    clearAudioBuffer(sessionId)
+    endVoiceSession(sessionId)
+  }
+
+  ws.on("message", (data, isBinary) => {
+    if (isBinary) return
+    const raw = typeof data === "string" ? data : data.toString("utf8")
+    const trimmed = raw.trim()
+    if (!trimmed) return
+
+    try {
+      const msg = JSON.parse(trimmed)
+
+      if (msg.type === "ping") {
+        socketRef.send(JSON.stringify({ type: "pong" }))
+        return
+      }
+
+      if (msg.type === "cancel") {
+        socketRef.send(JSON.stringify({ type: "message", content: "Cancelled." }))
+        return
+      }
+
+      if (msg.type === "voice_start") {
+        if (REALTIME_ENABLED) {
+          resetInputAudio(sessionId)
+          const notifyReady = () => {
+            socketRef.send(JSON.stringify({ type: "voice_ready" }))
+          }
+          if (!getRealtimeSession(sessionId)) {
+            createRealtimeSession(
+              sessionId,
+              (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
+              (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
+              (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
+              notifyReady,
+            )
+          } else {
+            notifyReady()
+          }
+        } else {
+          socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+        }
+        return
+      }
+
+      if (msg.type === "voice_stop") {
+        if (hasEnoughInputAudio(sessionId)) {
+          commitAudioBuffer(sessionId)
+        } else {
+          resetInputAudio(sessionId)
+          socketRef.send(JSON.stringify({
+            type: "voice_cancelled",
+            content: "No speech detected. Hold the microphone a little longer.",
+          }))
+        }
+        return
+      }
+
+      if (msg.type === "audio" && msg.data) {
+        sendAudioChunk(sessionId, msg.data)
+        return
+      }
+    } catch {
+      // Ignore malformed JSON
+    }
+  })
+
+  ws.on("close", cleanup)
+  ws.on("error", cleanup)
+}
+
+export function registerVoiceRealtimeWebSocket(
+  app: FastifyInstance,
+  starGuardJwtHandler?: StarGuardJwtHandler,
+) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    let parsed: URL
+    try {
+      parsed = new URL(rawUrl, "http://localhost")
+    } catch {
+      return
+    }
+
+    if (!parsed.pathname.startsWith("/api/voice/session")) return
+
+    const token = parsed.searchParams.get("token") || ""
+    if (!token) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
+      socket.destroy()
+      return
+    }
+
+    if (starGuardJwtHandler) {
+      starGuardJwtHandler.verify(token).then((payload) => {
+        if (!payload) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
+          socket.destroy()
+          return
+        }
+        voiceWss.handleUpgrade(request, socket, head, (ws) => {
+          attachVoiceSocket(ws, payload.userId)
+        })
+      }).catch(() => {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
+        socket.destroy()
+      })
+      return
+    }
+
+    // No JWT handler — allow in dev mode
+    voiceWss.handleUpgrade(request, socket, head, (ws) => {
+      attachVoiceSocket(ws, token)
+    })
+  })
+}
 
 // ── Tool Implementations ─────────────────────────────────────
 
