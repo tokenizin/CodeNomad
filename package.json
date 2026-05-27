@@ -33,17 +33,17 @@
     "baseline-browser-mapping": "^2.9.11"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "4.52.5",
+    "@esbuild/darwin-arm64": "0.25.12",
+    "@esbuild/darwin-x64": "0.25.12",
+    "@esbuild/linux-arm64": "0.25.12",
+    "@esbuild/linux-x64": "0.25.12",
+    "@esbuild/win32-arm64": "0.25.12",
+    "@esbuild/win32-x64": "0.25.12",
+    "@rollup/rollup-darwin-arm64": "^4.52.5",
     "@rollup/rollup-darwin-x64": "4.52.5",
     "@rollup/rollup-linux-arm64-gnu": "4.52.5",
     "@rollup/rollup-linux-x64-gnu": "4.52.5",
     "@rollup/rollup-win32-arm64-msvc": "4.52.5",
-    "@rollup/rollup-win32-x64-msvc": "4.52.5",
-    "@esbuild/linux-x64": "0.25.12",
-    "@esbuild/linux-arm64": "0.25.12",
-    "@esbuild/darwin-arm64": "0.25.12",
-    "@esbuild/darwin-x64": "0.25.12",
-    "@esbuild/win32-x64": "0.25.12",
-    "@esbuild/win32-arm64": "0.25.12"
+    "@rollup/rollup-win32-x64-msvc": "4.52.5"
   }
 }
