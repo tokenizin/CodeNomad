@@ -50,10 +50,6 @@ import {
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
-const VERCEL_DEPLOY_HOOK_URL = process.env.VERCEL_DEPLOY_HOOK_URL
-const VERCEL_TOKEN = process.env.VERCEL_TOKEN
-const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
-const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
 
 // Cache for workflow definitions fetched from StarGuard
@@ -244,7 +240,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         ;(async () => {
           const gitResult = await gitCommitPush(msg.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, (outgoing) => socketRef.send(outgoing))
           socketRef.send(JSON.stringify({ type: "deploy_status", status: "committed", commitMsg: msg.commitMsg, commitHash: gitResult }))
-          const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, (outgoing) => socketRef.send(outgoing))
+          const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, (outgoing) => socketRef.send(outgoing))
           socketRef.send(JSON.stringify({ type: "deploy_status", status: deployResult.includes("failed") ? "failed" : "building", logs: deployResult }))
         })()
         return
@@ -352,7 +348,7 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_result", id: "5", tool: "git_commit_push", status: "complete", summary: gitResult }))
 
     send(JSON.stringify({ type: "tool_call", id: "6", tool: "trigger_deploy", status: "running", summary: "Triggering Vercel deploy..." }))
-    const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, send)
+    const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "6", tool: "trigger_deploy", status: "complete", summary: deployResult }))
   } else if (lower.includes("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
     send(JSON.stringify({ type: "tool_call", id: "7", tool: "spawn_agent", status: "running", summary: "Spawning agent..." }))
@@ -472,7 +468,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     status: "ok",
     activeSockets: activeSockets.size,
     workspaceRoot: WORKSPACE_ROOT,
-    vercelHookConfigured: !!VERCEL_DEPLOY_HOOK_URL,
+    vercelCliAvailable: true,
   }))
 
   // Deploy shortcut (HTTP POST, no WebSocket needed)
@@ -485,7 +481,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       const body = DeployBodySchema.parse(request.body ?? {})
       const send = (msg: string) => {} // no-op for HTTP path
       const gitResult = await gitCommitPush(body.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, send)
-      const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, send)
+      const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, send)
       return { git: gitResult, deploy: deployResult }
     } catch (error) {
       request.log.error({ err: error }, "TokiDAPP deploy failed")
@@ -777,7 +773,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               const gitResult = await gitCommitPush(msg.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, (outgoing) => socketRef.send(outgoing))
               socketRef.send(JSON.stringify({ type: "deploy_status", status: "committed", commitMsg: msg.commitMsg, commitHash: gitResult }))
 
-              const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, (outgoing) => socketRef.send(outgoing))
+              const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, (outgoing) => socketRef.send(outgoing))
               socketRef.send(JSON.stringify({ type: "deploy_status", status: deployResult.includes("failed") ? "failed" : "building", logs: deployResult }))
             })()
             return

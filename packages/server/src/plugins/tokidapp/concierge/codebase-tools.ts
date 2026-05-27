@@ -13,34 +13,24 @@ export async function captureGitDiff(workspaceRoot: string): Promise<string> {
   } catch { return "(could not capture diff)" }
 }
 
-export async function checkDeployStatus(params: {
-  vercelToken?: string
-  vercelProjectId?: string
-  vercelTeamId?: string
-}): Promise<string> {
-  const { vercelToken, vercelProjectId, vercelTeamId } = params
-  if (!vercelToken) return "VERCEL_TOKEN not configured."
-
+export async function checkDeployStatus(
+  workspaceRoot: string,
+): Promise<string> {
   try {
-    const searchParams = new URLSearchParams({ limit: "1" })
-    if (vercelProjectId) searchParams.set("projectId", vercelProjectId)
-    if (vercelTeamId) searchParams.set("teamId", vercelTeamId)
-
-    const res = await fetch(`https://api.vercel.com/v6/deployments?${searchParams}`, {
-      headers: { Authorization: `Bearer ${vercelToken}` },
+    const output = execSync("vercel list deployments --project starguard --limit 1 --yes 2>&1 || vercel --scope tokenizin-projects list deployments --limit 1 2>&1", {
+      cwd: workspaceRoot,
+      encoding: "utf-8",
+      maxBuffer: 1024 * 1024,
+      timeout: 15000,
     })
-
-    if (!res.ok) return "Could not fetch deploy status."
-    const data: any = await res.json()
-    const deploy = data.deployments?.[0]
-    if (!deploy) return "No deployments found."
-
+    const lines = output.trim().split("\n").filter(Boolean)
+    const header = lines.find((l) => l.includes("vercel.app"))
+    const state = lines.find((l) => l.includes("Ready") || l.includes("Building") || l.includes("Error") || l.includes("Canceled"))
     return [
-      `Latest deploy: ${deploy.name}`,
-      `URL: https://${deploy.url}`,
-      `State: ${deploy.readyState}`,
-      `Created: ${new Date(deploy.createdAt).toISOString()}`,
-    ].join("\n")
+      header ? `Latest: ${header}` : "",
+      state ? `State: ${state.trim()}` : "",
+      output.length > 0 ? `\n${output.split("\n").slice(-5).join("\n")}` : "",
+    ].filter(Boolean).join("\n").trim() || "Could not fetch deploy status."
   } catch {
     return "Could not fetch deploy status."
   }
@@ -269,24 +259,24 @@ export async function gitCommitPush(
 }
 
 export async function triggerVercelDeploy(
-  deployHookUrl: string | undefined,
+  workspaceRoot: string,
   send?: (msg: string) => void,
 ): Promise<string> {
-  if (!deployHookUrl) {
-    return "VERCEL_DEPLOY_HOOK_URL not configured. Set it in the environment."
-  }
-
   if (send) send(JSON.stringify({ type: "stream", delta: "Triggering Vercel deploy..." }))
 
   try {
-    const res = await fetch(deployHookUrl, { method: "POST" })
-    if (!res.ok) {
-      const err = await res.text()
-      return `Deploy hook failed: ${res.status} ${err}`
-    }
-    return "Deploy triggered on Vercel. Building..."
+    const output = execSync("vercel deploy --prod --yes 2>&1", {
+      cwd: workspaceRoot,
+      encoding: "utf-8",
+      maxBuffer: 1024 * 1024,
+      timeout: 300000,
+    })
+    const urlMatch = output.match(/https:\/\/[^\s]+\.vercel\.app/)
+    const url = urlMatch ? urlMatch[0] : "(see build output)"
+    return `Deploy triggered. Preview: ${url}\n\nBuild output:\n${output.split("\n").slice(-10).join("\n")}`
   } catch (err) {
-    return `Deploy error: ${(err as Error).message}`
+    const msg = err instanceof Error ? err.message : String(err)
+    return `Deploy error: ${msg}`
   }
 }
 

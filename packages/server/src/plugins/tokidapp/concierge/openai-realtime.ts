@@ -40,10 +40,6 @@ const REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-mini"
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
-const VERCEL_DEPLOY_HOOK_URL = process.env.VERCEL_DEPLOY_HOOK_URL
-const VERCEL_TOKEN = process.env.VERCEL_TOKEN
-const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
-const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID
 
 interface RealtimeSession {
   ws: WebSocket
@@ -301,10 +297,6 @@ async function executeTool(
   config: {
     workspaceRoot: string
     starguardBase: string
-    deployHookUrl?: string
-    vercelToken?: string
-    vercelProjectId?: string
-    vercelTeamId?: string
   },
 ): Promise<string> {
   try {
@@ -333,15 +325,11 @@ async function executeTool(
       }
 
       case "trigger_deploy": {
-        return await triggerVercelDeploy(config.deployHookUrl)
+        return await triggerVercelDeploy(config.workspaceRoot)
       }
 
       case "check_deploy_status": {
-        return await checkDeployStatus({
-          vercelToken: config.vercelToken,
-          vercelProjectId: config.vercelProjectId,
-          vercelTeamId: config.vercelTeamId,
-        })
+        return await checkDeployStatus(config.workspaceRoot)
       }
 
       case "spawn_agent": {
@@ -585,10 +573,6 @@ export function createRealtimeSession(
           const result = await executeTool(toolName, args, {
             workspaceRoot: WORKSPACE_ROOT,
             starguardBase: STARGUARD_BASE,
-            deployHookUrl: VERCEL_DEPLOY_HOOK_URL,
-            vercelToken: VERCEL_TOKEN,
-            vercelProjectId: VERCEL_PROJECT_ID,
-            vercelTeamId: VERCEL_TEAM_ID,
           })
 
           ws.send(
