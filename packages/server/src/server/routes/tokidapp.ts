@@ -14,7 +14,9 @@ import {
   clearAudioBuffer,
   endVoiceSession,
   getRealtimeSession,
+  getRealtimeSessionVoice,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
+import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
 import {
   createApprovalRequest,
@@ -56,6 +58,37 @@ const voiceWss = new WebSocketServer({ noServer: true })
 interface VoiceRealtimeSocket {
   send: (msg: string) => void
   close: (code?: number, reason?: string) => void
+}
+
+function startVoiceRealtimeSession(
+  sessionId: string,
+  requestedVoice: unknown,
+  socketRef: { send: (msg: string) => void },
+) {
+  const voice = normalizeRealtimeVoice(requestedVoice)
+  const existingVoice = getRealtimeSessionVoice(sessionId)
+  if (existingVoice && existingVoice !== voice) {
+    endVoiceSession(sessionId)
+  }
+  resetInputAudio(sessionId)
+  const notifyReady = () => {
+    socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
+  }
+  if (!getRealtimeSession(sessionId)) {
+    createRealtimeSession(
+      sessionId,
+      (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
+      (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
+      (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
+      notifyReady,
+      (transcript) =>
+        socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
+      undefined,
+      voice,
+    )
+  } else {
+    notifyReady()
+  }
 }
 
 const voiceSockets = new Map<string, VoiceRealtimeSocket>()
@@ -105,23 +138,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
       if (msg.type === "voice_start") {
         if (REALTIME_ENABLED) {
-          resetInputAudio(sessionId)
-          const notifyReady = () => {
-            socketRef.send(JSON.stringify({ type: "voice_ready" }))
-          }
-          if (!getRealtimeSession(sessionId)) {
-            createRealtimeSession(
-              sessionId,
-              (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
-              (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
-              (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
-              notifyReady,
-              (transcript) =>
-                socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
-            )
-          } else {
-            notifyReady()
-          }
+          startVoiceRealtimeSession(sessionId, msg.voice, socketRef)
         } else {
           socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
         }
@@ -1007,23 +1024,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
           if (msg.type === "voice_start") {
             if (REALTIME_ENABLED) {
-              resetInputAudio(sessionId)
-              const notifyReady = () => {
-                socketRef.send(JSON.stringify({ type: "voice_ready" }))
-              }
-              if (!getRealtimeSession(sessionId)) {
-                createRealtimeSession(
-                  sessionId,
-                  (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
-                  (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
-                  (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
-                  notifyReady,
-                  (transcript) =>
-                    socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
-                )
-              } else {
-                notifyReady()
-              }
+              startVoiceRealtimeSession(sessionId, msg.voice, socketRef)
             } else {
               socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
             }

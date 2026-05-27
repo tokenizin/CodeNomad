@@ -1,6 +1,7 @@
 import { execSync } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
+import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 
 declare const WebSocket: {
@@ -21,6 +22,7 @@ interface RealtimeSession {
   ws: WebSocket
   sessionId: string
   connected: boolean
+  outputVoice: RealtimeVoiceId
   toolCallbacks: Map<string, (args: string) => Promise<string>>
   audioBytes: number
   pendingChunks: string[]
@@ -184,16 +186,20 @@ export function createRealtimeSession(
   onReady?: () => void,
   onUserTranscript?: (text: string) => void,
   onResponseDone?: () => void,
+  outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
 ): RealtimeSession {
   const ws = new WebSocket(REALTIME_URL, [
     "realtime",
     `openai-insecure-api-key.${OPENAI_API_KEY}`,
   ])
 
+  const voice = normalizeRealtimeVoice(outputVoice)
+
   const session: RealtimeSession = {
     ws,
     sessionId,
     connected: false,
+    outputVoice: voice,
     toolCallbacks: new Map(),
     audioBytes: 0,
     pendingChunks: [],
@@ -219,7 +225,7 @@ export function createRealtimeSession(
           },
           output: {
             format: { type: "audio/pcm", rate: 24000 },
-            voice: "alloy",
+            voice,
           },
         },
         tools,
@@ -411,4 +417,8 @@ export function endVoiceSession(sessionId: string) {
 
 export function getRealtimeSession(sessionId: string): RealtimeSession | undefined {
   return sessions.get(sessionId)
+}
+
+export function getRealtimeSessionVoice(sessionId: string): RealtimeVoiceId | undefined {
+  return sessions.get(sessionId)?.outputVoice
 }
