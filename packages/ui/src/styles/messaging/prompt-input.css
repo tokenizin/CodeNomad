@@ -321,6 +321,21 @@
   width: 1.75rem;
 }
 
+.prompt-nav-voice-button.is-active {
+  background-color: color-mix(in oklab, var(--accent-primary) 76%, var(--surface-secondary));
+  color: var(--text-inverted);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 45%, transparent);
+}
+
+.prompt-nav-voice-button.is-active:hover:not(:disabled) {
+  background-color: color-mix(in oklab, var(--accent-primary) 88%, var(--surface-secondary));
+  color: var(--text-inverted);
+}
+
+.prompt-nav-voice-button.has-error {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--button-danger-bg, #ef4444) 55%, transparent);
+}
+
 .prompt-voice-button:disabled {
   @apply opacity-50 cursor-not-allowed;
 }

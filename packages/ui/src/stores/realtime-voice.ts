@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, speechCapabilities } from "./speech"
+import { getStarGuardBearerToken } from "../lib/starguard-auth"
 import { RealtimeVoiceClient, type RealtimeVoiceState } from "../lib/realtime-voice"
 
 const log = getLogger("api")
@@ -10,6 +11,21 @@ const [realtimeVoiceClients, setRealtimeVoiceClients] = createSignal<Map<string,
 const [realtimeVoiceStateByInstance, setRealtimeVoiceStateByInstance] = createSignal<Map<string, RealtimeVoiceState>>(new Map())
 
 const [realtimeVoiceTranscriptByInstance, setRealtimeVoiceTranscriptByInstance] = createSignal<Map<string, string>>(new Map())
+
+const [realtimeVoiceErrorByInstance, setRealtimeVoiceErrorByInstance] = createSignal<Map<string, string | null>>(new Map())
+
+export function getRealtimeVoiceError(instanceId: string): string | null {
+  return realtimeVoiceErrorByInstance().get(instanceId) ?? null
+}
+
+function setRealtimeVoiceError(instanceId: string, message: string | null) {
+  setRealtimeVoiceErrorByInstance((prev) => {
+    const next = new Map(prev)
+    if (message) next.set(instanceId, message)
+    else next.delete(instanceId)
+    return next
+  })
+}
 
 export function getRealtimeVoiceState(instanceId: string): RealtimeVoiceState {
   return realtimeVoiceStateByInstance().get(instanceId) ?? "idle"
@@ -26,6 +42,16 @@ export function canUseRealtimeVoice(): boolean {
   if (typeof AudioContext === "undefined") return false
   if (!navigator.mediaDevices?.getUserMedia) return false
   return true
+}
+
+export function realtimeVoiceBlockReason(): string | null {
+  if (!canUseRealtimeVoice()) {
+    return "Speech API not configured on CodeNomad (OPENAI_API_KEY / speech settings)."
+  }
+  if (!getStarGuardBearerToken()) {
+    return "Sign in via StarGuard first (Connect from StarGuard → CodeNomad SSO)."
+  }
+  return null
 }
 
 export function ensureRealtimeVoiceClient(instanceId: string): RealtimeVoiceClient | null {
@@ -51,6 +77,7 @@ export function ensureRealtimeVoiceClient(instanceId: string): RealtimeVoiceClie
         return next
       })
     },
+    (message) => setRealtimeVoiceError(instanceId, message),
   )
 
   setRealtimeVoiceClients((prev) => {
@@ -64,8 +91,17 @@ export function ensureRealtimeVoiceClient(instanceId: string): RealtimeVoiceClie
 
 export async function startRealtimeVoice(instanceId: string): Promise<void> {
   await loadSpeechCapabilities()
+  const block = realtimeVoiceBlockReason()
+  if (block) {
+    setRealtimeVoiceError(instanceId, block)
+    return
+  }
+  setRealtimeVoiceError(instanceId, null)
   const client = ensureRealtimeVoiceClient(instanceId)
-  if (!client) return
+  if (!client) {
+    setRealtimeVoiceError(instanceId, "Could not start Realtime voice client.")
+    return
+  }
 
   setRealtimeVoiceTranscriptByInstance((prev) => {
     const next = new Map(prev)
@@ -103,4 +139,5 @@ export function disconnectRealtimeVoice(instanceId: string): void {
     next.delete(instanceId)
     return next
   })
+  setRealtimeVoiceError(instanceId, null)
 }

@@ -41,8 +41,11 @@ export async function startPCM16Capture(
   const bufferSize = 4096
   const processor = context.createScriptProcessor(bufferSize, 1, 1)
 
+  const silent = context.createGain()
+  silent.gain.value = 0
   source.connect(processor)
-  processor.connect(context.destination)
+  processor.connect(silent)
+  silent.connect(context.destination)
 
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer.getChannelData(0)
@@ -158,6 +161,7 @@ export class RealtimeVoiceClient {
   private capture: AudioCapture | null = null
   private onStateChange: (state: RealtimeVoiceState) => void
   private onTranscript: (text: string) => void
+  private onError: (message: string) => void
   private isRecording = false
   private voiceReady = false
   private voiceReadyTimeout: ReturnType<typeof setTimeout> | null = null
@@ -166,9 +170,11 @@ export class RealtimeVoiceClient {
     private instanceId: string,
     onStateChange: (state: RealtimeVoiceState) => void,
     onTranscript: (text: string) => void,
+    onError: (message: string) => void = () => {},
   ) {
     this.onStateChange = onStateChange
     this.onTranscript = onTranscript
+    this.onError = onError
   }
 
   get state(): RealtimeVoiceState {
@@ -183,6 +189,7 @@ export class RealtimeVoiceClient {
 
     const token = getStarGuardBearerToken()
     if (!token) {
+      this.onError("Sign in via StarGuard first (SSO from StarGuard → CodeNomad).")
       this.onStateChange("idle")
       return
     }
@@ -198,7 +205,9 @@ export class RealtimeVoiceClient {
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onopen = () => {
-      this.onStateChange("connected")
+      if (!this.isRecording) {
+        this.onStateChange("connected")
+      }
     }
 
     this.ws.onmessage = (event) => {
@@ -232,6 +241,7 @@ export class RealtimeVoiceClient {
           case "error":
             this.isRecording = false
             this.voiceReady = false
+            this.onError(msg.content || "Realtime voice error")
             this.onStateChange("connected")
             break
         }
@@ -241,9 +251,13 @@ export class RealtimeVoiceClient {
     }
 
     this.ws.onclose = () => {
+      const wasActive = this.isRecording || this.voiceReady
       this.cleanupCapture()
       this.voiceReady = false
       this.isRecording = false
+      if (wasActive) {
+        this.onError("Realtime voice connection closed.")
+      }
       this.onStateChange("idle")
     }
 
@@ -251,6 +265,7 @@ export class RealtimeVoiceClient {
       this.cleanupCapture()
       this.voiceReady = false
       this.isRecording = false
+      this.onError("Could not connect to Realtime voice (check tunnel and OPENAI_API_KEY).")
       this.onStateChange("idle")
     }
   }
@@ -271,6 +286,7 @@ export class RealtimeVoiceClient {
     this.voiceReadyTimeout = setTimeout(() => {
       if (!this.voiceReady) {
         this.isRecording = false
+        this.onError("Voice session timed out — is OPENAI_API_KEY set on CodeNomad?")
         this.onStateChange("connected")
         this.voiceReadyTimeout = null
       }
@@ -289,6 +305,7 @@ export class RealtimeVoiceClient {
     } catch {
       this.isRecording = false
       this.voiceReady = false
+      this.onError("Microphone permission denied or unavailable.")
       this.onStateChange("connected")
     }
   }

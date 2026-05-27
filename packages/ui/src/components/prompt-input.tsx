@@ -896,12 +896,13 @@ export default function PromptInput(props: PromptInputProps) {
               <Show when={realtimeVoice.isSupported()}>
                 <button
                   type="button"
-                  class={`prompt-voice-button prompt-nav-voice-button ${realtimeVoice.isActive() ? "is-active" : ""}`}
-                  onClick={() => realtimeVoice.toggleRecording()}
+                  class={`prompt-voice-button prompt-nav-voice-button ${realtimeVoice.isActive() ? "is-active" : ""} ${realtimeVoice.lastError() ? "has-error" : ""}`}
+                  onClick={() => void realtimeVoice.toggleRecording()}
                   aria-label={realtimeVoice.buttonTitle()}
                   title={realtimeVoice.buttonTitle()}
+                  aria-pressed={realtimeVoice.isActive()}
                 >
-                  <Show when={realtimeVoice.state() === "connecting" || realtimeVoice.state() === "recording"} fallback={<Radio class="h-4 w-4" aria-hidden="true" />}>
+                  <Show when={realtimeVoice.state() === "connecting" || realtimeVoice.state() === "recording" || realtimeVoice.state() === "speaking"} fallback={<Radio class="h-4 w-4" aria-hidden="true" />}>
                     <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
                   </Show>
                 </button>

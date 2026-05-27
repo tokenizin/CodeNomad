@@ -106,11 +106,6 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
   voiceSockets.set(sessionId, socketRef)
 
-  socketRef.send(JSON.stringify({
-    type: "voice_ready",
-    sessionId,
-  }))
-
   const cleanup = () => {
     voiceSockets.delete(sessionId)
     clearAudioBuffer(sessionId)

@@ -1,7 +1,8 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
 import { loadSpeechCapabilities } from "../../stores/speech"
 import {
   canUseRealtimeVoice,
+  getRealtimeVoiceError,
   getRealtimeVoiceState,
   getRealtimeVoiceTranscript,
   startRealtimeVoice,
@@ -19,10 +20,10 @@ interface UseRealtimeVoiceInputOptions {
   disabled: Accessor<boolean>
 }
 
+const ACTIVE_STATES = new Set(["connecting", "connected", "recording", "speaking"])
+
 export function useRealtimeVoiceInput(options: UseRealtimeVoiceInputOptions) {
   const { t } = useI18n()
-  const [isActive, setIsActive] = createSignal(false)
-  const [isSupported, setIsSupported] = createSignal(false)
 
   let lastTranscriptLength = 0
 
@@ -30,14 +31,13 @@ export function useRealtimeVoiceInput(options: UseRealtimeVoiceInputOptions) {
     void loadSpeechCapabilities()
   })
 
-  createEffect(() => {
-    setIsSupported(canUseRealtimeVoice())
-  })
+  const isSupported = createMemo(() => canUseRealtimeVoice())
 
-  createEffect(() => {
-    const currentState = getRealtimeVoiceState(options.instanceId)
-    setIsActive(currentState === "recording" || currentState === "connecting")
-  })
+  const state = createMemo(() => getRealtimeVoiceState(options.instanceId))
+
+  const isActive = createMemo(() => ACTIVE_STATES.has(state()))
+
+  const lastError = createMemo(() => getRealtimeVoiceError(options.instanceId))
 
   // Poll for transcript changes and append to prompt
   createEffect(() => {
@@ -65,13 +65,12 @@ export function useRealtimeVoiceInput(options: UseRealtimeVoiceInputOptions) {
   }
 
   async function toggleRecording(): Promise<void> {
-    const state = getRealtimeVoiceState(options.instanceId)
-    if (state === "recording" || state === "connecting") {
+    const current = state()
+    if (current === "recording" || current === "connecting") {
       stopRealtimeVoice(options.instanceId)
       return
     }
 
-    if (!canUseRealtimeVoice()) return
     clearTranscript()
     await startRealtimeVoice(options.instanceId)
   }
@@ -84,11 +83,15 @@ export function useRealtimeVoiceInput(options: UseRealtimeVoiceInputOptions) {
     isActive,
     isSupported,
     toggleRecording,
-    state: () => getRealtimeVoiceState(options.instanceId),
+    state,
+    lastError,
     buttonTitle: () => {
-      const state = getRealtimeVoiceState(options.instanceId)
-      if (state === "recording") return t("promptInput.voiceInput.stop.title")
-      if (state === "connecting") return t("promptInput.voiceInput.transcribing.title")
+      const err = lastError()
+      if (err) return err
+      const s = state()
+      if (s === "recording") return t("promptInput.voiceInput.stop.title")
+      if (s === "connecting") return t("promptInput.voiceInput.transcribing.title")
+      if (s === "speaking") return "Assistant speaking…"
       return "Realtime Voice"
     },
   }
