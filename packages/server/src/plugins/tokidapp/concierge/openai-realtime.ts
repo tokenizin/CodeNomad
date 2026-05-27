@@ -502,8 +502,13 @@ export function createRealtimeSession(
           input: {
             format: { type: "audio/pcm", rate: 24000 },
             transcription: { model: "gpt-4o-mini-transcribe" },
-            // Push-to-talk: client commits on voice_stop (server VAD commits empty buffers).
-            turn_detection: null,
+            // Server-side VAD for continuous voice — auto-detects when user stops speaking.
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+            },
           },
           output: {
             format: { type: "audio/pcm", rate: 24000 },
@@ -559,6 +564,12 @@ export function createRealtimeSession(
         case "response.done":
         case "response.completed":
           onResponseDone?.()
+          // With VAD, the server auto-resumes listening after response completes.
+          // Notify client that voice is ready again.
+          if (session.onReady) {
+            session.onReady()
+            session.onReady = undefined
+          }
           break
 
         case "conversation.item.created":
