@@ -116,6 +116,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
               (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
               notifyReady,
+              (transcript) =>
+                socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
             )
           } else {
             notifyReady()
@@ -1016,6 +1018,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
                   (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
                   notifyReady,
+                  (transcript) =>
+                    socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
                 )
               } else {
                 notifyReady()
@@ -1189,6 +1193,12 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 }))
 
                 if (result.success) {
+                  socketRef.send(JSON.stringify({
+                    type: "voice_task_complete",
+                    content: `Your workflow finished. ${result.completedNodes} steps completed. Would you like a quick overview, or should I fast-track the next planned tasks?`,
+                    completedNodes: result.completedNodes,
+                    durationMs: result.durationMs,
+                  }))
                   socketRef.send(JSON.stringify({
                     type: "message",
                     content: `✅ Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s.`,

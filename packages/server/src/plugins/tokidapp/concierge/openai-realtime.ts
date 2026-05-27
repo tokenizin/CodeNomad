@@ -1,6 +1,7 @@
 import { execSync } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
+import { sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 
 declare const WebSocket: {
   new(url: string, protocols?: string | string[]): WebSocket
@@ -181,6 +182,8 @@ export function createRealtimeSession(
   onTextDelta: (text: string) => void,
   onError: (error: string) => void,
   onReady?: () => void,
+  onUserTranscript?: (text: string) => void,
+  onResponseDone?: () => void,
 ): RealtimeSession {
   const ws = new WebSocket(REALTIME_URL, [
     "realtime",
@@ -206,12 +209,7 @@ export function createRealtimeSession(
       session: {
         type: "realtime",
         output_modalities: ["text", "audio"],
-        instructions: [
-          `You are TokiDAPP, an AI assistant for the StarCARD ecosystem.`,
-          `You can investigate the codebase, generate pages/components,`,
-          `run tests, and check git status using the provided tools.`,
-          `Be concise and helpful. When asked to do code tasks, use the tools.`,
-        ].join(" "),
+        instructions: VOICE_INSTRUCTIONS,
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
@@ -250,12 +248,29 @@ export function createRealtimeSession(
 
         case "response.output_audio_transcript.delta":
         case "response.audio_transcript.delta":
-          if (parsed.delta) onTextDelta(parsed.delta)
+          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
           break
 
         case "response.output_text.delta":
         case "response.text.delta":
-          if (parsed.delta) onTextDelta(parsed.delta)
+          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
+          break
+
+        case "conversation.item.input_audio_transcription.completed":
+        case "input_audio_transcription.completed": {
+          const transcript =
+            parsed.transcript ||
+            parsed.item?.input_audio_transcription?.transcript ||
+            ""
+          if (transcript && onUserTranscript) {
+            onUserTranscript(sanitizeSpeechText(transcript))
+          }
+          break
+        }
+
+        case "response.done":
+        case "response.completed":
+          onResponseDone?.()
           break
 
         case "conversation.item.created":
