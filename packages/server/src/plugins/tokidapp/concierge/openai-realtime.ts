@@ -14,6 +14,13 @@ import {
   assignTask,
   rollbackDeploy,
   captureGitDiff,
+  runA11yAudit,
+  checkA11yScan,
+  checkColorContrast,
+  readFileContent,
+  runLint,
+  runTypeCheck,
+  gitBranchAction,
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
@@ -194,6 +201,85 @@ const tools = [
   },
   {
     type: "function",
+    name: "run_a11y_audit",
+    description: "Run a full accessibility audit on a URL using Lighthouse. Returns score (0-100) and detailed issue list.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL to audit (e.g. https://starguard.vercel.app or localhost:3000)" },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    type: "function",
+    name: "check_a11y",
+    description: "Run an axe-core accessibility scan on a URL. Returns violations grouped by impact level.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL to scan for accessibility violations" },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    type: "function",
+    name: "check_color_contrast",
+    description: "Check color contrast ratios in a CSS or design file. Lists detected colors for manual review.",
+    parameters: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the CSS or component file to check" },
+      },
+      required: ["filePath"],
+    },
+  },
+  {
+    type: "function",
+    name: "read_file",
+    description: "Read a file or list a directory. Returns contents (up to 200 lines) for files, or listing for directories.",
+    parameters: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the file or directory to read" },
+      },
+      required: ["filePath"],
+    },
+  },
+  {
+    type: "function",
+    name: "run_lint",
+    description: "Run the project linter and return error/warning counts with the last 30 lines of output.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "run_typecheck",
+    description: "Run TypeScript type checking (tsc --noEmit) and report any type errors found.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "git_branch",
+    description: "Manage git branches: list all branches, create a new branch (with name), switch to a branch, or delete a branch.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "create", "switch", "delete"], description: "Branch action to perform" },
+        branchName: { type: "string", description: "Branch name (required for create, switch, delete)" },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    type: "function",
     name: "orchestrate",
     description: "Orchestrate a multi-step workflow via the DAG engine — can investigate, plan, generate, test, deploy, and more in parallel. Describes WHAT you want to accomplish.",
     parameters: {
@@ -284,6 +370,39 @@ async function executeTool(
 
       case "capture_git_diff": {
         return await captureGitDiff(config.workspaceRoot)
+      }
+
+      case "run_a11y_audit": {
+        const { url } = JSON.parse(argsStr)
+        return await runA11yAudit(url, config.workspaceRoot)
+      }
+
+      case "check_a11y": {
+        const { url } = JSON.parse(argsStr)
+        return await checkA11yScan(url, config.workspaceRoot)
+      }
+
+      case "check_color_contrast": {
+        const { filePath } = JSON.parse(argsStr)
+        return await checkColorContrast(filePath, config.workspaceRoot)
+      }
+
+      case "read_file": {
+        const { filePath } = JSON.parse(argsStr)
+        return await readFileContent(filePath, config.workspaceRoot)
+      }
+
+      case "run_lint": {
+        return await runLint(config.workspaceRoot)
+      }
+
+      case "run_typecheck": {
+        return await runTypeCheck(config.workspaceRoot)
+      }
+
+      case "git_branch": {
+        const { action, branchName } = JSON.parse(argsStr)
+        return await gitBranchAction(action, branchName, config.workspaceRoot)
       }
 
       case "orchestrate": {

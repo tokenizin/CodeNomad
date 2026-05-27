@@ -39,6 +39,13 @@ import {
   listTasks,
   assignTask,
   rollbackDeploy,
+  runA11yAudit,
+  checkA11yScan,
+  checkColorContrast,
+  readFileContent,
+  runLint,
+  runTypeCheck,
+  gitBranchAction,
 } from "../../plugins/tokidapp/concierge/codebase-tools"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
@@ -367,6 +374,40 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "11", tool: "rollback_deploy", status: "running", summary: "Rolling back deploy..." }))
     const result = await rollbackDeploy(send)
     send(JSON.stringify({ type: "tool_result", id: "11", tool: "rollback_deploy", status: "complete", summary: result }))
+  } else if (lower.includes("a11y") || lower.includes("accessibility") || lower.includes("wcag") || lower.includes("lighthouse")) {
+    const urlMatch = content.match(/https?:\/\/[^\s]+/)
+    const url = urlMatch ? urlMatch[0] : "https://starguard.vercel.app"
+    send(JSON.stringify({ type: "tool_call", id: "12", tool: "run_a11y_audit", status: "running", summary: "Running accessibility audit..." }))
+    const result = await runA11yAudit(url, WORKSPACE_ROOT, send)
+    send(JSON.stringify({ type: "tool_result", id: "12", tool: "run_a11y_audit", status: "complete", summary: result }))
+  } else if (lower.includes("read") || lower.includes("show") || lower.includes("view") || lower.includes("open")) {
+    const fileMatch = content.match(/(?:read|show|view|open|list)\s+([^\s]+(?:\/[^\s]+)*)/i)
+    const filePath = fileMatch ? fileMatch[1] : (content.replace(/read|show|view|open|list/gi, "").trim())
+    if (filePath && filePath.length > 1) {
+      send(JSON.stringify({ type: "tool_call", id: "13", tool: "read_file", status: "running", summary: `Reading ${filePath}...` }))
+      const result = await readFileContent(filePath, WORKSPACE_ROOT)
+      send(JSON.stringify({ type: "tool_result", id: "13", tool: "read_file", status: "complete", summary: result }))
+    } else {
+      send(JSON.stringify({ type: "message", content: "What file would you like to read? Specify the path like: read src/app/page.tsx" }))
+    }
+  } else if (lower.includes("lint") || lower.includes("eslint")) {
+    send(JSON.stringify({ type: "tool_call", id: "14", tool: "run_lint", status: "running", summary: "Running linter..." }))
+    const result = await runLint(WORKSPACE_ROOT, send)
+    send(JSON.stringify({ type: "tool_result", id: "14", tool: "run_lint", status: "complete", summary: result }))
+  } else if (lower.includes("typecheck") || lower.includes("type-check") || lower.includes("type check") || lower.includes("tsc")) {
+    send(JSON.stringify({ type: "tool_call", id: "15", tool: "run_typecheck", status: "running", summary: "Running type check..." }))
+    const result = await runTypeCheck(WORKSPACE_ROOT, send)
+    send(JSON.stringify({ type: "tool_result", id: "15", tool: "run_typecheck", status: "complete", summary: result }))
+  } else if (lower.includes("branch")) {
+    const isCreate = lower.includes("create") || lower.includes("new")
+    const isDelete = lower.includes("delete") || lower.includes("remove")
+    const isSwitch = lower.includes("switch") || lower.includes("checkout") || lower.includes("go to")
+    const nameMatch = content.match(/(?:branch\s+)?(\w[\w/-]+)/i)
+    const branchName = (!isCreate && !isDelete && !isSwitch) ? undefined : (nameMatch ? nameMatch[1] : undefined)
+    const action = isCreate ? "create" : isDelete ? "delete" : isSwitch ? "switch" : "list"
+    send(JSON.stringify({ type: "tool_call", id: "16", tool: "git_branch", status: "running", summary: `Branch action: ${action}...` }))
+    const result = await gitBranchAction(action, branchName, WORKSPACE_ROOT)
+    send(JSON.stringify({ type: "tool_result", id: "16", tool: "git_branch", status: "complete", summary: result }))
   } else {
     send(JSON.stringify({
       type: "message",
@@ -381,6 +422,11 @@ async function routeMessage(
 • **List tasks** — view all pending/assigned/completed tasks
 • **Assign task** — assign a task to a specific user
 • **Rollback deploy** — revert to the previous commit and redeploy
+• **Accessibility** — run a11y audits (Lighthouse, axe-core)
+• **Read file** — view file contents or list directories
+• **Lint** — run the linter
+• **Type check** — run TypeScript type checking
+• **Git branch** — list, create, switch, or delete branches
 
 What would you like to do?`,
     }))

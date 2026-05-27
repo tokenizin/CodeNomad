@@ -512,3 +512,303 @@ export async function rollbackDeploy(send?: (msg: string) => void): Promise<stri
     "Redeploy triggered.",
   ].join("\n")
 }
+
+// ── Accessibility Testing Tools ──────────────────────────────────
+
+export async function runA11yAudit(
+  url: string,
+  workspaceRoot: string,
+  send?: (msg: string) => void,
+): Promise<string> {
+  if (send) send(JSON.stringify({ type: "stream", delta: "Running accessibility audit..." }))
+
+  try {
+    const output = execSync(
+      `npx lighthouse "${url}" --quiet --output=json --only-categories=accessibility --chrome-flags="--headless --no-sandbox" 2>/dev/null || true`,
+      { cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, timeout: 60000 },
+    )
+
+    // Parse the lighthouse JSON output
+    const match = output.match(/\{[^]*\}/)
+    if (!match) return "Could not parse lighthouse output. Try running from a directory with a package.json."
+    
+    const data = JSON.parse(match[0])
+    const a11y = data?.categories?.accessibility
+    if (!a11y) return "Accessibility audit did not return results."
+
+    const score = Math.round((a11y.score ?? 0) * 100)
+    const audits = data?.audits || {}
+    const failedAudits: string[] = []
+
+    for (const [key, audit] of Object.entries(audits) as [string, any][]) {
+      if (audit.score !== null && audit.score < 1 && audit.score !== undefined) {
+        failedAudits.push(`- ${audit.title}: ${audit.description?.split(".")[0] || "issue found"}`)
+      }
+    }
+
+    return [
+      `**Accessibility Score: ${score}/100**`,
+      score >= 90 ? "✅ Great! Passes accessibility guidelines." :
+      score >= 50 ? "⚠️ Needs improvement." :
+      "❌ Significant accessibility issues found.",
+      "",
+      failedAudits.length > 0
+        ? `Issues found (${failedAudits.length}):\n${failedAudits.slice(0, 15).join("\n")}${failedAudits.length > 15 ? `\n... and ${failedAudits.length - 15} more` : ""}`
+        : "No critical issues detected.",
+    ].join("\n")
+  } catch (err) {
+    return `Accessibility audit error: ${(err as Error).message}. Ensure lighthouse is available via npx.`
+  }
+}
+
+export async function checkA11yScan(
+  url: string,
+  workspaceRoot: string,
+  send?: (msg: string) => void,
+): Promise<string> {
+  if (send) send(JSON.stringify({ type: "stream", delta: "Scanning for accessibility violations..." }))
+
+  try {
+    const output = execSync(
+      `npx axe "${url}" --show-errors 2>/dev/null || true`,
+      { cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, timeout: 30000 },
+    )
+
+    // Parse axe JSON output (look for JSON block)
+    const jsonMatch = output.match(/\{"violations":\[[\s\S]*?"inapplicable":\[[\s\S]*?\]\}/)
+    if (!jsonMatch) return "Axe scan did not return results. Try: npx axe <url>"
+
+    const data = JSON.parse(jsonMatch[0])
+    const violations = data.violations || []
+    const passes = data.passes || []
+    const incomplete = data.incomplete || []
+
+    if (violations.length === 0) {
+      return [
+        "✅ **No accessibility violations found!**",
+        `Passed ${passes.length} checks.`,
+        incomplete.length > 0 ? `${incomplete.length} items need manual review.` : "",
+      ].filter(Boolean).join("\n")
+    }
+
+    const summary = violations.map((v: any) =>
+      `- **${v.impact.toUpperCase()}**: ${v.help} (${v.nodes.length} nodes)\n  ${v.helpUrl || ""}`
+    )
+
+    return [
+      `**${violations.length} violation(s) found**`,
+      "",
+      ...summary,
+      "",
+      `Passed: ${passes.length} | Incomplete: ${incomplete.length} | Violations: ${violations.length}`,
+    ].join("\n")
+  } catch (err) {
+    return `Axe scan error: ${(err as Error).message}. Install with: npx axe`
+  }
+}
+
+export async function checkColorContrast(
+  filePath: string,
+  workspaceRoot: string,
+): Promise<string> {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath)
+  if (!fs.existsSync(fullPath)) return `File not found: ${filePath}`
+
+  try {
+    const content = fs.readFileSync(fullPath, "utf-8")
+
+    // Extract hex/rgb color pairs from common patterns
+    const colorPatterns = [
+      ...content.matchAll(/(?:color|background|background-color|border-color|outline-color)\s*:\s*([^;]+)/gi),
+    ]
+
+    const colors = new Set<string>()
+    for (const [, value] of colorPatterns) {
+      const hexMatch = value.match(/#([0-9a-fA-F]{3,8})\b/g)
+      if (hexMatch) hexMatch.forEach((c) => colors.add(c))
+      const rgbMatch = value.match(/rgb[a]?\([^)]+\)/g)
+      if (rgbMatch) rgbMatch.forEach((c) => colors.add(c))
+    }
+
+    if (colors.size < 2) {
+      return `Found ${colors.size} color(s) in ${path.basename(fullPath)}. Need at least 2 for contrast checking.\nColors: ${Array.from(colors).join(", ")}`
+    }
+
+    return [
+      `**Color Contrast Check**: ${path.basename(fullPath)}`,
+      `Found ${colors.size} color value(s).`,
+      "",
+      "For manual contrast check:",
+      "- Use https://webaim.org/resources/contrastchecker/",
+      "- Normal text (AA): 4.5:1 | Large text (AA): 3:1 | AAA: 7:1",
+      "",
+      `Detected colors:\n${Array.from(colors).map((c) => `  - ${c}`).join("\n")}`,
+    ].join("\n")
+  } catch (err) {
+    return `Color contrast check error: ${(err as Error).message}`
+  }
+}
+
+// ── Read File ────────────────────────────────────────────────────
+
+export async function readFileContent(
+  filePath: string,
+  workspaceRoot: string,
+  send?: (msg: string) => void,
+): Promise<string> {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath)
+  if (!fs.existsSync(fullPath)) return `File not found: ${filePath}`
+  
+  try {
+    const stat = fs.statSync(fullPath)
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(fullPath)
+      return [
+        `📁 **${filePath}/** (directory, ${entries.length} entries)`,
+        "",
+        ...entries.map((e) => {
+          const isDir = fs.statSync(path.join(fullPath, e)).isDirectory()
+          return `${isDir ? "📁" : "📄"} ${e}${isDir ? "/" : ""}`
+        }),
+      ].join("\n")
+    }
+
+    const content = fs.readFileSync(fullPath, "utf-8")
+    const lines = content.split("\n")
+    
+    // Truncate very large files
+    const maxLines = 200
+    const truncated = lines.length > maxLines
+    const display = truncated ? lines.slice(0, maxLines) : lines
+
+    if (send) send(JSON.stringify({ type: "stream", delta: `Reading ${path.basename(fullPath)} (${display.length} of ${lines.length} lines)...` }))
+
+    return [
+      `📄 **${filePath}** (${lines.length} lines, ${(stat.size / 1024).toFixed(1)}KB)`,
+      "",
+      "```",
+      ...display,
+      truncated ? `... (${lines.length - maxLines} more lines. Use a more specific search to narrow down.)` : "",
+      "```",
+    ].filter(Boolean).join("\n")
+  } catch (err) {
+    return `Error reading file: ${(err as Error).message}`
+  }
+}
+
+// ── Lint & TypeScript ────────────────────────────────────────────
+
+export async function runLint(
+  workspaceRoot: string,
+  send?: (msg: string) => void,
+): Promise<string> {
+  if (send) send(JSON.stringify({ type: "stream", delta: "Running linter..." }))
+
+  try {
+    let output: string
+    try {
+      output = execSync("bun run lint 2>&1 || true", {
+        cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 60000,
+      })
+    } catch (e: any) {
+      output = e.stdout || e.message || "Lint execution failed"
+    }
+
+    const lines = output.split("\n").filter(Boolean)
+    const errorCount = lines.filter((l) => l.includes("error")).length
+    const warningCount = lines.filter((l) => l.includes("warning")).length
+
+    return [
+      `**Lint Results**`,
+      `Errors: ${errorCount} | Warnings: ${warningCount}`,
+      errorCount + warningCount === 0 ? "✅ Clean!" : "",
+      "",
+      ...lines.slice(-30),
+    ].filter(Boolean).join("\n")
+  } catch (err) {
+    return `Lint error: ${(err as Error).message}`
+  }
+}
+
+export async function runTypeCheck(
+  workspaceRoot: string,
+  send?: (msg: string) => void,
+): Promise<string> {
+  if (send) send(JSON.stringify({ type: "stream", delta: "Running TypeScript type check..." }))
+
+  try {
+    const startTime = Date.now()
+    let output: string
+    
+    // Try bun first, fall back to npx tsc
+    try {
+      output = execSync("bun run type-check 2>&1 || bunx tsc --noEmit 2>&1 || npx --yes tsc --noEmit 2>&1", {
+        cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 120000,
+      })
+    } catch (e: any) {
+      output = e.stdout || e.message || "Type check failed"
+    }
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1)
+    const errorMatch = output.match(/Found\s+(\d+)\s+error/i) || output.match(/(\d+)\s+error/i)
+    const errors = errorMatch ? parseInt(errorMatch[1]) : 0
+
+    const clean = output.includes(" TS") === false || output.trim() === ""
+    
+    return [
+      `**TypeScript Type Check** (${duration}s)`,
+      errors > 0 ? `Found ${errors} type error(s).` : "✅ No type errors!",
+      "",
+      ...(errors > 0 ? output.split("\n").slice(-20) : []),
+    ].join("\n")
+  } catch (err) {
+    return `Type check error: ${(err as Error).message}`
+  }
+}
+
+// ── Git Branch ───────────────────────────────────────────────────
+
+export async function gitBranchAction(
+  action: string,
+  branchName: string | undefined,
+  workspaceRoot: string,
+): Promise<string> {
+  try {
+    switch (action) {
+      case "list": {
+        const branches = execSync("git branch", { cwd: workspaceRoot, encoding: "utf-8" })
+        const current = execSync("git rev-parse --abbrev-ref HEAD", { cwd: workspaceRoot, encoding: "utf-8" }).trim()
+        return [
+          `**Branches** (current: ${current})`,
+          "",
+          branches.split("\n").map((b) => b.trim()).filter(Boolean).map((b) =>
+            b.startsWith("*") ? `* **${b.slice(2)}**` : `  ${b}`
+          ).join("\n"),
+        ].join("\n")
+      }
+
+      case "create": {
+        if (!branchName) return "Branch name required for create action."
+        execSync(`git checkout -b "${branchName}"`, { cwd: workspaceRoot, encoding: "utf-8" })
+        return `✅ Created and switched to branch: \`${branchName}\``
+      }
+
+      case "switch": {
+        if (!branchName) return "Branch name required for switch action."
+        execSync(`git checkout "${branchName}"`, { cwd: workspaceRoot, encoding: "utf-8" })
+        return `✅ Switched to branch: \`${branchName}\``
+      }
+
+      case "delete": {
+        if (!branchName) return "Branch name required for delete action."
+        execSync(`git branch -d "${branchName}"`, { cwd: workspaceRoot, encoding: "utf-8" })
+        return `✅ Deleted branch: \`${branchName}\``
+      }
+
+      default:
+        return `Unknown git branch action: ${action}. Supported: list, create, switch, delete`
+    }
+  } catch (err) {
+    return `Git branch error: ${(err as Error).message}`
+  }
+}
