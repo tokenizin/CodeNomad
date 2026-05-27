@@ -1,8 +1,23 @@
-import { execSync } from "child_process"
-import * as fs from "fs"
-import * as path from "path"
 import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import {
+  investigateCodebase,
+  generateFeature,
+  runTests,
+  gitStatus,
+  gitCommitPush,
+  triggerVercelDeploy,
+  checkDeployStatus,
+  spawnAgent,
+  scheduleTask,
+  listTasks,
+  assignTask,
+  rollbackDeploy,
+  captureGitDiff,
+} from "./codebase-tools"
+import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
+import { apiPost } from "../orchestrator/starguard-client"
+import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
 declare const WebSocket: {
   new(url: string, protocols?: string | string[]): WebSocket
@@ -17,6 +32,11 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 const REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-mini"
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
+const VERCEL_DEPLOY_HOOK_URL = process.env.VERCEL_DEPLOY_HOOK_URL
+const VERCEL_TOKEN = process.env.VERCEL_TOKEN
+const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID
+const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID
 
 interface RealtimeSession {
   ws: WebSocket
@@ -76,81 +96,236 @@ const tools = [
       required: ["prompt"],
     },
   },
+  {
+    type: "function",
+    name: "git_commit_push",
+    description: "Commit all staged changes and push to the current branch on the remote.",
+    parameters: {
+      type: "object",
+      properties: {
+        commitMsg: { type: "string", description: "Commit message describing the changes" },
+      },
+      required: ["commitMsg"],
+    },
+  },
+  {
+    type: "function",
+    name: "trigger_deploy",
+    description: "Trigger a Vercel deployment via the configured deploy hook URL.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "check_deploy_status",
+    description: "Check the latest Vercel deployment status.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "spawn_agent",
+    description: "Spawn an OpenCode/OpenCoder/OpenAgent workspace for autonomous task execution.",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Description of the agent's task" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    type: "function",
+    name: "schedule_task",
+    description: "Create and schedule a task in the TokiDAPP task system.",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Description of the task to schedule" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    type: "function",
+    name: "list_tasks",
+    description: "List all tasks, optionally filtered by status or keyword.",
+    parameters: {
+      type: "object",
+      properties: {
+        filter: { type: "string", description: "Optional filter keyword (pending, assigned, in progress, complete)" },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "assign_task",
+    description: "Assign an existing task to a specific user by email or user ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Task ID and assignee, e.g. 'assign task abc123 to user@example.com'" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    type: "function",
+    name: "rollback_deploy",
+    description: "Rollback to the previous git commit and trigger a redeploy.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "capture_git_diff",
+    description: "Capture the staged git diff summary without making changes.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
+    name: "orchestrate",
+    description: "Orchestrate a multi-step workflow via the DAG engine — can investigate, plan, generate, test, deploy, and more in parallel. Describes WHAT you want to accomplish.",
+    parameters: {
+      type: "object",
+      properties: {
+        intent: { type: "string", description: "What you want to accomplish, e.g. 'Investigate the auth flow and fix any issues'" },
+        intentType: { type: "string", description: "Lifecycle template hint: QUERY_INFO, FULL_DEPLOY, FEATURE_GENERATION, INVESTIGATE_ISSUE", enum: ["QUERY_INFO", "FULL_DEPLOY", "FEATURE_GENERATION", "INVESTIGATE_ISSUE", "DEPLOY_ONLY"] },
+      },
+      required: ["intent"],
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
 
-async function executeTool(name: string, argsStr: string): Promise<string> {
+async function executeTool(
+  name: string,
+  argsStr: string,
+  config: {
+    workspaceRoot: string
+    starguardBase: string
+    deployHookUrl?: string
+    vercelToken?: string
+    vercelProjectId?: string
+    vercelTeamId?: string
+  },
+): Promise<string> {
   try {
     switch (name) {
       case "investigate_codebase": {
         const { query } = JSON.parse(argsStr)
-        const keywords = query.replace(/investigate|find|search/gi, "").trim().split(/\s+/).filter(Boolean)
-        if (keywords.length === 0) return "Please provide search keywords."
-
-        try {
-          const pattern = keywords.join("|")
-          const results = execSync(
-            `rg -l -i "${pattern}" --type ts --type tsx --type css --glob '!node_modules' --glob '!.next' --glob '!public/codenomad' 2>/dev/null | head -15`,
-            { cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024 },
-          )
-          const files = results.trim().split("\n").filter(Boolean)
-          if (files.length === 0) return `No files found for: ${keywords.join(", ")}`
-          return `Found ${files.length} file(s):\n${files.map((f) => `- ${f}`).join("\n")}`
-        } catch { return "Search failed." }
+        return await investigateCodebase(query, config.workspaceRoot)
       }
 
       case "run_tests": {
-        try {
-          const output = execSync("bun run test 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 120000 })
-          const passMatch = output.match(/(\d+)\s+passed/i)
-          const failMatch = output.match(/(\d+)\s+failed/i)
-          return `Tests: ${passMatch?.[1] || "?"} passed, ${failMatch?.[1] || "0"} failed`
-        } catch (e: any) { return `Test error: ${e.message || "unknown"}` }
+        return await runTests(config.workspaceRoot)
       }
 
       case "git_status": {
-        try {
-          const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-          const status = execSync("git status --short", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-          const changes = status ? status.split("\n").length : 0
-          return `Branch: ${branch}\nUncommitted: ${changes} file(s)`
-        } catch (e: any) { return `Git error: ${e.message}` }
+        return await gitStatus(config.workspaceRoot)
       }
 
       case "generate_feature": {
         const { prompt } = JSON.parse(argsStr)
-        const filesCreated: string[] = []
-        const match = prompt.match(/(\w+)\s*(page|component|route)/i)
-        if (!match) return "Specify what to create: page, component, or API route."
+        return await generateFeature(prompt, config.workspaceRoot)
+      }
 
-        const name = match[1].toLowerCase()
-        const type = match[2].toLowerCase()
+      case "git_commit_push": {
+        const { commitMsg } = JSON.parse(argsStr)
+        return await gitCommitPush(commitMsg, config.workspaceRoot, config.starguardBase)
+      }
 
-        if (type === "page") {
-          const dir = path.join(WORKSPACE_ROOT, "src", "app", name)
-          fs.mkdirSync(dir, { recursive: true })
-          fs.writeFileSync(
-            path.join(dir, "page.tsx"),
-            `'use client'\n\nexport default function ${name.charAt(0).toUpperCase() + name.slice(1)}Page() {\n  return <div className="p-8"><h1 className="text-2xl font-bold text-white">${name}</h1></div>\n}\n`,
-          )
-          filesCreated.push(`src/app/${name}/page.tsx`)
+      case "trigger_deploy": {
+        return await triggerVercelDeploy(config.deployHookUrl)
+      }
+
+      case "check_deploy_status": {
+        return await checkDeployStatus({
+          vercelToken: config.vercelToken,
+          vercelProjectId: config.vercelProjectId,
+          vercelTeamId: config.vercelTeamId,
+        })
+      }
+
+      case "spawn_agent": {
+        const { prompt } = JSON.parse(argsStr)
+        return await spawnAgent(prompt, config.starguardBase, config.workspaceRoot)
+      }
+
+      case "schedule_task": {
+        const { prompt } = JSON.parse(argsStr)
+        return await scheduleTask(prompt, config.starguardBase)
+      }
+
+      case "list_tasks": {
+        const { filter } = JSON.parse(argsStr)
+        return await listTasks(filter || "", config.starguardBase)
+      }
+
+      case "assign_task": {
+        const { prompt } = JSON.parse(argsStr)
+        return await assignTask(prompt, config.starguardBase)
+      }
+
+      case "rollback_deploy": {
+        return await rollbackDeploy()
+      }
+
+      case "capture_git_diff": {
+        return await captureGitDiff(config.workspaceRoot)
+      }
+
+      case "orchestrate": {
+        const { intent, intentType = "QUERY_INFO" } = JSON.parse(argsStr)
+
+        // Create orchestrator session via StarGuard
+        const sessionId = "voice_" + Date.now()
+        const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: true })
+        if (!orchRes.ok) {
+          return "Failed to create orchestrator session."
+        }
+        const orchestrator = await orchRes.json()
+        const orchestratorId = orchestrator.id
+
+        // Build DAG from intent
+        const { nodes, phases } = buildLifecycleDAG(
+          intentType,
+          intent,
+          {},
+        )
+
+        const dag: DAGDefinition = {
+          id: `dag_${Date.now()}`,
+          nodes,
+          createdAt: new Date().toISOString(),
         }
 
-        if (type === "component") {
-          const compPascal = name.charAt(0).toUpperCase() + name.slice(1)
-          const compDir = path.join(WORKSPACE_ROOT, "src", "components")
-          fs.mkdirSync(compDir, { recursive: true })
-          fs.writeFileSync(
-            path.join(compDir, `${compPascal}.tsx`),
-            `'use client'\n\nexport function ${compPascal}({ className = "" }: { className?: string }) {\n  return <div className={className}>${compPascal}</div>\n}\n`,
-          )
-          filesCreated.push(`src/components/${compPascal}.tsx`)
-        }
+        // Execute DAG with default callbacks (no WS socket in voice context — results returned inline)
+        const result = await executeDAG(orchestratorId, dag, {
+          onNodeStart: () => {},
+          onNodeComplete: () => {},
+          onNodeFail: () => {},
+          onApprovalRequired: async () => "approved",
+          onBroadcast: () => {},
+          onLog: () => {},
+        })
 
-        return filesCreated.length > 0
-          ? `Created:\n${filesCreated.map((f) => `- ${f}`).join("\n")}`
-          : "Could not determine what to create."
+        if (result.success) {
+          return `Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s. Summary: ${result.completedNodes} steps succeeded.`
+        } else {
+          return `Orchestration finished with issues: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}`
+        }
       }
 
       default:
@@ -288,7 +463,14 @@ export function createRealtimeSession(
 
           ws.send(JSON.stringify({ type: "response.cancel" }))
 
-          const result = await executeTool(toolName, args)
+          const result = await executeTool(toolName, args, {
+            workspaceRoot: WORKSPACE_ROOT,
+            starguardBase: STARGUARD_BASE,
+            deployHookUrl: VERCEL_DEPLOY_HOOK_URL,
+            vercelToken: VERCEL_TOKEN,
+            vercelProjectId: VERCEL_PROJECT_ID,
+            vercelTeamId: VERCEL_TEAM_ID,
+          })
 
           ws.send(
             JSON.stringify({

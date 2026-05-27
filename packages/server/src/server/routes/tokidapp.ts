@@ -1,7 +1,4 @@
-import { execSync } from "child_process"
 import { WebSocket, WebSocketServer } from "ws"
-import * as fs from "fs"
-import * as path from "path"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
@@ -26,9 +23,23 @@ import {
   fetchPendingApprovals,
   getPendingApprovals,
 } from "../../plugins/tokidapp/orchestrator/approval-queue"
-import { rollbackToPreviousCommit } from "../../plugins/tokidapp/orchestrator/rollback"
 import { apiPost, apiGet, apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
+import {
+  investigateCodebase,
+  generateFeature,
+  runTests,
+  gitStatus,
+  captureGitDiff,
+  gitCommitPush,
+  triggerVercelDeploy,
+  checkDeployStatus,
+  spawnAgent,
+  scheduleTask,
+  listTasks,
+  assignTask,
+  rollbackDeploy,
+} from "../../plugins/tokidapp/concierge/codebase-tools"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -105,9 +116,11 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
   }
 
   voiceSockets.set(sessionId, socketRef)
+  const orchestratorSessions = new Map<string, string>()
 
   const cleanup = () => {
     voiceSockets.delete(sessionId)
+    orchestratorSessions.delete(sessionId)
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
   }
@@ -155,6 +168,78 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
       if (msg.type === "audio" && msg.data) {
         sendAudioChunk(sessionId, msg.data)
+        return
+      }
+
+      // ── Voice Socket Message Router ─────────────────────────
+
+      if (msg.type === "message" && msg.content) {
+        routeMessage(
+          msg.content as string,
+          (outgoing) => socketRef.send(outgoing),
+          msg.workflowSlug as string | undefined,
+          msg.workflowStep as number | undefined,
+        )
+        return
+      }
+
+      if (msg.type === "orchestrate" && msg.intent) {
+        handleOrchestrateMessage(
+          sessionId,
+          msg.intent as string,
+          (msg.context as Record<string, unknown>) || {},
+          socketRef,
+          orchestratorSessions,
+        )
+        return
+      }
+
+      if (msg.type === "approval_decision" && msg.approvalId) {
+        ;(async () => {
+          const decision = msg.decision as string
+          if (decision === "approve" || decision === "reject") {
+            resolveApproval(
+              msg.approvalId as string,
+              decision === "approve" ? "approved" : "rejected",
+            )
+            await submitApprovalDecision(
+              msg.approvalId as string,
+              decision as "approve" | "reject",
+              msg.comment as string | undefined,
+            )
+            socketRef.send(JSON.stringify({
+              type: "approval_update",
+              approvalId: msg.approvalId,
+              status: decision === "approve" ? "APPROVED" : "REJECTED",
+            }))
+          }
+        })()
+        return
+      }
+
+      if (msg.type === "dag_query") {
+        ;(async () => {
+          const orchId = orchestratorSessions.get(sessionId)
+          if (orchId) {
+            try {
+              const res = await apiGet(`/api/tokidapp/orchestrator/${orchId}`)
+              if (res.ok) {
+                const data = await res.json()
+                socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
+              }
+            } catch { /* ignore */ }
+          }
+        })()
+        return
+      }
+
+      if (msg.type === "deploy" && msg.commitMsg) {
+        ;(async () => {
+          const gitResult = await gitCommitPush(msg.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, (outgoing) => socketRef.send(outgoing))
+          socketRef.send(JSON.stringify({ type: "deploy_status", status: "committed", commitMsg: msg.commitMsg, commitHash: gitResult }))
+          const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, (outgoing) => socketRef.send(outgoing))
+          socketRef.send(JSON.stringify({ type: "deploy_status", status: deployResult.includes("failed") ? "failed" : "building", logs: deployResult }))
+        })()
         return
       }
     } catch {
@@ -212,474 +297,6 @@ export function registerVoiceRealtimeWebSocket(
   })
 }
 
-// ── Tool Implementations ─────────────────────────────────────
-
-async function investigateCodebase(query: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Searching the codebase..." }))
-
-  const keywords = query.replace(/investigate|find|search|look|show|read|examine/gi, "").trim().split(/\s+/).filter(Boolean)
-  if (keywords.length === 0) return "What would you like me to investigate?"
-
-  try {
-    const pattern = keywords.join("|")
-    let results: string
-    try {
-      results = execSync(
-        `rg -l -i "${pattern}" --type ts --type tsx --type css --glob '!node_modules' --glob '!.next' --glob '!public/codenomad' 2>/dev/null | head -20`,
-        { cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024 },
-      )
-    } catch {
-      results = ""
-    }
-
-    const fileList = results.trim().split("\n").filter(Boolean)
-    if (fileList.length === 0) return `No files found matching: ${keywords.join(", ")}`
-
-    const previews: string[] = []
-    for (const file of fileList.slice(0, 3)) {
-      try {
-        const content = execSync(`head -30 "${file}"`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024 })
-        previews.push(`📄 ${file}:\n${content}`)
-      } catch {
-        previews.push(`📄 ${file}: (could not read)`)
-      }
-    }
-
-    return [
-      `Found ${fileList.length} files matching: ${keywords.join(", ")}`,
-      "",
-      ...fileList.map((f) => `- ${f}`),
-      "",
-      "--- Previews ---",
-      "",
-      ...previews,
-    ].join("\n")
-  } catch (err) {
-    return `Error: ${(err as Error).message}`
-  }
-}
-
-async function generateFeature(prompt: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Generating feature..." }))
-
-  const filesCreated: string[] = []
-
-  try {
-    if (/page|route/i.test(prompt)) {
-      const match = prompt.match(/(\w+)\s*page/i) || prompt.match(/add\s+(?:a\s+)?(\w+)/i)
-      const pageName = match ? match[1].toLowerCase() : "new-feature"
-      const dir = path.join(WORKSPACE_ROOT, "src", "app", pageName)
-      fs.mkdirSync(dir, { recursive: true })
-
-      const pageContent = [
-        "'use client'",
-        "",
-        `export default function ${pageName.charAt(0).toUpperCase() + pageName.slice(1)}Page() {`,
-        "  return (",
-        `    <div className="p-8">`,
-        `      <h1 className="text-2xl font-bold text-white">${pageName.charAt(0).toUpperCase() + pageName.slice(1)}</h1>`,
-        `      <p className="text-gray-400 mt-2">Generated by TokiDAPP Concierge</p>`,
-        "    </div>",
-        "  )",
-        "}",
-        "",
-      ].join("\n")
-
-      fs.writeFileSync(path.join(dir, "page.tsx"), pageContent)
-      filesCreated.push(`src/app/${pageName}/page.tsx`)
-    }
-
-    if (/component/i.test(prompt)) {
-      const match = prompt.match(/(\w+)\s*component/i) || prompt.match(/component\s+(\w+)/i)
-      const compName = match ? match[1] : "GeneratedComponent"
-      const compPascal = compName.charAt(0).toUpperCase() + compName.slice(1)
-
-      const componentContent = [
-        "'use client'",
-        "",
-        `export function ${compPascal}({ className = "" }: { className?: string }) {`,
-        "  return (",
-        `    <div className={\`p-4 rounded-xl border border-white/10 bg-white/5 \${className}\`}>`,
-        `      <p className="text-gray-400">${compPascal}</p>`,
-        "    </div>",
-        "  )",
-        "}",
-        "",
-      ].join("\n")
-
-      const compDir = path.join(WORKSPACE_ROOT, "src", "components")
-      fs.mkdirSync(compDir, { recursive: true })
-      fs.writeFileSync(path.join(compDir, `${compPascal}.tsx`), componentContent)
-      filesCreated.push(`src/components/${compPascal}.tsx`)
-    }
-
-    if (filesCreated.length === 0) {
-      return "Please be more specific. Try: 'Add a metrics page' or 'Create a Dashboard component'"
-    }
-
-    return [
-      `Created ${filesCreated.length} file(s):`,
-      "",
-      ...filesCreated.map((f) => `- ${f}`),
-      "",
-      "Run `bun run type-check` to verify.",
-    ].join("\n")
-  } catch (err) {
-    return `Error: ${(err as Error).message}`
-  }
-}
-
-async function runTests(send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Running tests..." }))
-
-  try {
-    const startTime = Date.now()
-    let output: string
-    try {
-      output = execSync("bun run test 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 120000 })
-    } catch (e: any) {
-      output = e.stdout || e.message || "Test execution failed"
-    }
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-    const passMatch = output.match(/(\d+)\s+passed/i)
-    const failMatch = output.match(/(\d+)\s+failed/i)
-    const passed = passMatch ? passMatch[1] : "?"
-    const failed = failMatch ? failMatch[1] : "0"
-
-    return [
-      `Tests completed in ${duration}s`,
-      `Passed: ${passed} | Failed: ${failed}`,
-      failed !== "0" ? "Some tests failed." : "All tests passing!",
-      "",
-      "--- Last 20 lines ---",
-      output.split("\n").slice(-20).join("\n"),
-    ].join("\n")
-  } catch (err) {
-    return `Error: ${(err as Error).message}`
-  }
-}
-
-async function gitStatus(): Promise<string> {
-  try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    const status = execSync("git status --short", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    const log = execSync("git log --oneline -5", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    const filesChanged = status ? status.split("\n").length : 0
-
-    return [
-      `Branch: ${branch}`,
-      `Uncommitted: ${filesChanged} file(s)`,
-      status ? `\n${status}` : "\n   (clean)",
-      "",
-      "--- Recent commits ---",
-      log,
-    ].join("\n")
-  } catch (err) {
-    return `Error: ${(err as Error).message}`
-  }
-}
-
-async function captureGitDiff(): Promise<string> {
-  try {
-    return execSync("git diff --cached --stat 2>/dev/null || echo '(no changes)'", {
-      cwd: WORKSPACE_ROOT, encoding: "utf-8", maxBuffer: 1024 * 1024,
-    })
-  } catch { return "(could not capture diff)" }
-}
-
-async function gitCommitPush(commitMsg: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Committing changes..." }))
-
-  try {
-    const diff = captureGitDiff()
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-    execSync("git add -A", { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
-    execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: WORKSPACE_ROOT, encoding: "utf-8" })
-
-    send(JSON.stringify({ type: "stream", delta: "Pushing to remote..." }))
-    execSync(`git push origin ${branch}`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000 })
-
-    const hash = execSync("git rev-parse HEAD", { cwd: WORKSPACE_ROOT, encoding: "utf-8" }).trim()
-
-    // Store diff as blob if STARGUARD_BASE configured
-    try {
-      await fetch(`${STARGUARD_BASE}/api/tokidapp/deploy-status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "store_diff",
-          commitHash: hash,
-          commitMsg,
-          diff,
-          branch,
-        }),
-      })
-    } catch { /* non-critical */ }
-
-    return `Committed and pushed: ${hash.slice(0, 7)} on ${branch}\n\nFiles changed:\n${diff}`
-  } catch (err) {
-    return `Git error: ${(err as Error).message}`
-  }
-}
-
-async function rollbackDeploy(send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Rolling back to previous commit..." }))
-
-  const result = await rollbackToPreviousCommit(true)
-  if (!result.success) {
-    return `Rollback error: ${result.error}`
-  }
-
-  return [
-    `⏪ **Rolled back to:** ${result.previousHash}`,
-    `Previous commit: ${result.previousMsg}`,
-    "",
-    "Redeploy triggered.",
-  ].join("\n")
-}
-
-async function triggerVercelDeploy(send: (msg: string) => void): Promise<string> {
-  if (!VERCEL_DEPLOY_HOOK_URL) {
-    return "VERCEL_DEPLOY_HOOK_URL not configured. Set it in the environment."
-  }
-
-  send(JSON.stringify({ type: "stream", delta: "Triggering Vercel deploy..." }))
-
-  try {
-    const res = await fetch(VERCEL_DEPLOY_HOOK_URL, { method: "POST" })
-    if (!res.ok) {
-      const err = await res.text()
-      return `Deploy hook failed: ${res.status} ${err}`
-    }
-    return "Deploy triggered on Vercel. Building..."
-  } catch (err) {
-    return `Deploy error: ${(err as Error).message}`
-  }
-}
-
-async function checkDeployStatus(): Promise<string> {
-  if (!VERCEL_TOKEN) return "VERCEL_TOKEN not configured."
-
-  try {
-    const params = new URLSearchParams({ limit: "1" })
-    if (VERCEL_PROJECT_ID) params.set("projectId", VERCEL_PROJECT_ID)
-    if (VERCEL_TEAM_ID) params.set("teamId", VERCEL_TEAM_ID)
-
-    const res = await fetch(`https://api.vercel.com/v6/deployments?${params}`, {
-      headers: { Authorization: `Bearer ${VERCEL_TOKEN}` },
-    })
-
-    if (!res.ok) return "Could not fetch deploy status."
-    const data: any = await res.json()
-    const deploy = data.deployments?.[0]
-    if (!deploy) return "No deployments found."
-
-    return [
-      `Latest deploy: ${deploy.name}`,
-      `URL: https://${deploy.url}`,
-      `State: ${deploy.readyState}`,
-      `Created: ${new Date(deploy.createdAt).toISOString()}`,
-    ].join("\n")
-  } catch {
-    return "Could not fetch deploy status."
-  }
-}
-
-// ── Agent Spawning ────────────────────────────────────────────
-
-async function spawnAgent(prompt: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Spawning agent workspace..." }))
-
-  if (!STARGUARD_BASE) return "StarGuard API not configured."
-
-  // Parse agent type from prompt
-  const agentType = prompt.includes("opencoder")
-    ? "OPENCODER"
-    : prompt.includes("openagent")
-      ? "OPENAGENT"
-      : prompt.includes("buildmate")
-        ? "BUILDMATE"
-        : "OPENCODE"
-
-  const match = prompt.match(/in\s+([\w/-]+)/i)
-  const workspacePath = match ? path.join(WORKSPACE_ROOT, match[1]) : WORKSPACE_ROOT
-
-  try {
-    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/agents/spawn`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: `codenomad_${Date.now()}`,
-        workspacePath,
-        agentType,
-        workspaceName: `Agent-${agentType}-${Date.now()}`,
-      }),
-    })
-
-    if (!res.ok) {
-      const err = await res.text()
-      return `Failed to spawn agent: ${err}`
-    }
-
-    const workspace = await res.json()
-    return [
-      `✅ **${agentType} agent spawned!**`,
-      ``,
-      `Workspace ID: \`${workspace.codenomadWorkspaceId || workspace.id}\``,
-      workspace.codenomadProxyUrl ? `Proxy URL: ${workspace.codenomadProxyUrl}` : "",
-      `Status: ${workspace.status}`,
-      ``,
-      `The agent is ready. Assign tasks to it using "assign task to <agent>".`,
-    ].filter(Boolean).join("\n")
-  } catch (err) {
-    return `Error spawning agent: ${(err as Error).message}`
-  }
-}
-
-// ── Task Scheduling ───────────────────────────────────────────
-
-async function scheduleTask(prompt: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Creating scheduled task..." }))
-
-  if (!STARGUARD_BASE) return "StarGuard API not configured."
-
-  // Parse task info from prompt
-  const titleMatch = prompt.match(/(?:task|to)\s+[""]?([^""]+?)[""]?\s*(?:for|at|with|$)/i)
-  const title = titleMatch ? titleMatch[1].trim() : prompt.replace(/schedule|create|add|task/gi, "").trim()
-  const priorityMatch = prompt.match(/priority\s*[:\s]*(\d+)/i)
-  const priority = priorityMatch ? parseInt(priorityMatch[1]) : 0
-
-  // Parse scheduled time
-  let scheduledFor: string | undefined
-  const timeMatch = prompt.match(/(?:at|for)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/i) || prompt.match(/(?:at|for)\s+(\d{4}-\d{2}-\d{2})/i)
-  if (timeMatch) scheduledFor = timeMatch[1]
-
-  // Parse agent type
-  const agentType = prompt.includes("opencoder")
-    ? "OPENCODER" : prompt.includes("openagent")
-      ? "OPENAGENT" : "OPENCODE"
-
-  // Parse assignee
-  const assignMatch = prompt.match(/(?:assign|to|for)\s+user\s+(\S+@\S+)/i)
-  const assignedToUserId = assignMatch ? assignMatch[1] : undefined
-
-  try {
-    const body: Record<string, unknown> = {
-      sessionId: `codenomad_${Date.now()}`,
-      title,
-      agentType,
-      priority,
-    }
-    if (scheduledFor) body.scheduledFor = scheduledFor
-    if (assignedToUserId) body.assignedToUserId = assignedToUserId
-
-    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-
-    if (!res.ok) {
-      const err = await res.text()
-      return `Failed to schedule task: ${err}`
-    }
-
-    const task = await res.json()
-    return [
-      `✅ **Task scheduled!**`,
-      ``,
-      `Title: ${task.title}`,
-      `ID: \`${task.id}\``,
-      `Agent: ${task.agentType}`,
-      `Priority: ${task.priority}`,
-      scheduledFor ? `Scheduled: ${scheduledFor}` : "Status: PENDING (no schedule set)",
-      assignedToUserId ? `Assigned to: ${assignedToUserId}` : "",
-      ``,
-      `Use "list tasks" to see all scheduled tasks.`,
-    ].filter(Boolean).join("\n")
-  } catch (err) {
-    return `Error scheduling task: ${(err as Error).message}`
-  }
-}
-
-async function listTasks(filter: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Fetching tasks..." }))
-
-  if (!STARGUARD_BASE) return "StarGuard API not configured."
-
-  try {
-    const params = new URLSearchParams()
-    if (filter.includes("pending")) params.set("status", "PENDING")
-    else if (filter.includes("assigned")) params.set("status", "ASSIGNED")
-    else if (filter.includes("in progress")) params.set("status", "IN_PROGRESS")
-    else if (filter.includes("complete")) params.set("status", "COMPLETED")
-
-    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks?${params}`, {
-      headers: { "Content-Type": "application/json" },
-    })
-
-    if (!res.ok) return "Could not fetch tasks."
-    const tasks: any[] = await res.json()
-
-    if (tasks.length === 0) return "No tasks found."
-
-    return [
-      `📋 **${tasks.length} task(s)**`,
-      "",
-      ...tasks.map((t, i) =>
-        `**${i + 1}. ${t.title}**` +
-        `\n   Status: ${t.status} | Agent: ${t.agentType} | Priority: ${t.priority}` +
-        (t.assignedToUserId ? `\n   Assigned to: \`${t.assignedToUserId}\`` : "") +
-        (t.scheduledFor ? `\n   Scheduled: ${new Date(t.scheduledFor).toISOString()}` : "") +
-        (t.resultSummary ? `\n   Result: ${t.resultSummary}` : ""),
-      ),
-    ].join("\n")
-  } catch (err) {
-    return `Error listing tasks: ${(err as Error).message}`
-  }
-}
-
-async function assignTask(prompt: string, send: (msg: string) => void): Promise<string> {
-  send(JSON.stringify({ type: "stream", delta: "Assigning task..." }))
-
-  if (!STARGUARD_BASE) return "StarGuard API not configured."
-
-  // Parse task ID and assignee
-  const taskIdMatch = prompt.match(/task\s+(\S+)/i)
-  const userMatch = prompt.match(/(?:to|user)\s+(\S+@\S+|\S+)/i)
-
-  if (!taskIdMatch) return "Please specify a task ID. Example: assign task abc123 to user@example.com"
-  if (!userMatch) return "Please specify a user. Example: assign task abc123 to user@example.com"
-
-  const taskId = taskIdMatch[1]
-  const assignee = userMatch[1]
-
-  try {
-    const res = await fetch(`${STARGUARD_BASE}/api/tokidapp/tasks/${taskId}/assign`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assignedToUserId: assignee }),
-    })
-
-    if (!res.ok) {
-      const err = await res.text()
-      return `Failed to assign task: ${err}`
-    }
-
-    const task = await res.json()
-    return [
-      `✅ **Task assigned!**`,
-      ``,
-      `Task: ${task.title}`,
-      `Assigned to: ${assignee}`,
-      `Status: ${task.status}`,
-    ].join("\n")
-  } catch (err) {
-    return `Error assigning task: ${(err as Error).message}`
-  }
-}
-
 // ── Message Router ────────────────────────────────────────────
 
 async function routeMessage(
@@ -708,43 +325,43 @@ async function routeMessage(
 
   if (lower.includes("investigate") || lower.includes("find") || lower.includes("search") || lower.includes("look")) {
     send(JSON.stringify({ type: "tool_call", id: "1", tool: "investigate_codebase", status: "running", summary: "Searching codebase..." }))
-    const result = await investigateCodebase(content, send)
+    const result = await investigateCodebase(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "1", tool: "investigate_codebase", status: "complete", summary: result }))
   } else if (lower.includes("generate") || lower.includes("create") || lower.includes("add") || lower.includes("make")) {
     send(JSON.stringify({ type: "tool_call", id: "2", tool: "generate_feature", status: "running", summary: "Generating feature..." }))
-    const result = await generateFeature(content, send)
+    const result = await generateFeature(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "2", tool: "generate_feature", status: "complete", summary: result }))
   } else if (lower.includes("test") || lower.includes("verify") || lower.includes("check")) {
     send(JSON.stringify({ type: "tool_call", id: "3", tool: "run_tests", status: "running", summary: "Running tests..." }))
-    const result = await runTests(send)
+    const result = await runTests(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "3", tool: "run_tests", status: "complete", summary: result }))
   } else if (lower.includes("git status") || lower.includes("branch") || lower.includes("repo")) {
     send(JSON.stringify({ type: "tool_call", id: "4", tool: "git_status", status: "running", summary: "Checking git state..." }))
-    const result = await gitStatus()
+    const result = await gitStatus(WORKSPACE_ROOT)
     send(JSON.stringify({ type: "tool_result", id: "4", tool: "git_status", status: "complete", summary: result }))
   } else if (lower.includes("deploy") || lower.includes("release") || lower.includes("publish")) {
     send(JSON.stringify({ type: "tool_call", id: "5", tool: "git_commit_push", status: "running", summary: "Committing and pushing..." }))
-    const gitResult = await gitCommitPush(content, send)
+    const gitResult = await gitCommitPush(content, WORKSPACE_ROOT, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "5", tool: "git_commit_push", status: "complete", summary: gitResult }))
 
     send(JSON.stringify({ type: "tool_call", id: "6", tool: "trigger_deploy", status: "running", summary: "Triggering Vercel deploy..." }))
-    const deployResult = await triggerVercelDeploy(send)
+    const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, send)
     send(JSON.stringify({ type: "tool_result", id: "6", tool: "trigger_deploy", status: "complete", summary: deployResult }))
   } else if (lower.includes("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
     send(JSON.stringify({ type: "tool_call", id: "7", tool: "spawn_agent", status: "running", summary: "Spawning agent..." }))
-    const result = await spawnAgent(content, send)
+    const result = await spawnAgent(content, STARGUARD_BASE, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "7", tool: "spawn_agent", status: "complete", summary: result }))
   } else if (lower.includes("schedule") || lower.includes("create task") || (lower.includes("add task") && !lower.includes("add a page"))) {
     send(JSON.stringify({ type: "tool_call", id: "8", tool: "schedule_task", status: "running", summary: "Scheduling task..." }))
-    const result = await scheduleTask(content, send)
+    const result = await scheduleTask(content, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "8", tool: "schedule_task", status: "complete", summary: result }))
   } else if (lower.includes("list task") || lower.includes("show task") || lower.includes("my tasks") || lower.includes("all tasks")) {
     send(JSON.stringify({ type: "tool_call", id: "9", tool: "list_tasks", status: "running", summary: "Fetching tasks..." }))
-    const result = await listTasks(content, send)
+    const result = await listTasks(content, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "9", tool: "list_tasks", status: "complete", summary: result }))
   } else if (lower.includes("assign task") || lower.includes("assign to")) {
     send(JSON.stringify({ type: "tool_call", id: "10", tool: "assign_task", status: "running", summary: "Assigning task..." }))
-    const result = await assignTask(content, send)
+    const result = await assignTask(content, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "10", tool: "assign_task", status: "complete", summary: result }))
   } else if (lower.includes("rollback") || lower.includes("undo deploy") || lower.includes("revert")) {
     send(JSON.stringify({ type: "tool_call", id: "11", tool: "rollback_deploy", status: "running", summary: "Rolling back deploy..." }))
@@ -821,8 +438,8 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     try {
       const body = DeployBodySchema.parse(request.body ?? {})
       const send = (msg: string) => {} // no-op for HTTP path
-      const gitResult = await gitCommitPush(body.commitMsg, send)
-      const deployResult = await triggerVercelDeploy(send)
+      const gitResult = await gitCommitPush(body.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, send)
+      const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, send)
       return { git: gitResult, deploy: deployResult }
     } catch (error) {
       request.log.error({ err: error }, "TokiDAPP deploy failed")
@@ -1045,173 +662,13 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "orchestrate" && msg.intent) {
-            // Start orchestrator session + DAG execution
-            ;(async () => {
-              const intent = msg.intent as string
-              const context = (msg.context as Record<string, unknown>) || {}
-
-              // Create orchestrator session via StarGuard
-              try {
-                const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: REALTIME_ENABLED })
-
-                if (!orchRes.ok) {
-                  socketRef.send(JSON.stringify({ type: "error", content: "Failed to create orchestrator session" }))
-                  return
-                }
-
-                const orchestrator = await orchRes.json()
-                const orchestratorId = orchestrator.id
-                orchestratorSessions.set(sessionId, orchestratorId)
-
-                socketRef.send(JSON.stringify({ type: "orchestrator_state", orchestratorId, status: "created", voiceMode: REALTIME_ENABLED }))
-
-                // Build DAG from intent
-                const { nodes, phases } = buildLifecycleDAG(
-                  (context.intentType as string) || "QUERY_INFO",
-                  intent,
-                  (context.entities as Record<string, string>) || {},
-                )
-
-                const dag: DAGDefinition = {
-                  id: `dag_${Date.now()}`,
-                  nodes,
-                  createdAt: new Date().toISOString(),
-                }
-
-                socketRef.send(JSON.stringify({
-                  type: "message",
-                  content: `Analyzing: ${phases.join(" → ")}`,
-                }))
-
-                // Notify each node as it starts
-                const callbacks: ExecutionCallbacks = {
-                  onNodeStart: (node: DAGNode) => {
-                    socketRef.send(JSON.stringify({
-                      type: "dag_node_status",
-                      nodeId: node.title,
-                      nodeName: node.title,
-                      status: "RUNNING",
-                      progress: 0,
-                    }))
-                  },
-                  onNodeComplete: (node: DAGNode) => {
-                    socketRef.send(JSON.stringify({
-                      type: "dag_node_status",
-                      nodeId: node.title,
-                      nodeName: node.title,
-                      status: "COMPLETED",
-                      progress: 100,
-                      output: node.toolOutput,
-                    }))
-                  },
-                  onNodeFail: (node: DAGNode, error: string) => {
-                    socketRef.send(JSON.stringify({
-                      type: "dag_node_status",
-                      nodeId: node.title,
-                      nodeName: node.title,
-                      status: "FAILED",
-                      progress: 0,
-                      error,
-                    }))
-                  },
-                  onApprovalRequired: async (node: DAGNode, ctx: Record<string, unknown>) => {
-                    // Create approval request
-                    const approvalId = await createApprovalRequest(
-                      orchestratorId,
-                      node,
-                      ctx,
-                      (node.metadata?.assignedToUserId as string) || undefined,
-                    )
-
-                    socketRef.send(JSON.stringify({
-                      type: "approval_request",
-                      approvalId,
-                      title: node.title,
-                      context: ctx,
-                      nodeId: node.title,
-                    }))
-
-                    // Wait for decision (polls StarGuard)
-                    const decision = await waitForApprovalDecision(approvalId)
-
-                    socketRef.send(JSON.stringify({
-                      type: "approval_update",
-                      approvalId,
-                      status: decision === "approved" ? "APPROVED" : "REJECTED",
-                    }))
-
-                    return decision
-                  },
-                  onBroadcast: (channel: string, event: string, data: unknown) => {
-                    socketRef.send(JSON.stringify({
-                      type: "broadcast",
-                      channel,
-                      event,
-                      data,
-                    }))
-                  },
-                  onLog: (eventType: string, severity: string, title: string, metadata?: Record<string, unknown>) => {
-                    socketRef.send(JSON.stringify({
-                      type: "event_log",
-                      eventType,
-                      severity,
-                      summary: title,
-                      metadata,
-                      timestamp: new Date().toISOString(),
-                    }))
-
-                    // Also persist to StarGuard
-                    apiPost("/api/tokidapp/events", {
-                      orchestratorId,
-                      eventType,
-                      severity,
-                      title,
-                      metadata,
-                    }).catch(() => {})
-                  },
-                }
-
-                // Execute the DAG
-                const result = await executeDAG(orchestratorId, dag, callbacks)
-
-                socketRef.send(JSON.stringify({
-                  type: "orchestrator_state",
-                  orchestratorId,
-                  status: result.success ? "completed" : "failed",
-                  result: {
-                    success: result.success,
-                    completedNodes: result.completedNodes,
-                    failedNodes: result.failedNodes,
-                    skippedNodes: result.skippedNodes,
-                    totalNodes: result.totalNodes,
-                    durationMs: result.durationMs,
-                  },
-                }))
-
-                if (result.success) {
-                  socketRef.send(JSON.stringify({
-                    type: "voice_task_complete",
-                    content: `Your workflow finished. ${result.completedNodes} steps completed. Would you like a quick overview, or should I fast-track the next planned tasks?`,
-                    completedNodes: result.completedNodes,
-                    durationMs: result.durationMs,
-                  }))
-                  socketRef.send(JSON.stringify({
-                    type: "message",
-                    content: `✅ Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s.`,
-                  }))
-                } else {
-                  socketRef.send(JSON.stringify({
-                    type: "error",
-                    content: `Orchestration finished with errors: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}`,
-                  }))
-                }
-              } catch (e) {
-                socketRef.send(JSON.stringify({
-                  type: "error",
-                  content: `Orchestration error: ${(e as Error).message}`,
-                }))
-              }
-            })()
+            handleOrchestrateMessage(
+              sessionId,
+              msg.intent as string,
+              (msg.context as Record<string, unknown>) || {},
+              socketRef,
+              orchestratorSessions,
+            )
             return
           }
 
@@ -1271,10 +728,10 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
           if (msg.type === "deploy" && msg.commitMsg) {
             ;(async () => {
-              const gitResult = await gitCommitPush(msg.commitMsg, (outgoing) => socketRef.send(outgoing))
+              const gitResult = await gitCommitPush(msg.commitMsg, WORKSPACE_ROOT, STARGUARD_BASE, (outgoing) => socketRef.send(outgoing))
               socketRef.send(JSON.stringify({ type: "deploy_status", status: "committed", commitMsg: msg.commitMsg, commitHash: gitResult }))
 
-              const deployResult = await triggerVercelDeploy((outgoing) => socketRef.send(outgoing))
+              const deployResult = await triggerVercelDeploy(VERCEL_DEPLOY_HOOK_URL, (outgoing) => socketRef.send(outgoing))
               socketRef.send(JSON.stringify({ type: "deploy_status", status: deployResult.includes("failed") ? "failed" : "building", logs: deployResult }))
             })()
             return
@@ -1286,4 +743,173 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
   ws.on("close", cleanup)
   ws.on("error", cleanup)
+}
+
+// ── Orchestrate Message Handler ──────────────────────────────
+
+async function handleOrchestrateMessage(
+  sessionId: string,
+  intent: string,
+  context: Record<string, unknown>,
+  socketRef: { send: (msg: string) => void },
+  orchestratorSessions: Map<string, string>,
+): Promise<void> {
+  try {
+    const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: REALTIME_ENABLED })
+
+    if (!orchRes.ok) {
+      socketRef.send(JSON.stringify({ type: "error", content: "Failed to create orchestrator session" }))
+      return
+    }
+
+    const orchestrator = await orchRes.json()
+    const orchestratorId = orchestrator.id
+    orchestratorSessions.set(sessionId, orchestratorId)
+
+    socketRef.send(JSON.stringify({ type: "orchestrator_state", orchestratorId, status: "created", voiceMode: REALTIME_ENABLED }))
+
+    // Build DAG from intent
+    const { nodes, phases } = buildLifecycleDAG(
+      (context.intentType as string) || "QUERY_INFO",
+      intent,
+      (context.entities as Record<string, string>) || {},
+    )
+
+    const dag: DAGDefinition = {
+      id: `dag_${Date.now()}`,
+      nodes,
+      createdAt: new Date().toISOString(),
+    }
+
+    socketRef.send(JSON.stringify({
+      type: "message",
+      content: `Analyzing: ${phases.join(" → ")}`,
+    }))
+
+    // Callbacks stream progress back via socketRef
+    const callbacks: ExecutionCallbacks = {
+      onNodeStart: (node: DAGNode) => {
+        socketRef.send(JSON.stringify({
+          type: "dag_node_status",
+          nodeId: node.title,
+          nodeName: node.title,
+          status: "RUNNING",
+          progress: 0,
+        }))
+      },
+      onNodeComplete: (node: DAGNode) => {
+        socketRef.send(JSON.stringify({
+          type: "dag_node_status",
+          nodeId: node.title,
+          nodeName: node.title,
+          status: "COMPLETED",
+          progress: 100,
+          output: node.toolOutput,
+        }))
+      },
+      onNodeFail: (node: DAGNode, error: string) => {
+        socketRef.send(JSON.stringify({
+          type: "dag_node_status",
+          nodeId: node.title,
+          nodeName: node.title,
+          status: "FAILED",
+          progress: 0,
+          error,
+        }))
+      },
+      onApprovalRequired: async (node: DAGNode, ctx: Record<string, unknown>) => {
+        const approvalId = await createApprovalRequest(
+          orchestratorId,
+          node,
+          ctx,
+          (node.metadata?.assignedToUserId as string) || undefined,
+        )
+
+        socketRef.send(JSON.stringify({
+          type: "approval_request",
+          approvalId,
+          title: node.title,
+          context: ctx,
+          nodeId: node.title,
+        }))
+
+        const decision = await waitForApprovalDecision(approvalId)
+
+        socketRef.send(JSON.stringify({
+          type: "approval_update",
+          approvalId,
+          status: decision === "approved" ? "APPROVED" : "REJECTED",
+        }))
+
+        return decision
+      },
+      onBroadcast: (channel: string, event: string, data: unknown) => {
+        socketRef.send(JSON.stringify({
+          type: "broadcast",
+          channel,
+          event,
+          data,
+        }))
+      },
+      onLog: (eventType: string, severity: string, title: string, metadata?: Record<string, unknown>) => {
+        socketRef.send(JSON.stringify({
+          type: "event_log",
+          eventType,
+          severity,
+          summary: title,
+          metadata,
+          timestamp: new Date().toISOString(),
+        }))
+
+        // Also persist to StarGuard
+        apiPost("/api/tokidapp/events", {
+          orchestratorId,
+          eventType,
+          severity,
+          title,
+          metadata,
+        }).catch(() => {})
+      },
+    }
+
+    // Execute the DAG
+    const result = await executeDAG(orchestratorId, dag, callbacks)
+
+    socketRef.send(JSON.stringify({
+      type: "orchestrator_state",
+      orchestratorId,
+      status: result.success ? "completed" : "failed",
+      result: {
+        success: result.success,
+        completedNodes: result.completedNodes,
+        failedNodes: result.failedNodes,
+        skippedNodes: result.skippedNodes,
+        totalNodes: result.totalNodes,
+        durationMs: result.durationMs,
+      },
+    }))
+
+    if (result.success) {
+      socketRef.send(JSON.stringify({
+        type: "voice_task_complete",
+        content: `Your workflow finished. ${result.completedNodes} steps completed. Would you like a quick overview, or should I fast-track the next planned tasks?`,
+        completedNodes: result.completedNodes,
+        durationMs: result.durationMs,
+      }))
+      socketRef.send(JSON.stringify({
+        type: "message",
+        content: `✅ Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s.`,
+      }))
+    } else {
+      socketRef.send(JSON.stringify({
+        type: "error",
+        content: `Orchestration finished with errors: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}`,
+      }))
+    }
+  } catch (e) {
+    socketRef.send(JSON.stringify({
+      type: "error",
+      content: `Orchestration error: ${(e as Error).message}`,
+    }))
+  }
 }
