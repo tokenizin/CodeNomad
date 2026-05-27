@@ -13,3 +13,4 @@ out/
 .codenomad/
 .tmp/
 packages/cloudflare/.wrangler/
+.env
