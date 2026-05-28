@@ -1,11 +1,27 @@
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
+import { markBackendOffline, markBackendOnline } from "./connection-recovery"
 import { getLogger } from "./logger"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
+/** Avoid reload loops when the tunnel watchdog flaps. */
+const RELOAD_AFTER_RECONNECT_COOLDOWN_MS = 30_000
+const RELOAD_AFTER_RECONNECT_KEY = "codenomad_sse_reload_ts"
 const log = getLogger("sse")
+
+function reloadAppAfterEventsReconnect(): void {
+  if (typeof window === "undefined") return
+  const last = Number(sessionStorage.getItem(RELOAD_AFTER_RECONNECT_KEY) || 0)
+  if (Date.now() - last < RELOAD_AFTER_RECONNECT_COOLDOWN_MS) {
+    logSse("Skipping reload after reconnect (cooldown)")
+    return
+  }
+  sessionStorage.setItem(RELOAD_AFTER_RECONNECT_KEY, String(Date.now()))
+  logSse("Events stream reconnected — reloading app")
+  window.location.reload()
+}
 
 function logSse(message: string, context?: Record<string, unknown>) {
   if (context) {
@@ -21,6 +37,8 @@ class ServerEvents {
   private source: EventSource | null = null
   private retryDelay = RETRY_BASE_DELAY
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set when a disconnect scheduled a reconnect; cleared after reload or successful open. */
+  private reloadOnNextOpen = false
 
   constructor() {
     this.connect()
@@ -52,6 +70,12 @@ class ServerEvents {
     this.source.onopen = () => {
       logSse("Events stream connected")
       this.retryDelay = RETRY_BASE_DELAY
+      markBackendOnline()
+      if (this.reloadOnNextOpen) {
+        this.reloadOnNextOpen = false
+        reloadAppAfterEventsReconnect()
+        return
+      }
       this.openHandlers.forEach((handler) => handler())
     }
   }
@@ -60,6 +84,8 @@ class ServerEvents {
     if (this.reconnectTimer !== null) {
       return
     }
+    this.reloadOnNextOpen = true
+    markBackendOffline("sse_disconnect")
     const source = this.source
     this.source = null
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })

@@ -40,6 +40,10 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
+import {
+  beginInstanceResourceFetch,
+  completeInstanceResourceFetch,
+} from "../lib/connection-recovery"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import {
@@ -635,6 +639,10 @@ async function fetchAgents(instanceId: string): Promise<void> {
     throw new Error("Instance not ready")
   }
 
+  if (!beginInstanceResourceFetch(instanceId, "agents")) {
+    return
+  }
+
   const rootClient = getRootClient(instanceId)
 
   try {
@@ -658,8 +666,10 @@ async function fetchAgents(instanceId: string): Promise<void> {
       next.set(instanceId, agentList)
       return next
     })
+    completeInstanceResourceFetch(instanceId, "agents")
   } catch (error) {
     log.error("Failed to fetch agents:", error)
+    completeInstanceResourceFetch(instanceId, "agents", error)
   }
 }
 
@@ -667,6 +677,10 @@ async function fetchProviders(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
+  }
+
+  if (!beginInstanceResourceFetch(instanceId, "providers")) {
+    return
   }
 
   const rootClient = getRootClient(instanceId)
@@ -695,8 +709,10 @@ async function fetchProviders(instanceId: string): Promise<void> {
       next.set(instanceId, providerList)
       return next
     })
+    completeInstanceResourceFetch(instanceId, "providers")
   } catch (error) {
     log.error("Failed to fetch providers:", error)
+    completeInstanceResourceFetch(instanceId, "providers", error)
   }
 }
 

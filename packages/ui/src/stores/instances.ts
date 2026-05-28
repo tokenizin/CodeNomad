@@ -5,6 +5,11 @@ import type { PermissionReply, PermissionRequestLike } from "../types/permission
 import { getPermissionCreatedAt, getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { getQuestionSessionId } from "../types/question"
+import {
+  isBackendOnline,
+  markBackendOffline,
+  requestTunnelRestartFromStarGuard,
+} from "../lib/connection-recovery"
 import { requestData } from "../lib/opencode-api"
 import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
@@ -260,6 +265,10 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
 
 async function hydrateInstanceData(instanceId: string, options?: { force?: boolean }) {
   try {
+    if (!isBackendOnline()) {
+      log.warn("Skipping instance hydrate while backend is offline", { instanceId })
+      return
+    }
     if (options?.force) {
       await reloadWorktrees(instanceId)
       await reloadWorktreeMap(instanceId)
@@ -1125,6 +1134,9 @@ sseManager.onConnectionLost = (instanceId, reason) => {
   if (!instance) {
     return
   }
+
+  markBackendOffline(reason)
+  requestTunnelRestartFromStarGuard(reason)
 
   setDisconnectedInstance({
     id: instanceId,

@@ -235,4 +235,12 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.alreadyValidating": "Already validating",
   "opencodeBinarySelector.display.systemPath": "{name} (system PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",
+
+  "instanceDisconnected.reconnecting": "Reconnecting...",
+  "instanceDisconnected.reconnectAttempt": "Attempt {current} of {max}",
+  "instanceDisconnected.reconnectFailed": "Unable to reconnect. The instance may have stopped.",
+  "instanceDisconnected.reconnectCancelled": "Reconnection cancelled",
+  "instanceDisconnected.reconnectSuccess": "Reconnected successfully",
+  "instanceDisconnected.actions.cancelReconnect": "Cancel",
+  "instanceDisconnected.actions.retryReconnect": "Retry",
 } as const

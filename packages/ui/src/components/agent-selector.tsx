@@ -1,5 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { Show, createEffect, createMemo } from "solid-js"
+import { canFetchInstanceResource } from "../lib/connection-recovery"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import { isSelectablePrimaryAgent, type Agent } from "../types/session"
@@ -46,9 +47,9 @@ export default function AgentSelector(props: AgentSelectorProps) {
   })
 
   createEffect(() => {
-    if (instanceAgents().length === 0) {
-      fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
-    }
+    if (instanceAgents().length > 0) return
+    if (!canFetchInstanceResource(props.instanceId, "agents")) return
+    void fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
   })
 
   const handleChange = async (value: Agent | null) => {
