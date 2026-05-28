@@ -496,7 +496,7 @@ export function createRealtimeSession(
       type: "session.update",
       session: {
         type: "realtime",
-        output_modalities: ["text", "audio"],
+        output_modalities: ["audio"],
         instructions: VOICE_INSTRUCTIONS,
         audio: {
           input: {
