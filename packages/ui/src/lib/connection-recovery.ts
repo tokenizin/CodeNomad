@@ -1,4 +1,4 @@
-import { getStarGuardBearerToken, getStarGuardPublicUrl } from "./starguard-auth"
+import { serverApi } from "./api-client"
 import { getLogger } from "./logger"
 
 const log = getLogger("api")
@@ -89,11 +89,11 @@ export function markBackendOffline(reason: string): void {
     log.warn("Backend connectivity lost — pausing instance API calls", { reason })
   }
   backendOnline = false
-  requestTunnelRestartFromStarGuard(reason)
+  requestTunnelRestart(reason)
 }
 
-/** Queue Mac-mini tunnel restart via StarGuard (Bearer from SSO session). */
-export function requestTunnelRestartFromStarGuard(reason: string): void {
+/** Queue Mac-mini tunnel restart (same-origin; host launchd consumer drains queue). */
+export function requestTunnelRestart(reason: string): void {
   if (typeof window === "undefined") return
 
   const now = Date.now()
@@ -102,26 +102,17 @@ export function requestTunnelRestartFromStarGuard(reason: string): void {
   }
   lastTunnelRestartRequestAt = now
 
-  const token = getStarGuardBearerToken()
-  if (!token) {
-    log.warn("Skipping tunnel restart request (no StarGuard session token)")
-    return
-  }
+  log.info("Requesting CodeNomad tunnel restart", { reason })
 
-  const url = `${getStarGuardPublicUrl()}/api/codenomad/restart-request`
-  log.info("Requesting CodeNomad tunnel restart from StarGuard", { reason })
-
-  void fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
+  void serverApi
+    .fetchTunnelRestartRequest({
       reason: reason.slice(0, 200),
       source: "codenomad_ui",
-    }),
-  }).catch(() => {
-    // Non-fatal — Mac watchdog also polls tunnel health.
-  })
+    })
+    .catch(() => {
+      // Non-fatal — Mac watchdog also polls tunnel health.
+    })
 }
+
+/** @deprecated Use requestTunnelRestart — kept for call sites. */
+export const requestTunnelRestartFromStarGuard = requestTunnelRestart

@@ -20,6 +20,7 @@ import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
+import { registerTunnelRecoveryRoutes } from "./routes/tunnel-recovery"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
@@ -204,13 +205,14 @@ export function createHttpServer(deps: HttpServerDeps) {
     credentials: true,
   })
 
+  // Bun + hoisted undici v7 breaks @fastify/reply-from v9's pool.request(); use Node http for localhost OpenCode proxy.
   app.register(replyFrom, {
     contentTypesToEncode: [],
-    undici: {
-      connections: 16,
-      pipelining: 1,
-      bodyTimeout: 0,
-      headersTimeout: 0,
+    undici: false,
+    http: {
+      requestOptions: {
+        timeout: 0,
+      },
     },
   })
 
@@ -301,6 +303,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
+  registerTunnelRecoveryRoutes(app)
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,

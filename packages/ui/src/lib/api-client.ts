@@ -558,6 +558,12 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
     )
   },
+  fetchTunnelRestartRequest(payload: { reason: string; source?: string }): Promise<{ queued: boolean }> {
+    return request<{ queued: boolean }>("/api/tunnel/restart-request", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,
