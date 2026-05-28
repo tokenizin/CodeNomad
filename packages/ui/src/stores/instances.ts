@@ -49,6 +49,7 @@ import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
+import { reconnectWithRecovery } from "../lib/reconnection-manager"
 
 const log = getLogger("api")
 
@@ -1129,20 +1130,26 @@ async function sendPermissionResponse(
   }
 }
 
-sseManager.onConnectionLost = (instanceId, reason) => {
+sseManager.onConnectionLost = async (instanceId, reason) => {
   const instance = instances().get(instanceId)
   if (!instance) {
     return
   }
 
-  markBackendOffline(reason)
-  requestTunnelRestartFromStarGuard(reason)
-
-  setDisconnectedInstance({
-    id: instanceId,
-    folder: instance.folder,
-    reason,
+  const reconnected = await reconnectWithRecovery(instanceId, (id, r) => {
+    markBackendOffline(r)
+    requestTunnelRestartFromStarGuard(r)
+    setDisconnectedInstance({
+      id,
+      folder: instance.folder,
+      reason: r,
+    })
   })
+
+  if (reconnected) {
+    log.info("Reconnection succeeded, rehydrating instance", { instanceId })
+    await rehydrateInstance(instanceId, { reason: "reconnected" })
+  }
 }
 
 sseManager.onLspUpdated = async (instanceId) => {

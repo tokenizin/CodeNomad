@@ -3,6 +3,8 @@ import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { markBackendOffline, markBackendOnline } from "./connection-recovery"
 import { getLogger } from "./logger"
+import { storeStarGuardToken, starGuardToken } from "../stores/session-recovery"
+import { captureStarGuardTokenFromHash, getStarGuardBearerToken } from "./starguard-auth"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -52,6 +54,18 @@ class ServerEvents {
     if (this.source) {
       this.source.close()
     }
+
+    // Capture StarGuard token from URL hash on initial connection so it is
+    // persisted across page reloads for automatic reconnection later.
+    if (!starGuardToken()) {
+      captureStarGuardTokenFromHash()
+      const token = getStarGuardBearerToken()
+      if (token) {
+        storeStarGuardToken(token)
+        logSse("Captured StarGuard token for session recovery")
+      }
+    }
+
     logSse("Connecting to backend events stream")
     this.source = serverApi.connectEvents(
       (event) => this.dispatch(event),
@@ -119,3 +133,12 @@ class ServerEvents {
 }
 
 export const serverEvents = new ServerEvents()
+
+/**
+ * Returns the StarGuard token persisted in the session-recovery store
+ * (localStorage). Used by the reconnection manager to attempt automatic
+ * re-auth after an SSE disconnect.
+ */
+export function getStoredStarGuardToken(): string | null {
+  return starGuardToken()
+}
