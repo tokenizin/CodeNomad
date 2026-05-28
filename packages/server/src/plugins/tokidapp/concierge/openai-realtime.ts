@@ -27,7 +27,7 @@ import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
 declare const WebSocket: {
-  new(url: string, protocols?: string | string[]): WebSocket
+  new(url: string, protocols?: string | string[], options?: { headers?: Record<string, string> }): WebSocket
   readonly CLOSED: number
   readonly CLOSING: number
   readonly CONNECTING: number
@@ -35,9 +35,12 @@ declare const WebSocket: {
 }
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
-/** Default: gpt-realtime-mini (GA). Override with OPENAI_REALTIME_MODEL. */
+/** Default: gpt-realtime-2 (GA). Override with OPENAI_REALTIME_MODEL. */
 const REALTIME_MODEL =
-  process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-mini"
+  process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2"
+/** Reasoning effort: minimal, low, medium, high, xhigh. Default: low. */
+const REALTIME_REASONING_EFFORT =
+  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
 
@@ -57,6 +60,12 @@ const sessions = new Map<string, RealtimeSession>()
 // ── Tool Definitions (registered with OpenAI Realtime) ──────
 
 const tools = [
+  {
+    type: "function",
+    name: "wait_for_user",
+    description: "Call when audio is silence, background noise, or speech not addressed to you. Ends the turn without a spoken reply.",
+    parameters: { type: "object", properties: {} },
+  },
   {
     type: "function",
     name: "investigate_codebase",
@@ -447,6 +456,17 @@ async function executeTool(
 
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`
 
+/** Simple hash for safety identifier — privacy-preserving, not cryptographic. */
+function hashSafetyId(userId: string): string {
+  let hash = 0
+  for (let i = 0; i < userId.length; i++) {
+    const char = userId.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return Math.abs(hash).toString(36)
+}
+
 const MIN_AUDIO_BYTES = 4800 // 100ms @ 24kHz pcm16 mono
 
 function flushPendingForSession(session: RealtimeSession) {
@@ -469,11 +489,16 @@ export function createRealtimeSession(
   onUserTranscript?: (text: string) => void,
   onResponseDone?: () => void,
   outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
+  userId?: string,
 ): RealtimeSession {
-  const ws = new WebSocket(REALTIME_URL, [
-    "realtime",
-    `openai-insecure-api-key.${OPENAI_API_KEY}`,
-  ])
+  const wsHeaders: Record<string, string> = {
+    "Authorization": `Bearer ${OPENAI_API_KEY}`,
+  }
+  if (userId) {
+    wsHeaders["OpenAI-Safety-Identifier"] = hashSafetyId(userId)
+  }
+
+  const ws = new WebSocket(REALTIME_URL, ["realtime"], { headers: wsHeaders })
 
   const voice = normalizeRealtimeVoice(outputVoice)
 
@@ -498,6 +523,9 @@ export function createRealtimeSession(
         type: "realtime",
         output_modalities: ["audio"],
         instructions: VOICE_INSTRUCTIONS,
+        reasoning: {
+          effort: REALTIME_REASONING_EFFORT,
+        },
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
@@ -534,21 +562,25 @@ export function createRealtimeSession(
           session.onReady = undefined
           break
 
+        // Audio deltas (GA event names + legacy fallbacks)
         case "response.output_audio.delta":
         case "response.audio.delta":
           if (parsed.delta) onAudioDelta(parsed.delta)
           break
 
-        case "response.output_audio_transcript.delta":
-        case "response.audio_transcript.delta":
-          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
-          break
-
+        // Text deltas (GA event names + legacy fallbacks)
         case "response.output_text.delta":
         case "response.text.delta":
           if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
           break
 
+        // Audio transcript deltas (GA event names + legacy fallbacks)
+        case "response.output_audio_transcript.delta":
+        case "response.audio_transcript.delta":
+          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
+          break
+
+        // User transcription (GA event names + legacy fallbacks)
         case "conversation.item.input_audio_transcription.completed":
         case "input_audio_transcription.completed": {
           const transcript =
@@ -561,6 +593,7 @@ export function createRealtimeSession(
           break
         }
 
+        // Response done (GA event names + legacy fallbacks)
         case "response.done":
         case "response.completed":
           onResponseDone?.()
@@ -575,11 +608,15 @@ export function createRealtimeSession(
         case "conversation.item.created":
           break
 
+        // Function call (GA event names + legacy fallbacks)
         case "response.function_call_arguments.done": {
           const toolName = parsed.name
           const args = parsed.arguments || "{}"
 
-          ws.send(JSON.stringify({ type: "response.cancel" }))
+          // Skip response.cancel for wait_for_user — it's a no-op tool
+          if (toolName !== "wait_for_user") {
+            ws.send(JSON.stringify({ type: "response.cancel" }))
+          }
 
           const result = await executeTool(toolName, args, {
             workspaceRoot: WORKSPACE_ROOT,
@@ -597,7 +634,10 @@ export function createRealtimeSession(
             }),
           )
 
-          ws.send(JSON.stringify({ type: "response.create" }))
+          // Only create new response for non-wait tools
+          if (toolName !== "wait_for_user") {
+            ws.send(JSON.stringify({ type: "response.create" }))
+          }
           break
         }
 

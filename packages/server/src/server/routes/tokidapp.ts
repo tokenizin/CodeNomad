@@ -88,6 +88,8 @@ function startVoiceRealtimeSession(
   const notifyReady = () => {
     socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
   }
+  // Extract userId from sessionId (format: "voice_${userId}")
+  const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
   if (!getRealtimeSession(sessionId)) {
     createRealtimeSession(
       sessionId,
@@ -99,6 +101,7 @@ function startVoiceRealtimeSession(
         socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
       undefined,
       voice,
+      userId,
     )
   } else {
     notifyReady()
