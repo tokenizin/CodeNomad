@@ -83,7 +83,7 @@ export class OpenAICompatibleSpeechProvider {
       return (await client.audio.transcriptions.create({
         ...baseRequest,
         file,
-        response_format: "verbose_json" as any,
+        response_format: "json",
       } as any)) as any
     } catch (error) {
       this.options.logger.warn({ err: error }, "speech.transcribe verbose_json failed; retrying default format")
