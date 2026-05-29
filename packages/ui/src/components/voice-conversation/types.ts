@@ -77,8 +77,11 @@ export interface VoiceConversationStore {
   addTranscript: (entry: TranscriptEntry) => void
   clearTranscripts: () => void
   isRecording: Accessor<boolean>
+  setIsRecording: Setter<boolean>
   recordingDuration: Accessor<number>
+  setRecordingDuration: Setter<number>
   recordings: Accessor<SessionRecording[]>
+  setRecordings: Setter<SessionRecording[]>
   addRecording: (recording: SessionRecording) => void
   lastError: Accessor<string | null>
   setLastError: Setter<string | null>
