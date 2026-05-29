@@ -22,12 +22,29 @@ export const [lastError, setLastError] = createSignal<string | null>(null)
 export const [starGuardToken, setStarGuardToken] = createSignal<string | null>(loadPersistedToken())
 
 // ---------------------------------------------------------------------------
+// Abort controller — allows cancelReconnect() to stop the in-flight retry loop
+// ---------------------------------------------------------------------------
+
+let activeAbortController: AbortController | null = null
+
+/** Return the current abort signal (or null when idle). */
+export function getReconnectAbortSignal(): AbortSignal | null {
+  return activeAbortController?.signal ?? null
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
-/** Begin (or continue) a reconnection attempt. */
+/** Begin a new reconnection sequence. Resets retry counter and creates a fresh AbortController. */
 export function startReconnect(token: string): void {
+  // Abort any in-flight reconnection before starting a new one.
+  activeAbortController?.abort()
+  activeAbortController = new AbortController()
+
   setReconnecting(true)
+  setRetryCount(0)
+  setLastError(null)
   storeStarGuardToken(token)
 }
 
@@ -39,6 +56,8 @@ export function incrementRetry(error?: string): void {
 
 /** Reset all reconnection state back to idle. */
 export function resetReconnect(): void {
+  activeAbortController?.abort()
+  activeAbortController = null
   setReconnecting(false)
   setRetryCount(0)
   setLastError(null)
@@ -46,6 +65,8 @@ export function resetReconnect(): void {
 
 /** Cancel an in-progress reconnection sequence. */
 export function cancelReconnect(): void {
+  activeAbortController?.abort()
+  activeAbortController = null
   setReconnecting(false)
   setRetryCount(0)
   setLastError(null)

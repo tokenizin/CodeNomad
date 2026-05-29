@@ -40,6 +40,7 @@ import {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
 } from "./stores/instances"
+import { reconnecting } from "./stores/session-recovery"
 import {
   getSessions,
   activeSessionId,
@@ -504,7 +505,7 @@ const App: Component = () => {
   return (
     <>
       <InstanceDisconnectedModal
-        open={Boolean(disconnectedInstance())}
+        open={Boolean(disconnectedInstance()) || reconnecting()}
         folder={disconnectedInstance()?.folder}
         reason={disconnectedInstance()?.reason}
         onClose={handleDisconnectedInstanceClose}

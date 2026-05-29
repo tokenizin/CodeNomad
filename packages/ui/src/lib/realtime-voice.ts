@@ -74,6 +74,7 @@ export async function startPCM16Capture(
 let audioQueue: Float32Array[] = []
 let isPlaying = false
 let audioCtx: AudioContext | null = null
+let onPlaybackQueueEmpty: (() => void) | null = null
 
 async function ensureAudioContext(): Promise<AudioContext> {
   if (!audioCtx || audioCtx.state === "closed") {
@@ -95,6 +96,7 @@ export function enqueueAudioChunk(base64: string) {
 async function scheduleNextChunk() {
   if (audioQueue.length === 0) {
     isPlaying = false
+    onPlaybackQueueEmpty?.()
     return
   }
 
@@ -110,6 +112,11 @@ async function scheduleNextChunk() {
   source.connect(ctx.destination)
   source.onended = () => scheduleNextChunk()
   source.start()
+}
+
+/** Register a callback that fires when the playback queue drains completely (agent TTS finished). */
+export function setOnPlaybackQueueEmpty(callback: (() => void) | null) {
+  onPlaybackQueueEmpty = callback
 }
 
 export function clearAudioQueue() {
@@ -325,6 +332,23 @@ export class RealtimeVoiceClient {
       this.capture.stop()
       this.capture = null
     }
+  }
+
+  /** Send a raw JSON message over the WebSocket (for cancel, voice_start, etc.) */
+  sendJson(msg: Record<string, unknown>): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(msg))
+    }
+  }
+
+  /** Cancel the current agent response mid-speech and re-enter listening mode */
+  cancelResponse(): void {
+    clearAudioQueue()
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "cancel" }))
+    }
+    this.voiceReady = false
+    this.onStateChange("connected")
   }
 
   disconnect(): void {

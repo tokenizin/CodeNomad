@@ -508,6 +508,109 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     }
   })
 
+  // ── Recording Routes ───────────────────────────────────────
+  // The client uploads audio directly to Vercel Blob; we store metadata here.
+
+  app.post("/api/tokidapp/recordings", async (request, reply) => {
+    try {
+      const { blobUrl, sessionId, duration } = (request.body ?? {}) as Record<string, unknown>
+      if (!blobUrl || typeof blobUrl !== "string") {
+        reply.code(400)
+        return { error: "blobUrl is required" }
+      }
+
+      // Proxy recording metadata to StarGuard for persistence
+      const res = await apiPost("/api/tokidapp/recordings", {
+        blobUrl,
+        sessionId: sessionId ?? "unknown",
+        duration: Number(duration) || 0,
+      })
+
+      const recording = res.ok ? await res.json() : {
+        id: crypto.randomUUID(),
+        blobUrl,
+        sessionId: sessionId ?? "unknown",
+        duration: Number(duration) || 0,
+      }
+
+      return recording
+    } catch (error) {
+      request.log.error({ err: error }, "Failed to save recording")
+      reply.code(500)
+      return { error: "Failed to save recording" }
+    }
+  })
+
+  app.get("/api/tokidapp/recordings", async (request, reply) => {
+    try {
+      const query = request.query as Record<string, string>
+      const sessionId = query.sessionId
+
+      if (!sessionId) {
+        return { recordings: [] }
+      }
+
+      const res = await apiGet("/api/tokidapp/recordings", { sessionId })
+      if (!res.ok) return { recordings: [] }
+      return await res.json()
+    } catch {
+      reply.code(500)
+      return { error: "Failed to fetch recordings" }
+    }
+  })
+
+  // ── Translation Route (EN ↔ ID) ────────────────────────────
+
+  app.post("/api/tokidapp/translate", async (request, reply) => {
+    try {
+      const { text, source, target } = (request.body ?? {}) as Record<string, string>
+      if (!text) {
+        reply.code(400)
+        return { error: "text is required" }
+      }
+
+      const apiKey = process.env.OPENAI_API_KEY
+      if (!apiKey) {
+        // Fallback: return original text
+        return { translation: text }
+      }
+
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are a translator. Translate the following text from ${source || "en"} to ${target || "id"}. Return ONLY the translated text, no explanations, no quotes.`,
+            },
+            {
+              role: "user",
+              content: text,
+            },
+          ],
+          max_tokens: 200,
+        }),
+      })
+
+      if (!response.ok) {
+        request.log.error({ status: response.status }, "Translation API failed")
+        return { translation: text }
+      }
+
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+      const translation = data?.choices?.[0]?.message?.content?.trim() ?? text
+      return { translation }
+    } catch (error) {
+      request.log.error({ err: error }, "Translation failed")
+      return { translation: (request.body as Record<string, string>)?.text ?? "" }
+    }
+  })
+
   // ── Orchestrator Routes ────────────────────────────────────
 
   app.post("/api/tokidapp/orchestrator", async (request, reply) => {

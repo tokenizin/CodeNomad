@@ -24,6 +24,10 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
   const folderLabel = () => props.folder || t("instanceDisconnected.folderFallback")
   const reasonLabel = () => props.reason || t("instanceDisconnected.reasonFallback")
 
+  // +1 because retryCount is incremented after each attempt's sleep,
+  // so during attempt N the counter is N-1.
+  const displayAttempt = () => retryCount() + 1
+
   const handleRetry = () => {
     const token = starGuardToken()
     if (token) {
@@ -47,7 +51,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
                   </Dialog.Title>
                   <Dialog.Description class="text-sm text-secondary mt-2">
                     {t("instanceDisconnected.reconnectAttempt", {
-                      current: String(retryCount()),
+                      current: String(displayAttempt()),
                       max: String(MAX_RETRIES),
                     })}
                   </Dialog.Description>
@@ -62,6 +66,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
                   </div>
                 </Show>
 
+                {/* Buttons: [Close secondary] [Cancel primary] — consistent order */}
                 <div class="flex justify-end gap-2">
                   <button
                     type="button"
@@ -104,6 +109,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
                   )}
                 </div>
 
+                {/* Buttons: [Retry secondary] [Close primary] — consistent order */}
                 <div class="flex justify-end gap-2">
                   <Show when={starGuardToken()}>
                     <button

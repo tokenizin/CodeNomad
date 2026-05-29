@@ -519,6 +519,11 @@ const PHASE_CONFIGS: Record<LifecyclePhase, PhaseConfig> = {
   approve:      { phase: 'approve',      nodeType: 'approval_gate',  toolName: 'approve',        timeoutMs: 300000, maxRetries: 0 },
   notify:       { phase: 'notify',       nodeType: 'broadcast',      toolName: 'broadcast',      timeoutMs: 15000,  maxRetries: 1 },
   report:       { phase: 'report',       nodeType: 'broadcast',      toolName: 'broadcast',      timeoutMs: 15000,  maxRetries: 1 },
+  voice_conversation_start:      { phase: 'voice_conversation_start',      nodeType: 'tool_exec',    toolName: 'transcribe_audio',  timeoutMs: 60000,  maxRetries: 1 },
+  voice_conversation_transcribe: { phase: 'voice_conversation_transcribe', nodeType: 'tool_exec',    toolName: 'transcribe_audio',  timeoutMs: 30000,  maxRetries: 2 },
+  voice_conversation_translate:  { phase: 'voice_conversation_translate',  nodeType: 'tool_exec',    toolName: 'translate_text',    timeoutMs: 15000,  maxRetries: 2 },
+  voice_conversation_respond:    { phase: 'voice_conversation_respond',    nodeType: 'tool_exec',    toolName: 'synthesize_speech', timeoutMs: 60000,  maxRetries: 1 },
+  voice_conversation_end:        { phase: 'voice_conversation_end',        nodeType: 'broadcast',    toolName: 'broadcast',         timeoutMs: 15000,  maxRetries: 1 },
 }
 
 /**
@@ -598,6 +603,25 @@ const LIFECYCLE_TEMPLATES: Record<string, {
     ],
     healingBranches: {},
     description: 'Financial: analyze → investigate → evaluate → reason → plan → approve → report',
+  },
+
+  voice_conversation: {
+    phases: [
+      'voice_conversation_start',
+      'investigate',
+      'reason',
+      'voice_conversation_translate',
+      'voice_conversation_respond',
+      'voice_conversation_end',
+    ],
+    parallelGroups: [
+      ['investigate', 'reason'],
+      ['voice_conversation_translate', 'voice_conversation_respond'],
+    ],
+    healingBranches: {
+      'investigate': ['diagnose', 'investigate'],
+    },
+    description: 'Voice conversation: listen → investigate/reason → translate (EN↔ID) → respond (TTS) → loop',
   },
 }
 

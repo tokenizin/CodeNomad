@@ -13,6 +13,7 @@ import {
   incrementRetry,
   MAX_RETRIES,
   starGuardToken,
+  getReconnectAbortSignal,
 } from "../stores/session-recovery"
 import { getStoredStarGuardToken } from "./server-events"
 import { getLogger } from "./logger"
@@ -22,8 +23,22 @@ const log = getLogger("reconnection")
 /** Exponential backoff delays in milliseconds, capped at 10 s. */
 const BACKOFF_DELAYS = [1000, 2000, 4000, 8000, 10_000]
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms: number, signal: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException("Aborted", "AbortError"))
+      },
+      { once: true },
+    )
+  })
 }
 
 /**
@@ -57,15 +72,29 @@ export async function reconnectWithRecovery(
   log.info("Starting reconnection with StarGuard token", { instanceId })
   startReconnect(token)
 
+  const signal = getReconnectAbortSignal()
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Check if cancelled before starting next attempt.
+    if (signal?.aborted) {
+      log.info("Reconnection cancelled by user", { instanceId })
+      resetReconnect()
+      return false
+    }
+
     const delay = BACKOFF_DELAYS[Math.min(attempt, BACKOFF_DELAYS.length - 1)]
     log.info(`Reconnection attempt ${attempt + 1}/${MAX_RETRIES}`, {
       instanceId,
       delayMs: delay,
     })
 
-    await sleep(delay)
-    incrementRetry(`attempt_${attempt + 1}`)
+    try {
+      await sleep(delay, signal)
+    } catch {
+      // AbortError — user cancelled or new reconnection started.
+      log.info("Reconnection sleep interrupted", { instanceId })
+      return false
+    }
 
     try {
       // The /auth/starguard server route verifies the JWT, creates a session,
@@ -73,7 +102,7 @@ export async function reconnectWithRecovery(
       // the browser does not navigate away — the cookie is still applied.
       const response = await fetch(
         `/auth/starguard?starguard_token=${encodeURIComponent(token)}`,
-        { method: "GET", credentials: "include", redirect: "manual" },
+        { method: "GET", credentials: "include", redirect: "manual", signal: signal ?? undefined },
       )
 
       // Opaque redirect (type === "opaqueredirect") means the server responded
@@ -90,14 +119,22 @@ export async function reconnectWithRecovery(
           instanceId,
           status: response.status,
         })
+        incrementRetry(`Authentication failed (${response.status})`)
         break
       }
 
+      incrementRetry(`Server returned ${response.status}`)
       log.warn("Re-auth returned unexpected status", {
         instanceId,
         status: response.status,
       })
     } catch (error) {
+      if (signal?.aborted) {
+        log.info("Reconnection cancelled during fetch", { instanceId })
+        return false
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      incrementRetry(message)
       log.error("Re-auth request failed", { instanceId, error })
     }
   }

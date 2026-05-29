@@ -23,13 +23,14 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
-import { useRealtimeVoiceInput } from "./prompt-input/useRealtimeVoiceInput"
 import {
-  canUseConversationMode,
   clearConversationPlaybackForInstance,
   isConversationModeEnabled,
-  toggleConversationMode,
 } from "../stores/conversation-speech"
+import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
+import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
+import { VoiceConversationOverlay } from "./voice-conversation/VoiceConversationOverlay"
+import { voiceConversationStore } from "./voice-conversation/store"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
@@ -655,19 +656,22 @@ export default function PromptInput(props: PromptInputProps) {
     enabled: () => preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled),
   })
-  const realtimeVoice = useRealtimeVoiceInput({
+  const voiceConversation = useVoiceConversation({
     instanceId: props.instanceId,
-    prompt,
-    setPrompt,
-    getTextarea: () => textareaRef ?? null,
-    enabled: () => preferences().showPromptVoiceInput,
-    disabled: () => Boolean(props.disabled),
+    sessionId: props.sessionId,
+    onTranscript: (entry) => {
+      if (preferences().autoPostTranscript ?? true) {
+        setPrompt((prev) => prev + entry.text + " ")
+      }
+    },
   })
   const showVoiceInput = () =>
     preferences().showPromptVoiceInput &&
     (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
+  const showVoiceConversation = () =>
+    preferences().showPromptVoiceInput
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
-  const showConversationToggle = () => showVoiceInput() || conversationModeEnabled()
+  const showConversationToggle = () => showVoiceInput() || showVoiceConversation() || conversationModeEnabled()
   const canToggleConversationMode = () => canUseConversationMode()
   const conversationModeButtonTitle = () =>
     conversationModeEnabled()
@@ -675,6 +679,14 @@ export default function PromptInput(props: PromptInputProps) {
       : t("promptInput.conversationMode.enable.title")
 
   const instance = () => getActiveInstance()
+
+  // Auto-restore previous voice conversation session on mount
+  createEffect(() => {
+    const sid = props.sessionId
+    if (sid && (preferences().autoPostTranscript ?? false)) {
+      void voiceConversation.restoreSession(sid)
+    }
+  })
 
   let voiceButtonPressed = false
 
@@ -893,32 +905,15 @@ export default function PromptInput(props: PromptInputProps) {
                   </Show>
                 </button>
               </Show>
-              <Show when={realtimeVoice.isSupported()}>
-                <button
-                  type="button"
-                  class={`prompt-voice-button prompt-nav-voice-button ${realtimeVoice.isActive() ? "is-active" : ""} ${realtimeVoice.lastError() ? "has-error" : ""}`}
-                  onClick={() => void realtimeVoice.toggleRecording()}
-                  aria-label={realtimeVoice.buttonTitle()}
-                  title={realtimeVoice.buttonTitle()}
-                  aria-pressed={realtimeVoice.isActive()}
-                >
-                  <Show when={realtimeVoice.state() === "connecting" || realtimeVoice.state() === "recording" || realtimeVoice.state() === "speaking"} fallback={<Radio class="h-4 w-4" aria-hidden="true" />}>
-                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-                  </Show>
-                </button>
-              </Show>
-              <Show when={showConversationToggle()}>
-                <button
-                  type="button"
-                  class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
-                  onClick={() => toggleConversationMode(props.instanceId)}
-                  disabled={!conversationModeEnabled() && !canToggleConversationMode()}
-                  aria-pressed={conversationModeEnabled()}
-                  aria-label={conversationModeButtonTitle()}
-                  title={conversationModeButtonTitle()}
-                >
-                  <Volume2 class="h-4 w-4" aria-hidden="true" />
-                </button>
+              <Show when={showVoiceConversation()}>
+                <VoiceConversationButton
+                  instanceId={props.instanceId}
+                  onStart={() => void voiceConversation.startConversation()}
+                  onPause={voiceConversation.pauseConversation}
+                  onResume={voiceConversation.resumeConversation}
+                  onStop={() => void voiceConversation.stopConversation()}
+                  disabled={Boolean(props.disabled)}
+                />
               </Show>
               <input
                 ref={fileInputRef}
@@ -1020,6 +1015,11 @@ export default function PromptInput(props: PromptInputProps) {
         }}
         onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
         initialPath={props.instanceFolder}
+      />
+
+      <VoiceConversationOverlay
+        visible={voiceConversationStore.state() !== "idle" && voiceConversationStore.state() !== "connecting"}
+        onClose={() => void voiceConversation.stopConversation()}
       />
     </div>
   )

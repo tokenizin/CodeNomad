@@ -1,0 +1,158 @@
+/* ── Voice Conversation Button ── */
+
+.voice-conversation-btn {
+  @apply relative flex items-center justify-center w-10 h-10 rounded-full 
+         transition-all duration-300 ease-out cursor-pointer;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  color: var(--color-text-secondary);
+  outline: none;
+}
+
+.voice-conversation-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.voice-conversation-btn.voice-conv-listening {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+  box-shadow: 0 0 0 4px var(--color-accent-alpha);
+}
+
+.voice-conversation-btn.voice-conv-speaking {
+  background: var(--color-success, #22c55e);
+  border-color: var(--color-success, #22c55e);
+  color: white;
+}
+
+.voice-conversation-btn.voice-conv-paused {
+  background: var(--color-warning, #f59e0b);
+  border-color: var(--color-warning, #f59e0b);
+  color: white;
+}
+
+.voice-conversation-btn.voice-conv-error {
+  background: var(--color-error, #ef4444);
+  border-color: var(--color-error, #ef4444);
+  color: white;
+}
+
+.voice-conversation-btn.voice-conv-connecting {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* ── Pulse ring ── */
+
+.voice-conv-ring {
+  @apply absolute inset-0 rounded-full;
+}
+
+.voice-conv-ring[data-active="true"] {
+  animation: voice-conv-pulse 1.5s ease-out infinite;
+}
+
+@keyframes voice-conv-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-accent-alpha);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+
+/* ── Audio level indicator ── */
+
+.voice-conv-level {
+  @apply absolute bottom-0 w-1 rounded-full;
+  background: var(--color-accent);
+  transition: height 150ms ease;
+}
+
+/* ── Overlay panel ── */
+
+.voice-conv-overlay {
+  @apply fixed bottom-20 right-4 w-80 max-h-96 rounded-xl shadow-xl 
+         flex flex-col overflow-hidden z-50;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  display: none;
+}
+
+.voice-conv-overlay[data-visible="true"] {
+  display: flex;
+}
+
+.voice-conv-overlay-header {
+  @apply flex items-center justify-between px-4 py-2 border-b;
+  border-color: var(--color-border);
+}
+
+.voice-conv-overlay-header h3 {
+  @apply text-sm font-semibold;
+  color: var(--color-text);
+}
+
+.voice-conv-duration {
+  @apply text-xs;
+  color: var(--color-text-secondary);
+}
+
+.voice-conv-close {
+  @apply text-lg leading-none cursor-pointer bg-transparent border-none;
+  color: var(--color-text-secondary);
+}
+
+.voice-conv-transcripts {
+  @apply flex-1 overflow-y-auto p-4 space-y-3;
+}
+
+.voice-conv-entry {
+  @apply p-2 rounded-lg;
+}
+
+.voice-conv-entry[data-role="user"] {
+  background: var(--color-accent-alpha);
+}
+
+.voice-conv-entry[data-role="assistant"] {
+  background: var(--color-surface-alt);
+}
+
+.voice-conv-role {
+  @apply text-xs font-medium;
+  color: var(--color-text-secondary);
+}
+
+.voice-conv-text {
+  @apply text-sm mt-1;
+  color: var(--color-text);
+}
+
+.voice-conv-translation {
+  @apply text-xs mt-1 italic;
+  color: var(--color-text-secondary);
+}
+
+.voice-conv-empty {
+  @apply text-sm text-center;
+  color: var(--color-text-secondary);
+}
+
+.voice-conv-controls {
+  @apply flex justify-center gap-2 px-4 py-2 border-t;
+  border-color: var(--color-border);
+}
+
+.voice-conv-btn {
+  @apply w-10 h-10 flex items-center justify-center rounded-full 
+         transition-colors cursor-pointer border-none;
+  background: var(--color-surface-alt);
+}
+
+.voice-conv-btn:hover {
+  background: var(--color-accent);
+  color: white;
+}

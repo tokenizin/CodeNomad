@@ -92,3 +92,9 @@ export type LifecyclePhase =
   | 'approve'
   | 'notify'
   | 'report'
+  // Voice conversation phases
+  | 'voice_conversation_start'
+  | 'voice_conversation_transcribe'
+  | 'voice_conversation_translate'
+  | 'voice_conversation_respond'
+  | 'voice_conversation_end'
