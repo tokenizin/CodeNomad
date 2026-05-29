@@ -491,6 +491,25 @@ export function createRealtimeSession(
   outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
   userId?: string,
 ): RealtimeSession {
+  if (!OPENAI_API_KEY) {
+    const msg = "OPENAI_API_KEY is not configured. Voice mode requires an OpenAI API key."
+    console.error("[openai-realtime]", msg)
+    onError(msg)
+    // Return a stub session that never connects
+    const stubWs = new WebSocket("wss://localhost:0") as any
+    stubWs.readyState = 3 // CLOSED
+    return {
+      ws: stubWs,
+      sessionId,
+      connected: false,
+      outputVoice: normalizeRealtimeVoice(outputVoice),
+      toolCallbacks: new Map(),
+      audioBytes: 0,
+      pendingChunks: [],
+      onReady,
+    }
+  }
+
   const wsHeaders: Record<string, string> = {
     "Authorization": `Bearer ${OPENAI_API_KEY}`,
   }
