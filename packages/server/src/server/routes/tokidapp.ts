@@ -523,17 +523,28 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       }
 
       // Proxy recording metadata to StarGuard for persistence
-      const res = await apiPost("/api/tokidapp/recordings", {
-        blobUrl,
-        sessionId: sessionId ?? "unknown",
-        duration: Number(duration) || 0,
-      })
-
-      const recording = res.ok ? await res.json() : {
-        id: crypto.randomUUID(),
-        blobUrl,
-        sessionId: sessionId ?? "unknown",
-        duration: Number(duration) || 0,
+      // Non-fatal: if StarGuard is unreachable, we generate a local UUID instead.
+      let recording: Record<string, unknown>
+      try {
+        const res = await apiPost("/api/tokidapp/recordings", {
+          blobUrl,
+          sessionId: sessionId ?? "unknown",
+          duration: Number(duration) || 0,
+        })
+        recording = res.ok ? await res.json() : {
+          id: crypto.randomUUID(),
+          blobUrl,
+          sessionId: sessionId ?? "unknown",
+          duration: Number(duration) || 0,
+        }
+      } catch (proxyErr) {
+        request.log.warn({ err: proxyErr }, "StarGuard proxy unavailable, using local recording UUID")
+        recording = {
+          id: crypto.randomUUID(),
+          blobUrl,
+          sessionId: sessionId ?? "unknown",
+          duration: Number(duration) || 0,
+        }
       }
 
       return recording
@@ -712,7 +723,7 @@ export function registerRecordingRoutes(app: FastifyInstance) {
 
   app.register(async (instance) => {
     // Accept raw audio/webm body without breaking JSON parser on parent scope.
-    instance.addContentTypeParser("audio/webm", (_req, body, done) => done(null, body))
+    instance.addContentTypeParser("audio/webm", { parseAs: "buffer" }, (_req, body, done) => done(null, body))
 
     // Upload raw audio → returns { blobUrl }
     instance.post("/api/tokidapp/recordings/audio", async (request, reply) => {
@@ -751,8 +762,7 @@ export function registerRecordingRoutes(app: FastifyInstance) {
           return { error: "File not found" }
         }
 
-        const stream = fs.createReadStream(filePath)
-        reply.type("audio/webm").send(stream)
+        reply.type("audio/webm").send(fs.readFileSync(filePath))
       } catch (error) {
         reply.code(500)
         return { error: "Failed to serve recording" }
