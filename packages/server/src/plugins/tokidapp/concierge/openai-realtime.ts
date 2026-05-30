@@ -516,6 +516,7 @@ export function createRealtimeSession(
   outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
   userId?: string,
 ): RealtimeSession {
+  console.log("[openai-realtime] createRealtimeSession sessionId:", sessionId, "hasKey:", !!OPENAI_API_KEY, "keyPrefix:", OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 8) + "..." : "none")
   if (!OPENAI_API_KEY) {
     const msg = "OPENAI_API_KEY is not configured. Voice mode requires an OpenAI API key."
     console.error("[openai-realtime]", msg)
@@ -542,6 +543,7 @@ export function createRealtimeSession(
     wsHeaders["OpenAI-Safety-Identifier"] = hashSafetyId(userId)
   }
 
+  console.log("[openai-realtime] connecting to OpenAI Realtime URL:", REALTIME_URL)
   const ws = new WebSocket(REALTIME_URL, ["realtime"], { headers: wsHeaders })
 
   const voice = normalizeRealtimeVoice(outputVoice)
@@ -558,6 +560,7 @@ export function createRealtimeSession(
   }
 
   ws.addEventListener("open", () => {
+    console.log("[openai-realtime] OpenAI WS connected for session:", sessionId)
     session.connected = true
     flushPendingForSession(session)
 
@@ -603,6 +606,7 @@ export function createRealtimeSession(
       switch (parsed.type) {
         case "session.created":
         case "session.updated":
+          console.log("[openai-realtime] OpenAI session ready event:", parsed.type, "for session:", sessionId)
           session.onReady?.()
           session.onReady = undefined
           break
@@ -701,12 +705,14 @@ export function createRealtimeSession(
     }
   })
 
-  ws.addEventListener("error", () => {
+  ws.addEventListener("error", (err: any) => {
+    console.log("[openai-realtime] OpenAI WS error for session:", sessionId, "error:", err?.message || String(err))
     onError("OpenAI Realtime connection error")
     session.connected = false
   })
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (event) => {
+    console.log("[openai-realtime] OpenAI WS closed for session:", sessionId, "code:", event?.code, "reason:", event?.reason)
     session.connected = false
     sessions.delete(sessionId)
   })

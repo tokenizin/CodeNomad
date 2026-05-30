@@ -84,21 +84,28 @@ function startVoiceRealtimeSession(
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
   const existingVoice = getRealtimeSessionVoice(sessionId)
+  console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
   if (existingVoice && existingVoice !== voice) {
+    console.log("[voice-ws] voice changed, ending existing session")
     endVoiceSession(sessionId)
   }
   resetInputAudio(sessionId)
   const notifyReady = () => {
+    console.log("[voice-ws] notifyReady — sending voice_ready to client")
     socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
   }
   // Extract userId from sessionId (format: "voice_${userId}")
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
   if (!getRealtimeSession(sessionId)) {
+    console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
     createRealtimeSession(
       sessionId,
       (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
       (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
-      (error) => socketRef.send(JSON.stringify({ type: "error", content: error })),
+      (error) => {
+        console.log("[voice-ws] OpenAI Realtime error:", error)
+        socketRef.send(JSON.stringify({ type: "error", content: error }))
+      },
       notifyReady,
       (transcript) =>
         socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
@@ -107,6 +114,7 @@ function startVoiceRealtimeSession(
       userId,
     )
   } else {
+    console.log("[voice-ws] existing session found, calling notifyReady directly")
     notifyReady()
   }
 }
@@ -154,9 +162,11 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "voice_start") {
+        console.log("[voice-ws] voice_start received, REALTIME_ENABLED:", REALTIME_ENABLED)
         if (REALTIME_ENABLED) {
           startVoiceRealtimeSession(sessionId, msg.voice, socketRef)
         } else {
+          console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
           socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
         }
         return
@@ -264,6 +274,8 @@ export function registerVoiceRealtimeWebSocket(
   app: FastifyInstance,
   starGuardJwtHandler?: StarGuardJwtHandler,
 ) {
+  console.log("[voice-ws] registerVoiceRealtimeWebSocket called, starGuardJwtHandler:", !!starGuardJwtHandler)
+
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
     let parsed: URL
@@ -276,23 +288,30 @@ export function registerVoiceRealtimeWebSocket(
     if (!parsed.pathname.startsWith("/api/voice/session")) return
 
     const token = parsed.searchParams.get("token") || ""
+    console.log("[voice-ws] upgrade request received, token length:", token.length, "token prefix:", token.substring(0, 20) + "...")
     if (!token) {
+      console.log("[voice-ws] no token — 401")
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
       socket.destroy()
       return
     }
 
     if (starGuardJwtHandler) {
+      console.log("[voice-ws] JWT handler enabled, verifying token...")
       starGuardJwtHandler.verify(token).then((payload) => {
         if (!payload) {
+          console.log("[voice-ws] JWT verification returned null — 401")
           socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
           socket.destroy()
           return
         }
+        console.log("[voice-ws] JWT verified OK, userId:", payload.userId)
         voiceWss.handleUpgrade(request, socket, head, (ws) => {
+          console.log("[voice-ws] WS upgrade complete, calling attachVoiceSocket")
           attachVoiceSocket(ws, payload.userId)
         })
-      }).catch(() => {
+      }).catch((err) => {
+        console.log("[voice-ws] JWT verification error:", err?.message || err)
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
         socket.destroy()
       })
@@ -300,6 +319,7 @@ export function registerVoiceRealtimeWebSocket(
     }
 
     // No JWT handler — allow in dev mode
+    console.log("[voice-ws] no JWT handler, dev mode — allowing")
     voiceWss.handleUpgrade(request, socket, head, (ws) => {
       attachVoiceSocket(ws, token)
     })
