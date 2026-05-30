@@ -607,8 +607,8 @@ export function createRealtimeSession(
         case "session.created":
         case "session.updated":
           console.log("[openai-realtime] OpenAI session ready event:", parsed.type, "for session:", sessionId)
+          // Keep onReady persistent — fires on every session-ready event (initial + voice change)
           session.onReady?.()
-          session.onReady = undefined
           break
 
         // Audio deltas (GA event names + legacy fallbacks)
@@ -648,10 +648,7 @@ export function createRealtimeSession(
           onResponseDone?.()
           // With VAD, the server auto-resumes listening after response completes.
           // Notify client that voice is ready again.
-          if (session.onReady) {
-            session.onReady()
-            session.onReady = undefined
-          }
+          session.onReady?.()
           break
 
         case "conversation.item.created":
@@ -797,6 +794,10 @@ export function startVoiceSession(sessionId: string): boolean {
 export function endVoiceSession(sessionId: string) {
   const session = sessions.get(sessionId)
   if (session) {
+    // Remove listeners before closing so the old session's async close handler
+    // doesn't accidentally delete a newly-created session with the same ID.
+    session.ws.onclose = null
+    session.ws.onerror = null
     session.ws.close()
     sessions.delete(sessionId)
   }
