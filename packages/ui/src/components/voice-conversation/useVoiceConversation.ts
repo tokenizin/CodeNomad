@@ -3,6 +3,7 @@ import { voiceConversationStore } from "./store"
 import { RealtimeVoiceClient, setOnPlaybackQueueEmpty, clearAudioQueue } from "../../lib/realtime-voice"
 import { getStarGuardBearerToken } from "../../lib/starguard-auth"
 import { loadSpeechCapabilities } from "../../stores/speech"
+import { showToastNotification } from "../../lib/notifications"
 import {
   isConversationModeEnabled,
   toggleConversationMode,
@@ -47,13 +48,13 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
       // 1. Ensure speech capabilities are loaded
       await loadSpeechCapabilities()
 
-      // 2. Check StarGuard auth
+        // 2. Check StarGuard auth
       const token = getStarGuardBearerToken()
       if (!token) {
-        voiceConversationStore.setLastError(
-          "Sign in via StarGuard first (SSO from StarGuard → CodeNomad)."
-        )
+        const msg = "Sign in via StarGuard first (SSO from StarGuard → CodeNomad)."
+        voiceConversationStore.setLastError(msg)
         voiceConversationStore.setState("error")
+        showToastNotification({ title: "Voice conversation failed", message: msg, variant: "error", duration: 8000 })
         return
       }
 
@@ -116,6 +117,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         (message: string) => {
           voiceConversationStore.setLastError(message)
           voiceConversationStore.setState("error")
+          showToastNotification({ title: "Voice conversation failed", message, variant: "error", duration: 8000 })
         },
       )
 
@@ -139,6 +141,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
       const message = err instanceof Error ? err.message : "Failed to start voice conversation"
       voiceConversationStore.setLastError(message)
       voiceConversationStore.setState("error")
+      showToastNotification({ title: "Voice conversation failed", message, variant: "error", duration: 8000 })
     }
   }
 

@@ -27,6 +27,7 @@ import {
   getPendingApprovals,
 } from "../../plugins/tokidapp/orchestrator/approval-queue"
 import { apiPost, apiGet, apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
+import { addLocalRecording, getLocalRecordings } from "./local-recordings"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 import {
   investigateCodebase,
@@ -83,6 +84,7 @@ function startVoiceRealtimeSession(
   socketRef: { send: (msg: string) => void },
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
+  let greetingTriggered = false
   const existingVoice = getRealtimeSessionVoice(sessionId)
   console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
   if (existingVoice && existingVoice !== voice) {
@@ -93,6 +95,25 @@ function startVoiceRealtimeSession(
   const notifyReady = () => {
     console.log("[voice-ws] notifyReady — sending voice_ready to client")
     socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
+
+    // Trigger the AI to speak a greeting once, right when the voice session
+    // becomes ready (fires on session.created / session.updated from OpenAI).
+    if (!greetingTriggered) {
+      greetingTriggered = true
+      const sess = getRealtimeSession(sessionId)
+      if (sess?.connected) {
+        console.log("[voice-ws] triggering AI greeting via OpenAI Realtime")
+        sess.ws.send(JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Hi." }],
+          },
+        }))
+        sess.ws.send(JSON.stringify({ type: "response.create" }))
+      }
+    }
   }
   // Extract userId from sessionId (format: "voice_${userId}")
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
@@ -543,7 +564,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       }
 
       // Proxy recording metadata to StarGuard for persistence
-      // Non-fatal: if StarGuard is unreachable, we generate a local UUID instead.
+      // Non-fatal: if StarGuard is unreachable, we persist locally instead.
       let recording: Record<string, unknown>
       try {
         const res = await apiPost("/api/tokidapp/recordings", {
@@ -558,7 +579,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           duration: Number(duration) || 0,
         }
       } catch (proxyErr) {
-        request.log.warn({ err: proxyErr }, "StarGuard proxy unavailable, using local recording UUID")
+        request.log.warn({ err: proxyErr }, "StarGuard proxy unavailable, persisting recording locally")
         recording = {
           id: crypto.randomUUID(),
           blobUrl,
@@ -566,6 +587,16 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           duration: Number(duration) || 0,
         }
       }
+
+      // Persist locally so recordings survive server restarts
+      // even when StarGuard is unreachable.
+      addLocalRecording({
+        id: recording.id as string,
+        sessionId: recording.sessionId as string,
+        blobUrl: recording.blobUrl as string,
+        duration: Number(recording.duration) || 0,
+        createdAt: new Date().toISOString(),
+      })
 
       return recording
     } catch (error) {
@@ -584,7 +615,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
         return { recordings: [] }
       }
 
-      // Try StarGuard first; fall back to empty if unavailable
+      // Try StarGuard first; fall back to local store if unavailable
       try {
         const res = await apiGet("/api/tokidapp/recordings", { sessionId })
         if (res.ok) {
@@ -594,10 +625,12 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           }
         }
       } catch {
-        // StarGuard unreachable or timed out — non-fatal
+        request.log.warn("StarGuard proxy unavailable, reading recordings from local store")
       }
 
-      return { recordings: [] }
+      // Fall back to locally-persisted recordings
+      const localRecordings = getLocalRecordings(sessionId)
+      return { recordings: localRecordings }
     } catch {
       // Even on unexpected errors, return empty rather than 500
       return { recordings: [] }

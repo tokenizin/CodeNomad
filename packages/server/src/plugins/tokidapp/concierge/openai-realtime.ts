@@ -1,3 +1,4 @@
+import WebSocket from "ws"
 import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import {
@@ -25,14 +26,6 @@ import {
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
-
-declare const WebSocket: {
-  new(url: string, protocols?: string | string[], options?: { headers?: Record<string, string> }): WebSocket
-  readonly CLOSED: number
-  readonly CLOSING: number
-  readonly CONNECTING: number
-  readonly OPEN: number
-}
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 /** Default: gpt-realtime-2 (GA). Override with OPENAI_REALTIME_MODEL. */
@@ -598,9 +591,9 @@ export function createRealtimeSession(
     ws.send(JSON.stringify(config))
   })
 
-  ws.addEventListener("message", async (event: MessageEvent) => {
+  ws.addEventListener("message", async (event: any) => {
     try {
-      const raw = typeof event.data === "string" ? event.data : await event.data.text()
+      const raw = typeof event.data === "string" ? event.data : event.data.toString()
       const parsed = JSON.parse(raw)
 
       switch (parsed.type) {
