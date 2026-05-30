@@ -564,12 +564,23 @@ export function registerTokidappRoutes(app: FastifyInstance) {
         return { recordings: [] }
       }
 
-      const res = await apiGet("/api/tokidapp/recordings", { sessionId })
-      if (!res.ok) return { recordings: [] }
-      return await res.json()
+      // Try StarGuard first; fall back to empty if unavailable
+      try {
+        const res = await apiGet("/api/tokidapp/recordings", { sessionId })
+        if (res.ok) {
+          const contentType = res.headers.get("content-type") || ""
+          if (contentType.includes("application/json")) {
+            return await res.json()
+          }
+        }
+      } catch {
+        // StarGuard unreachable or timed out — non-fatal
+      }
+
+      return { recordings: [] }
     } catch {
-      reply.code(500)
-      return { error: "Failed to fetch recordings" }
+      // Even on unexpected errors, return empty rather than 500
+      return { recordings: [] }
     }
   })
 
