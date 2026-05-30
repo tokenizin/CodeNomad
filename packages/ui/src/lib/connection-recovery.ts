@@ -17,17 +17,26 @@ function resourceKey(instanceId: string, resource: string): string {
   return `${instanceId}:${resource}`
 }
 
-function isRecoverableFailure(error: unknown): boolean {
-  const message =
+function messageOf(error: unknown): string {
+  return (
     error instanceof Error
       ? error.message
       : typeof error === "string"
         ? error
         : JSON.stringify(error ?? "")
-  const lower = message.toLowerCase()
+  ).toLowerCase()
+}
+
+/** Auth failure (401) — needs re-auth, NOT a host/tunnel restart. */
+function isAuthFailure(error: unknown): boolean {
+  const lower = messageOf(error)
+  return lower.includes("401") || lower.includes("unauthorized")
+}
+
+/** Genuine tunnel/gateway/network outage — the only case a host restart can fix. */
+function isTunnelFailure(error: unknown): boolean {
+  const lower = messageOf(error)
   return (
-    lower.includes("401") ||
-    lower.includes("unauthorized") ||
     lower.includes("502") ||
     lower.includes("503") ||
     lower.includes("504") ||
@@ -36,6 +45,10 @@ function isRecoverableFailure(error: unknown): boolean {
     lower.includes("networkerror") ||
     lower.includes("econnrefused")
   )
+}
+
+function isRecoverableFailure(error: unknown): boolean {
+  return isAuthFailure(error) || isTunnelFailure(error)
 }
 
 export function isBackendOnline(): boolean {
@@ -71,8 +84,16 @@ export function completeInstanceResourceFetch(instanceId: string, resource: stri
     return
   }
 
+  // Cool down the resource either way to avoid hammering a failing endpoint.
   resourceBlockedUntil.set(key, Date.now() + RESOURCE_COOLDOWN_MS)
-  markBackendOffline(`instance_${resource}_failure`)
+
+  // Only a genuine tunnel/gateway outage warrants a Mac-host restart request.
+  // A 401 is an auth problem (the StarGuard JWT is missing/expired) — restarting
+  // the host cannot fix it and previously caused a 400+ crash "port 9899 in use"
+  // restart loop. Auth failures get a cooldown only; re-auth must happen client-side.
+  if (isTunnelFailure(error)) {
+    markBackendOffline(`instance_${resource}_failure`)
+  }
 }
 
 export function markBackendOnline(): void {

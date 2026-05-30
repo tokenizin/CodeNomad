@@ -47,7 +47,13 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
       case "paused": return tGlobal("voiceConversation.button.paused")
       case "connecting":
       case "processing": return tGlobal("voiceConversation.button.connecting")
-      case "error": return tGlobal("voiceConversation.button.error")
+      case "error": {
+        // Surface the real failure reason (e.g. "Sign in via StarGuard first")
+        // instead of only the generic "tap to retry" message.
+        const reason = voiceConversationStore.lastError()?.trim()
+        const base = tGlobal("voiceConversation.button.error")
+        return reason ? `${base}: ${reason}` : base
+      }
     }
   })
 
