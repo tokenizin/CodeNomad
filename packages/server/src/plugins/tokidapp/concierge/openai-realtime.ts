@@ -35,6 +35,9 @@ const REALTIME_MODEL =
 const REALTIME_REASONING_EFFORT =
   process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
 
+/** Only gpt-realtime-2 supports the reasoning parameter. */
+const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
+
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
 
 /** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.7. */
@@ -561,11 +564,9 @@ export function createRealtimeSession(
       type: "session.update",
       session: {
         type: "realtime",
-        output_modalities: ["audio"],
+        modalities: ["text", "audio"],
         instructions: VOICE_INSTRUCTIONS,
-        reasoning: {
-          effort: REALTIME_REASONING_EFFORT,
-        },
+        ...(SUPPORTS_REASONING ? { reasoning: { effort: REALTIME_REASONING_EFFORT } } : {}),
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
