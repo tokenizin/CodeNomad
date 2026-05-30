@@ -19,12 +19,11 @@ export type VoiceConversationState =
   | "paused"
   | "error"
 
-/** A single transcript entry in the bilingual overlay */
+/** A single transcript entry */
 export interface TranscriptEntry {
   id: string
   role: "user" | "assistant"
-  text: string // English (original ASR)
-  translation: string // Indonesian translation
+  text: string
   timestamp: number
 }
 
@@ -35,13 +34,11 @@ export interface SessionRecording {
   blobUrl: string
   duration: number
   transcript: string
-  translations: Array<{ en: string; id: string }>
   createdAt: string
 }
 
 /** Voice conversation preferences (stored in preferences store) */
 export interface VoiceConversationPreferences {
-  bilingualEnabled: boolean
   autoPostTranscript: boolean
   autoRestoreSession: boolean
 }
@@ -73,9 +70,6 @@ export interface VoiceConversationApi {
 export interface VoiceConversationStore {
   state: Accessor<VoiceConversationState>
   setState: Setter<VoiceConversationState>
-  transcripts: Accessor<TranscriptEntry[]>
-  addTranscript: (entry: TranscriptEntry) => void
-  clearTranscripts: () => void
   isRecording: Accessor<boolean>
   setIsRecording: Setter<boolean>
   recordingDuration: Accessor<number>

@@ -1,6 +1,5 @@
 import { onCleanup } from "solid-js"
 import { voiceConversationStore } from "./store"
-import { useBilingualTranslation } from "./useBilingualTranslation"
 import { RealtimeVoiceClient, setOnPlaybackQueueEmpty, clearAudioQueue } from "../../lib/realtime-voice"
 import { getStarGuardBearerToken } from "../../lib/starguard-auth"
 import { loadSpeechCapabilities } from "../../stores/speech"
@@ -22,16 +21,13 @@ import type {
  * Manages the voice conversation lifecycle:
  *   idle → connecting → listening (VAD) → speaking (TTS) → listening → ...
  *   Any state → paused → listening (user interrupt/resume)
- *   Any state → idle (stop)
+ *   Any state → idle (stop / session end / error)
  *
  * Integrates with:
  *  - RealtimeVoiceClient (WS → OpenAI Realtime API)
- *  - useBilingualTranslation (EN → ID)
  *  - MediaRecorder (session recording → Vercel Blob)
  */
 export function useVoiceConversation(options: VoiceConversationOptions): VoiceConversationApi {
-  const { translateEntry } = useBilingualTranslation()
-
   let client: RealtimeVoiceClient | null = null
   let recordingChunks: BlobPart[] = []
   let mediaRecorder: MediaRecorder | null = null
@@ -109,27 +105,10 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
               id: crypto.randomUUID(),
               role: "user",
               text,
-              translation: "",
               timestamp: Date.now(),
             }
 
-            // Kick off translation asynchronously
-            translateEntry(entry).then((translatedText) => {
-              entry.translation = translatedText
-              // Trigger reactivity by replacing the transcript
-              const current = voiceConversationStore.transcripts()
-              const idx = current.findIndex((t) => t.id === entry.id)
-              if (idx !== -1) {
-                const updated = [...current]
-                updated[idx] = { ...entry }
-                // Patch through the store's setter
-                ;(voiceConversationStore as any).setState(voiceConversationStore.state())
-              }
-            })
-
-            voiceConversationStore.addTranscript(entry)
-
-            // Auto-post transcript to chat if enabled
+            // Auto-post transcript to chat
             options.onTranscript?.(entry)
           }
         },
@@ -308,7 +287,6 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         blobUrl: data.blobUrl,
         duration,
         transcript: "",
-        translations: [],
         createdAt: new Date().toISOString(),
       })
     } catch (err) {
