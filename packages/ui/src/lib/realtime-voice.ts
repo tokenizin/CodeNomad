@@ -238,6 +238,11 @@ export class RealtimeVoiceClient {
               this.onTranscript(msg.delta)
             }
             break
+          case "user_transcript":
+            if (msg.content) {
+              this.onTranscript(msg.content)
+            }
+            break
           case "voice_cancelled":
             this.isRecording = false
             this.voiceReady = false
