@@ -670,7 +670,8 @@ export default function PromptInput(props: PromptInputProps) {
   // Auto-restore previous voice conversation session on mount
   createEffect(() => {
     const sid = props.sessionId
-    if (sid && (preferences().showPromptVoiceInput ?? false)) {
+    // Skip draft/placeholder session IDs — they have no real recordings
+    if (sid && sid !== "__no_session_draft__" && (preferences().showPromptVoiceInput ?? false)) {
       if (preferences().showPromptVoiceInput) {
         void voiceConversation.restoreSession(sid)
       }

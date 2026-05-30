@@ -194,6 +194,12 @@ export class RealtimeVoiceClient {
   async connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return
 
+    // Close any lingering CONNECTING socket from a previous attempt
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      this.ws.close()
+      this.ws = null
+    }
+
     const token = getStarGuardBearerToken()
     if (!token) {
       this.onError("Sign in via StarGuard first (SSO from StarGuard → CodeNomad).")
@@ -211,13 +217,36 @@ export class RealtimeVoiceClient {
 
     this.ws = new WebSocket(wsUrl)
 
-    this.ws.onopen = () => {
-      if (!this.isRecording) {
-        this.onStateChange("connected")
-      }
-    }
+    // Await the WebSocket opening so startRecording() can reliably send voice_start
+    await new Promise<void>((resolve, reject) => {
+      const ws = this.ws!
+      const timeout = setTimeout(() => {
+        ws.close()
+        reject(new Error("WebSocket connection timed out"))
+      }, 10_000)
 
-    this.ws.onmessage = (event) => {
+      ws.onopen = () => {
+        clearTimeout(timeout)
+        if (!this.isRecording) {
+          this.onStateChange("connected")
+        }
+        resolve()
+      }
+
+      ws.onerror = () => {
+        clearTimeout(timeout)
+        this.cleanupCapture()
+        this.voiceReady = false
+        this.isRecording = false
+        this.onError("Could not connect to Realtime voice (check tunnel and OPENAI_API_KEY).")
+        this.onStateChange("idle")
+        reject(new Error("WebSocket connection failed"))
+      }
+    })
+
+    // Reattach onmessage/onclose after the connect promise resolves
+    // (onopen was consumed by the promise, onerror handled above)
+    this.ws!.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
         switch (msg.type) {
@@ -262,7 +291,7 @@ export class RealtimeVoiceClient {
       }
     }
 
-    this.ws.onclose = () => {
+    this.ws!.onclose = () => {
       const wasActive = this.isRecording || this.voiceReady
       this.cleanupCapture()
       this.voiceReady = false
@@ -272,19 +301,16 @@ export class RealtimeVoiceClient {
       }
       this.onStateChange("idle")
     }
-
-    this.ws.onerror = () => {
-      this.cleanupCapture()
-      this.voiceReady = false
-      this.isRecording = false
-      this.onError("Could not connect to Realtime voice (check tunnel and OPENAI_API_KEY).")
-      this.onStateChange("idle")
-    }
   }
 
   async startRecording(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      await this.connect()
+      try {
+        await this.connect()
+      } catch {
+        // connect() already called onError / onStateChange — just bail
+        return
+      }
     }
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
