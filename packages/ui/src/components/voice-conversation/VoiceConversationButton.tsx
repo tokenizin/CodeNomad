@@ -1,4 +1,5 @@
 import { createMemo, Show } from "solid-js"
+import { Loader2, Mic, Volume2, Pause, AlertCircle } from "lucide-solid"
 import { voiceConversationStore } from "./store"
 import { tGlobal } from "../../lib/i18n"
 import type { VoiceConversationState } from "./types"
@@ -10,16 +11,6 @@ export interface VoiceConversationButtonProps {
   onResume: () => void
   onStop: () => void
   disabled?: boolean
-}
-
-const STATE_ICONS: Record<VoiceConversationState, string> = {
-  idle: "mic",
-  connecting: "loader",
-  listening: "mic",
-  processing: "loader",
-  speaking: "volume",
-  paused: "pause",
-  error: "alert-circle",
 }
 
 const STATE_CLASSES: Record<VoiceConversationState, string> = {
@@ -47,7 +38,6 @@ const STATE_CLASSES: Record<VoiceConversationState, string> = {
 export function VoiceConversationButton(props: VoiceConversationButtonProps) {
   const state = voiceConversationStore.state
   const audioLevel = voiceConversationStore.audioLevel
-  const lastError = voiceConversationStore.lastError
 
   const label = createMemo(() => {
     switch (state()) {
@@ -72,7 +62,6 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
       case "listening":
       case "processing":
       case "speaking":
-        // Click during any active state = pause/interrupt
         props.onPause()
         break
       case "paused":
@@ -83,8 +72,7 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
     }
   }
 
-  function handlePointerDown(e: PointerEvent) {
-    // Detect long press for stop
+  function handlePointerDown(_e: PointerEvent) {
     let longPressTriggered = false
     const timeout = setTimeout(() => {
       longPressTriggered = true
@@ -104,6 +92,8 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
     addEventListener("pointerleave", cleanup, { once: true })
     addEventListener("pointercancel", cleanup, { once: true })
   }
+
+  const isBusy = () => state() === "connecting" || state() === "processing"
 
   return (
     <button
@@ -130,19 +120,19 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
         />
       </Show>
 
-      {/* Icon */}
+      {/* Icon — Lucide SVGs matching the rest of the UI */}
       <Show
-        when={state() === "connecting" || state() === "processing"}
+        when={isBusy()}
         fallback={
           <span aria-hidden="true" class="voice-conv-icon">
-            {state() === "listening" || state() === "speaking" ? "\u{1F3A4}" : // mic
-             state() === "paused" ? "\u23F8" : // pause
-             state() === "error" ? "\u26A0" : // warning
-             "\u{1F3A4}"} {/* mic (idle) */}
+            {state() === "speaking" ? <Volume2 class="h-4 w-4" /> :
+             state() === "paused" ? <Pause class="h-4 w-4" /> :
+             state() === "error" ? <AlertCircle class="h-4 w-4" /> :
+             <Mic class="h-4 w-4" />}
           </span>
         }
       >
-        <span class="voice-conv-spinner" aria-hidden="true">...</span>
+        <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
       </Show>
     </button>
   )

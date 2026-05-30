@@ -22,14 +22,12 @@ import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
-import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import {
   clearConversationPlaybackForInstance,
   isConversationModeEnabled,
 } from "../stores/conversation-speech"
 import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
 import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
-import { VoiceConversationOverlay } from "./voice-conversation/VoiceConversationOverlay"
 import { voiceConversationStore } from "./voice-conversation/store"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
@@ -649,30 +647,19 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
-  const voiceInput = usePromptVoiceInput({
-    prompt,
-    setPrompt,
-    getTextarea: () => textareaRef ?? null,
-    enabled: () => preferences().showPromptVoiceInput,
-    disabled: () => Boolean(props.disabled),
-  })
   const voiceConversation = useVoiceConversation({
     instanceId: props.instanceId,
     sessionId: props.sessionId,
     onTranscript: (entry) => {
-      if (preferences().autoPostTranscript ?? true) {
-        setPrompt((prev) => prev + entry.text + " ")
+      if ((preferences().showPromptVoiceInput ?? true) && entry.text.trim()) {
+        void props.onSend(entry.text, [])
       }
     },
   })
-  const showVoiceInput = () =>
-    preferences().showPromptVoiceInput &&
-    (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
   const showVoiceConversation = () =>
     preferences().showPromptVoiceInput
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
-  const showConversationToggle = () => showVoiceInput() || showVoiceConversation() || conversationModeEnabled()
-  const canToggleConversationMode = () => canUseConversationMode()
+  const showConversationToggle = () => showVoiceConversation() || conversationModeEnabled()
   const conversationModeButtonTitle = () =>
     conversationModeEnabled()
       ? t("promptInput.conversationMode.disable.title")
@@ -683,38 +670,12 @@ export default function PromptInput(props: PromptInputProps) {
   // Auto-restore previous voice conversation session on mount
   createEffect(() => {
     const sid = props.sessionId
-    if (sid && (preferences().autoPostTranscript ?? false)) {
-      void voiceConversation.restoreSession(sid)
-    }
-  })
-
-  let voiceButtonPressed = false
-
-  const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
-    if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
-    voiceButtonPressed = true
-    // Treat a mic press as barge-in: stop any active assistant speech before listening.
-    clearConversationPlaybackForInstance(props.instanceId)
-
-    if (event instanceof PointerEvent) {
-      const target = event.currentTarget
-      if (target instanceof HTMLElement) {
-        try {
-          target.setPointerCapture(event.pointerId)
-        } catch {
-          // no-op
-        }
+    if (sid && (preferences().showPromptVoiceInput ?? false)) {
+      if (preferences().showPromptVoiceInput) {
+        void voiceConversation.restoreSession(sid)
       }
     }
-
-    void voiceInput.startRecording()
-  }
-
-  const endVoicePress = () => {
-    if (!voiceButtonPressed) return
-    voiceButtonPressed = false
-    voiceInput.stopRecording()
-  }
+  })
 
   return (
     <div class="prompt-input-container">
@@ -863,48 +824,6 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-actions">
           <div class="prompt-nav-buttons">
             <div class="prompt-nav-column prompt-nav-column-left">
-              <Show when={showVoiceInput()}>
-                <button
-                  type="button"
-                  class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
-                  onPointerDown={(event) => {
-                    event.preventDefault()
-                    beginVoicePress(event)
-                  }}
-                  onPointerUp={(event) => {
-                    event.preventDefault()
-                    endVoicePress()
-                  }}
-                  onPointerCancel={() => endVoicePress()}
-                  onLostPointerCapture={() => endVoicePress()}
-                  onKeyDown={(event) => {
-                    if (event.repeat) return
-                    if (event.key !== " " && event.key !== "Enter") return
-                    event.preventDefault()
-                    beginVoicePress(event)
-                  }}
-                  onKeyUp={(event) => {
-                    if (event.key !== " " && event.key !== "Enter") return
-                    event.preventDefault()
-                    endVoicePress()
-                  }}
-                  onBlur={() => endVoicePress()}
-                  disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
-                  aria-label={voiceInput.buttonTitle()}
-                  title={voiceInput.buttonTitle()}
-                >
-                  <Show
-                    when={voiceInput.isRecording()}
-                    fallback={
-                      <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
-                        <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-                      </Show>
-                    }
-                  >
-                    <Mic class="h-4 w-4" aria-hidden="true" />
-                  </Show>
-                </button>
-              </Show>
               <Show when={showVoiceConversation()}>
                 <VoiceConversationButton
                   instanceId={props.instanceId}
@@ -1017,10 +936,6 @@ export default function PromptInput(props: PromptInputProps) {
         initialPath={props.instanceFolder}
       />
 
-      <VoiceConversationOverlay
-        visible={voiceConversationStore.state() !== "idle" && voiceConversationStore.state() !== "connecting"}
-        onClose={() => void voiceConversation.stopConversation()}
-      />
     </div>
   )
 }
