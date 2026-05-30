@@ -309,7 +309,11 @@ export function registerVoiceRealtimeWebSocket(
     if (!parsed.pathname.startsWith("/api/voice/session")) return
 
     const token = parsed.searchParams.get("token") || ""
-    console.log("[voice-ws] upgrade request received, token length:", token.length, "token prefix:", token.substring(0, 20) + "...")
+    // Only log token prefix in development; in production log length only to avoid leaking partial tokens
+    const tokenInfo = process.env.NODE_ENV === "production"
+      ? `token length: ${token.length}`
+      : `token length: ${token.length}, token prefix: ${token.substring(0, 20)}...`
+    console.log("[voice-ws] upgrade request received,", tokenInfo)
     if (!token) {
       console.log("[voice-ws] no token — 401")
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
@@ -511,12 +515,30 @@ export function registerTokidappRoutes(app: FastifyInstance) {
   })
 
   // Health / status
-  app.get("/api/tokidapp/status", async () => ({
-    status: "ok",
-    activeSockets: activeSockets.size,
-    workspaceRoot: WORKSPACE_ROOT,
-    vercelCliAvailable: true,
-  }))
+  app.get("/api/tokidapp/status", async () => {
+    // Check OpenAI API connectivity if key is configured
+    let openaiStatus = "not_configured"
+    if (REALTIME_ENABLED) {
+      try {
+        const response = await fetch("https://api.openai.com/v1/models", {
+          method: "HEAD",
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          signal: AbortSignal.timeout(5000),
+        })
+        openaiStatus = response.ok ? "reachable" : `error_${response.status}`
+      } catch (e) {
+        openaiStatus = "unreachable"
+      }
+    }
+    return {
+      status: "ok",
+      activeSockets: activeSockets.size,
+      workspaceRoot: WORKSPACE_ROOT,
+      vercelCliAvailable: true,
+      realtimeEnabled: REALTIME_ENABLED,
+      openaiApiStatus: openaiStatus,
+    }
+  })
 
   // Deploy shortcut (HTTP POST, no WebSocket needed)
   const DeployBodySchema = z.object({
