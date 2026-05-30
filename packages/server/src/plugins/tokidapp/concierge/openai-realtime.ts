@@ -701,7 +701,7 @@ export function createRealtimeSession(
     session.connected = false
   })
 
-  ws.addEventListener("close", (event) => {
+  ws.addEventListener("close", (event: any) => {
     console.log("[openai-realtime] OpenAI WS closed for session:", sessionId, "code:", event?.code, "reason:", event?.reason)
     session.connected = false
     sessions.delete(sessionId)
