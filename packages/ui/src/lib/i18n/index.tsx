@@ -7,9 +7,9 @@ type Messages = Record<string, string>
 
 export type TranslateParams = Record<string, unknown>
 
-export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he"
+export type Locale = "en" | "id" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he"
 
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he"] as const
+const SUPPORTED_LOCALES: readonly Locale[] = ["en", "id", "es", "fr", "ru", "ja", "zh-Hans", "he"] as const
 const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
 const RTL_LOCALES = new Set<Locale>(["he"])
 
@@ -18,6 +18,7 @@ const localeMessagesPromises = new Map<Locale, Promise<Messages>>()
 
 const localeLoaders: Record<Locale, () => Promise<Messages>> = {
   en: async () => enMessages,
+  id: async () => (await import("./messages/id")).idMessages,
   es: async () => (await import("./messages/es")).esMessages,
   fr: async () => (await import("./messages/fr")).frMessages,
   ru: async () => (await import("./messages/ru")).ruMessages,

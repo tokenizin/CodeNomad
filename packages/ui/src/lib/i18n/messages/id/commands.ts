@@ -1,0 +1,176 @@
+export const commandMessages = {
+  "commandPalette.title": "Palet Perintah",
+  "commandPalette.description": "Cari dan jalankan perintah",
+  "commandPalette.searchPlaceholder": "Ketik perintah atau cari...",
+  "commandPalette.empty": "Tidak ada perintah ditemukan untuk \"{query}\"",
+  "commandPalette.category.customCommands": "Perintah Kustom",
+  "commandPalette.category.instance": "Instance",
+  "commandPalette.category.session": "Sesi",
+  "commandPalette.category.agentModel": "Agen & Model",
+  "commandPalette.category.inputFocus": "Input & Fokus",
+  "commandPalette.category.system": "Sistem",
+  "commandPalette.category.other": "Lainnya",
+
+  "commands.newInstance.label": "Instance Baru",
+  "commands.newInstance.description": "Buka pemilih folder untuk membuat instance baru",
+  "commands.newInstance.keywords": "folder, proyek, workspace",
+
+  "commands.closeInstance.label": "Tutup Tab",
+  "commands.closeInstance.description": "Tutup tab tingkat atas saat ini",
+  "commands.closeInstance.keywords": "berhenti, tutup, tab",
+
+  "commands.nextInstance.label": "Tab Berikutnya",
+  "commands.nextInstance.description": "Pindah ke tab tingkat atas berikutnya",
+  "commands.nextInstance.keywords": "ganti, navigasi, tab",
+
+  "commands.previousInstance.label": "Tab Sebelumnya",
+  "commands.previousInstance.description": "Pindah ke tab tingkat atas sebelumnya",
+  "commands.previousInstance.keywords": "ganti, navigasi, tab",
+
+  "commands.newSession.label": "Sesi Baru",
+  "commands.newSession.description": "Buat sesi induk baru",
+  "commands.newSession.keywords": "buat, mulai",
+
+  "commands.closeSession.label": "Tutup Sesi",
+  "commands.closeSession.description": "Tutup sesi induk saat ini",
+  "commands.closeSession.keywords": "tutup, berhenti",
+
+  "commands.scrubSessions.label": "Bersihkan Sesi",
+  "commands.scrubSessions.description": "Hapus sesi kosong, sesi subagen yang sudah selesai, dan sesi fork yang tidak diperlukan.",
+  "commands.scrubSessions.keywords": "bersihkan, kosong, sesi, hapus",
+
+  "commands.instanceInfo.label": "Info Instance",
+  "commands.instanceInfo.description": "Buka gambaran instance untuk log dan status",
+  "commands.instanceInfo.keywords": "info, log, konsol, output",
+
+  "commands.nextSession.label": "Sesi Berikutnya",
+  "commands.nextSession.description": "Pindah ke tab sesi berikutnya",
+  "commands.nextSession.keywords": "ganti, navigasi",
+
+  "commands.previousSession.label": "Sesi Sebelumnya",
+  "commands.previousSession.description": "Pindah ke tab sesi sebelumnya",
+  "commands.previousSession.keywords": "ganti, navigasi",
+
+  "commands.compactSession.label": "Ringkas Sesi",
+  "commands.compactSession.description": "Ringkas dan kompakkan sesi saat ini",
+  "commands.compactSession.keywords": "ringkas, kompres",
+  "commands.compactSession.errorFallback": "Gagal meringkas sesi",
+  "commands.compactSession.alert.title": "Peringkasan gagal",
+  "commands.compactSession.alert.message": "Peringkasan gagal: {message}",
+
+  "commands.undoLastMessage.label": "Urungkan Pesan Terakhir",
+  "commands.undoLastMessage.description": "Kembalikan pesan terakhir",
+  "commands.undoLastMessage.keywords": "kembalikan, urungkan",
+  "commands.undoLastMessage.none.title": "Tidak ada tindakan untuk diurungkan",
+  "commands.undoLastMessage.none.message": "Tidak ada yang bisa diurungkan",
+  "commands.undoLastMessage.failed.title": "Pembatalan gagal",
+  "commands.undoLastMessage.failed.message": "Gagal mengembalikan pesan",
+
+  "commands.openModelSelector.label": "Buka Pemilih Model",
+  "commands.openModelSelector.description": "Pilih model yang berbeda",
+  "commands.openModelSelector.keywords": "model, llm, ai",
+
+  "commands.selectModelVariant.label": "Pilih Varian Model",
+  "commands.selectModelVariant.description": "Pilih tingkat pemikiran untuk model saat ini",
+  "commands.selectModelVariant.keywords": "varian, pemikiran, penalaran, usaha",
+
+  "commands.openAgentSelector.label": "Buka Pemilih Agen",
+  "commands.openAgentSelector.description": "Pilih agen yang berbeda",
+  "commands.openAgentSelector.keywords": "agen, mode",
+
+  "commands.clearInput.label": "Bersihkan Input",
+  "commands.clearInput.description": "Bersihkan area teks prompt",
+  "commands.clearInput.keywords": "bersihkan, reset",
+
+  "commands.promptSubmitShortcut.label.default": "Enter: Baris Baru, Cmd/Ctrl+Enter: Kirim Prompt",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: Kirim Prompt, Cmd/Ctrl+Enter: Baris Baru",
+  "commands.promptSubmitShortcut.description": "Tukar perilaku Enter dan Cmd/Ctrl+Enter di input prompt",
+  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, kirim, baris baru, pintasan",
+
+  "commands.thinkingBlocks.label.show": "Tampilkan Pemikiran",
+  "commands.thinkingBlocks.label.hide": "Sembunyikan Pemikiran",
+  "commands.thinkingBlocks.description": "Tampilkan atau sembunyikan bagian pemikiran AI",
+  "commands.thinkingBlocks.keywords": "pemikiran, penalaran, alihkan, tampilkan, sembunyikan",
+
+  "commands.timelineToolCalls.label.show": "Tampilkan Panggilan Alat di Timeline",
+  "commands.timelineToolCalls.label.hide": "Sembunyikan Panggilan Alat di Timeline",
+  "commands.timelineToolCalls.description": "Alihkan entri panggilan alat di linimasa pesan",
+  "commands.timelineToolCalls.keywords": "linimasa, alat, alihkan",
+
+  "commands.keyboardShortcutHints.label.show": "Tampilkan Petunjuk Pintasan Keyboard",
+  "commands.keyboardShortcutHints.label.hide": "Sembunyikan Petunjuk Pintasan Keyboard",
+  "commands.keyboardShortcutHints.description": "Tampilkan atau sembunyikan petunjuk pintasan keyboard di seluruh UI",
+  "commands.keyboardShortcutHints.description.disabledWeb": "Dinonaktifkan di WebUI (petunjuk pintasan selalu disembunyikan)",
+  "commands.keyboardShortcutHints.keywords": "pintasan, keyboard, petunjuk",
+
+  "commands.common.expanded": "Diperluas",
+  "commands.common.collapsed": "Diruntuhkan",
+  "commands.common.visible": "Terlihat",
+  "commands.common.hidden": "Tersembunyi",
+  "commands.common.enabled": "Diaktifkan",
+  "commands.common.disabled": "Dinonaktifkan",
+
+  "commands.thinkingBlocksDefault.label": "Tampilan Pemikiran: {state}",
+  "commands.thinkingBlocksDefault.description": "Runtuhkan / Perluas bagian pemikiran AI saat ditampilkan",
+  "commands.thinkingBlocksDefault.keywords": "pemikiran, penalaran, perluas, runtuhkan",
+
+  "commands.diffViewSplit.label": "Gunakan Tampilan Diff Terpisah",
+  "commands.diffViewSplit.description": "Tampilkan diff panggilan alat secara berdampingan",
+  "commands.diffViewSplit.keywords": "diff, terpisah, tampilan",
+
+  "commands.diffViewUnified.label": "Gunakan Tampilan Diff Terpadu",
+  "commands.diffViewUnified.description": "Tampilkan diff panggilan alat secara inline",
+  "commands.diffViewUnified.keywords": "diff, terpadu, tampilan",
+
+  "commands.toolOutputsDefault.label": "Output Alat Default · {state}",
+  "commands.toolOutputsDefault.description": "Alihkan ekspansi default untuk output alat",
+  "commands.toolOutputsDefault.keywords": "alat, output, perluas, runtuhkan",
+
+  "commands.diagnosticsDefault.label": "Diagnostik Default · {state}",
+  "commands.diagnosticsDefault.description": "Alihkan ekspansi default untuk output diagnostik",
+  "commands.diagnosticsDefault.keywords": "diagnostik, perluas, runtuhkan",
+
+  "commands.toolInputsVisibility.label": "Visibilitas Input Alat · {state}",
+  "commands.toolInputsVisibility.description": "Atur visibilitas default untuk argumen input panggilan alat",
+  "commands.toolInputsVisibility.keywords": "alat, input, argumen, visibilitas, sembunyikan, tampilkan",
+
+  "commands.tokenUsageDisplay.label": "Tampilan Penggunaan Token · {state}",
+  "commands.tokenUsageDisplay.description": "Tampilkan atau sembunyikan statistik token dan biaya untuk pesan asisten",
+  "commands.tokenUsageDisplay.keywords": "token, penggunaan, biaya, statistik",
+
+  "commands.autoCleanupBlankSessions.label": "Bersihkan Otomatis Sesi Kosong · {state}",
+  "commands.autoCleanupBlankSessions.description": "Bersihkan otomatis sesi kosong saat membuat yang baru",
+  "commands.autoCleanupBlankSessions.keywords": "otomatis, bersihkan, sesi kosong",
+
+  "commands.showHelp.label": "Tampilkan Bantuan",
+  "commands.showHelp.description": "Tampilkan pintasan keyboard dan bantuan",
+  "commands.showHelp.keywords": "pintasan, bantuan",
+
+  "commands.custom.argumentsPrompt.message": "Argumen untuk /{name}",
+  "commands.custom.argumentsPrompt.title": "Perintah kustom",
+  "commands.custom.argumentsPrompt.inputLabel": "Argumen",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "mis. foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "Jalankan",
+  "commands.custom.argumentsPrompt.cancelLabel": "Batal",
+  "commands.custom.argumentsPrompt.openFailed.message": "Gagal membuka prompt argumen.",
+  "commands.custom.argumentsPrompt.openFailed.title": "Argumen perintah",
+  "commands.custom.entries.descriptionFallback": "Perintah kustom",
+  "commands.custom.sessionRequired.message": "Pilih sesi sebelum menjalankan perintah kustom.",
+  "commands.custom.sessionRequired.title": "Sesi diperlukan",
+  "commands.custom.runFailed.message": "Gagal menjalankan perintah kustom. Periksa konsol untuk detail.",
+  "commands.custom.runFailed.title": "Perintah gagal",
+
+  "unifiedPicker.loading.searching": "Mencari...",
+  "unifiedPicker.loading.loadingWorkspace": "Memuat workspace...",
+  "unifiedPicker.title.command": "Pilih Perintah",
+  "unifiedPicker.title.mention": "Pilih Agen atau File",
+  "unifiedPicker.empty": "Tidak ada hasil ditemukan",
+  "unifiedPicker.sections.commands": "PERINTAH",
+  "unifiedPicker.sections.agents": "AGEN",
+  "unifiedPicker.sections.files": "FILE",
+  "unifiedPicker.sections.workspaceRoot": "ROOT WORKSPACE",
+  "unifiedPicker.badge.subagent": "subagen",
+  "unifiedPicker.footer.navigate": "navigasi",
+  "unifiedPicker.footer.select": "pilih",
+  "unifiedPicker.footer.close": "tutup",
+} as const

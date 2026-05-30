@@ -41,6 +41,31 @@ const REALTIME_MODEL =
 /** Reasoning effort: minimal, low, medium, high, xhigh. Default: low. */
 const REALTIME_REASONING_EFFORT =
   process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
+
+/** ── Voice Activity Detection calibration (env-var configurable) ── */
+
+/** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.7. */
+const REALTIME_VAD_THRESHOLD = (() => {
+  const raw = process.env.OPENAI_REALTIME_VAD_THRESHOLD?.trim()
+  if (!raw) return 0.7
+  const val = parseFloat(raw)
+  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.7
+})()
+/** Audio captured before speech onset in ms. Default: 300. */
+const REALTIME_VAD_PREFIX_PADDING_MS = (() => {
+  const raw = process.env.OPENAI_REALTIME_VAD_PREFIX_PADDING_MS?.trim()
+  if (!raw) return 300
+  const val = parseInt(raw, 10)
+  return Number.isFinite(val) && val > 0 ? val : 300
+})()
+/** Silence duration before end-of-turn in ms. Default: 400. */
+const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
+  const raw = process.env.OPENAI_REALTIME_VAD_SILENCE_DURATION_MS?.trim()
+  if (!raw) return 400
+  const val = parseInt(raw, 10)
+  return Number.isFinite(val) && val > 0 ? val : 400
+})()
+
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
 
@@ -550,11 +575,12 @@ export function createRealtimeSession(
             format: { type: "audio/pcm", rate: 24000 },
             transcription: { model: "gpt-4o-mini-transcribe" },
             // Server-side VAD for continuous voice — auto-detects when user stops speaking.
+            // Calibrate via OPENAI_REALTIME_VAD_* env vars (threshold, prefix_padding_ms, silence_duration_ms).
             turn_detection: {
               type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+              threshold: REALTIME_VAD_THRESHOLD,
+              prefix_padding_ms: REALTIME_VAD_PREFIX_PADDING_MS,
+              silence_duration_ms: REALTIME_VAD_SILENCE_DURATION_MS,
             },
           },
           output: {

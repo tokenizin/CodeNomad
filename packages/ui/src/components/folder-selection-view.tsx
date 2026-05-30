@@ -74,6 +74,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   const languageOptions: LanguageOption[] = [
     { value: "en", label: "English" },
+    { value: "id", label: "Bahasa Indonesia" },
     { value: "es", label: "Español" },
     { value: "fr", label: "Français" },
     { value: "ru", label: "Русский" },

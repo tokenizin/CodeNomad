@@ -1,0 +1,27 @@
+export const logMessages = {
+  "logsView.title": "Log Server",
+  "logsView.actions.show": "Tampilkan log server",
+  "logsView.actions.hide": "Sembunyikan log server",
+  "logsView.envVars.title": "Variabel Lingkungan ({count})",
+  "logsView.paused.title": "Log server dijeda",
+  "logsView.paused.description": "Aktifkan streaming untuk melihat aktivitas server OpenCode Anda.",
+  "logsView.empty.waiting": "Menunggu output server...",
+  "logsView.scrollToBottom": "Gulir ke bawah",
+
+  "infoView.logs.title": "Log Server",
+  "infoView.logs.actions.show": "Tampilkan log server",
+  "infoView.logs.actions.hide": "Sembunyikan log server",
+  "infoView.logs.paused.title": "Log server dijeda",
+  "infoView.logs.paused.description": "Aktifkan streaming untuk melihat aktivitas server OpenCode Anda.",
+  "infoView.logs.empty.waiting": "Menunggu output server...",
+  "infoView.logs.scrollToBottom": "Gulir ke bawah",
+
+  "infoView.dispose.actions.dispose": "Buang instance",
+  "infoView.dispose.actions.disposing": "Membuang...",
+  "infoView.dispose.confirm.title": "Buang instance?",
+  "infoView.dispose.confirm.message": "Ini akan menghapus status cache per-proyek untuk direktori ini dan memuat ulang instance.",
+  "infoView.dispose.confirm.confirmLabel": "Buang",
+  "infoView.dispose.confirm.cancelLabel": "Batal",
+  "infoView.dispose.toast.success": "Instance dibuang. Memuat ulang...",
+  "infoView.dispose.toast.error": "Gagal membuang instance.",
+} as const

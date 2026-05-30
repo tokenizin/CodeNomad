@@ -1,0 +1,25 @@
+const messages: Record<string, string> = {
+  "voiceConversation.button.idle": "Mulai percakapan suara",
+  "voiceConversation.button.listening": "Mendengarkan...",
+  "voiceConversation.button.speaking": "Berbicara...",
+  "voiceConversation.button.paused": "Dijeda — ketuk untuk melanjutkan",
+  "voiceConversation.button.connecting": "Menghubungkan...",
+  "voiceConversation.button.error": "Error — ketuk untuk coba lagi",
+  "voiceConversation.overlay.transcript": "Transkrip",
+  "voiceConversation.overlay.translation": "Terjemahan (Indonesia)",
+  "voiceConversation.overlay.duration": "Durasi: {duration}dtk",
+  "voiceConversation.overlay.you": "Anda",
+  "voiceConversation.overlay.assistant": "Asisten",
+  "voiceConversation.overlay.noTranscripts": "Belum ada transkrip. Mulai berbicara!",
+  "voiceConversation.error.microphone": "Akses mikrofon diperlukan untuk percakapan suara.",
+  "voiceConversation.error.connection": "Gagal terhubung ke layanan suara.",
+  "voiceConversation.error.apiKey": "Kunci API Suara belum dikonfigurasi.",
+  "voiceConversation.error.restore": "Tidak dapat memulihkan rekaman sesi sebelumnya.",
+  "voiceConversation.error.upload": "Gagal menyimpan rekaman sesi.",
+  "voiceConversation.settings.bilingualEnabled": "Tampilkan terjemahan bahasa Indonesia",
+  "voiceConversation.settings.autoPostTranscript": "Posting transkrip otomatis ke chat",
+  "voiceConversation.settings.autoRestoreSession": "Pulihkan otomatis sesi sebelumnya",
+  "voiceConversation.session.restored": "Sesi sebelumnya dipulihkan — {count} pesan",
+}
+
+export const voiceConversationMessages = messages
