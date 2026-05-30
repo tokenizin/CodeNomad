@@ -564,7 +564,7 @@ export function createRealtimeSession(
       type: "session.update",
       session: {
         type: "realtime",
-        modalities: ["text", "audio"],
+        output_modalities: ["audio"],
         instructions: VOICE_INSTRUCTIONS,
         ...(SUPPORTS_REASONING ? { reasoning: { effort: REALTIME_REASONING_EFFORT } } : {}),
         audio: {
