@@ -275,14 +275,28 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
     const duration = voiceConversationStore.recordingDuration()
 
     try {
-      const formData = new FormData()
-      formData.append("audio", blob, `recording-${options.sessionId}.webm`)
-      formData.append("sessionId", options.sessionId)
-      formData.append("duration", duration.toString())
+      // Step 1: Upload raw audio to CodeNomad server
+      const audioRes = await fetch("/api/tokidapp/recordings/audio", {
+        method: "POST",
+        headers: {
+          "Content-Type": "audio/webm",
+          "X-Session-Id": options.sessionId ?? "",
+          "X-Duration": duration.toString(),
+        },
+        body: blob,
+      })
+      if (!audioRes.ok) throw new Error(`Audio upload failed: ${audioRes.status}`)
+      const { blobUrl } = await audioRes.json()
 
+      // Step 2: Persist recording metadata
       const response = await fetch("/api/tokidapp/recordings", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blobUrl,
+          sessionId: options.sessionId,
+          duration: duration.toString(),
+        }),
       })
 
       if (!response.ok) throw new Error(`Upload failed: ${response.status}`)

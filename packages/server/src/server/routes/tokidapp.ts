@@ -1,6 +1,9 @@
 import { WebSocket, WebSocketServer } from "ws"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
+import fs from "fs"
+import path from "path"
+import os from "os"
 import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
 import {
   createRealtimeSession,
@@ -696,6 +699,65 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       reply.code(500)
       return { error: (error as Error).message }
     }
+  })
+}
+
+// ── Recording Audio Upload & Serve ───────────────────────────
+// Accepts raw audio/webm uploads, serves them back as static files.
+// The existing POST /api/tokidapp/recordings handles metadata persistence.
+
+export function registerRecordingRoutes(app: FastifyInstance) {
+  const recordingsDir = path.join(os.homedir(), ".config", "codenomad", "recordings")
+  fs.mkdirSync(recordingsDir, { recursive: true })
+
+  app.register(async (instance) => {
+    // Accept raw audio/webm body without breaking JSON parser on parent scope.
+    instance.addContentTypeParser("audio/webm", (_req, body, done) => done(null, body))
+
+    // Upload raw audio → returns { blobUrl }
+    instance.post("/api/tokidapp/recordings/audio", async (request, reply) => {
+      try {
+        const buffer = request.body as Buffer
+        if (!buffer || buffer.length === 0) {
+          reply.code(400)
+          return { error: "Empty audio body" }
+        }
+
+        const sessionId = (request.headers["x-session-id"] || "unknown") as string
+        const duration = Number(request.headers["x-duration"]) || 0
+        const id = crypto.randomUUID()
+        const filename = `${id}.webm`
+        const filePath = path.join(recordingsDir, filename)
+        fs.writeFileSync(filePath, buffer)
+
+        return { blobUrl: `/api/tokidapp/recordings/files/${filename}` }
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to save recording audio")
+        reply.code(500)
+        return { error: "Failed to save recording audio" }
+      }
+    })
+
+    // Serve recorded audio file
+    instance.get("/api/tokidapp/recordings/files/:filename", async (request, reply) => {
+      try {
+        const { filename } = request.params as { filename: string }
+        // Basic path-traversal protection
+        const normalized = path.normalize(filename).replace(/^(\.\.(\/|\\|$))+/, "")
+        const filePath = path.join(recordingsDir, normalized)
+
+        if (!filePath.startsWith(recordingsDir) || !fs.existsSync(filePath)) {
+          reply.code(404)
+          return { error: "File not found" }
+        }
+
+        const stream = fs.createReadStream(filePath)
+        reply.type("audio/webm").send(stream)
+      } catch (error) {
+        reply.code(500)
+        return { error: "Failed to serve recording" }
+      }
+    })
   })
 }
 
