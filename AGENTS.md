@@ -1,5 +1,22 @@
 # AGENT NOTES
 
+## Bun WebSocket Gotcha (Critical)
+
+Bun's native `WebSocket` constructor does **not** pass custom `headers` to the server. This silently drops `Authorization` headers, causing OpenAI (and any header-requiring WebSocket API) to reject connections with auth errors.
+
+**Rule:** When making outbound WebSocket connections that require custom headers (e.g., OpenAI Realtime API), always use the `ws` npm package instead of Bun's native WebSocket:
+
+```typescript
+// ❌ BROKEN under Bun — headers silently dropped
+const ws = new WebSocket(url, protocols, { headers: { Authorization: `Bearer ${key}` } })
+
+// ✅ CORRECT — use the ws package
+import WebSocket from "ws"
+const ws = new WebSocket(url, protocols, { headers: { Authorization: `Bearer ${key}` } })
+```
+
+The `ws` package is already a dependency. Server-side WebSocket *servers* (`WebSocketServer`) work fine with Bun — this only affects outbound client connections with custom headers.
+
 ## Styling Guidelines
 - Reuse the existing token & utility layers before introducing new CSS variables or custom properties. Extend `src/styles/tokens.css` / `src/styles/utilities.css` if a shared pattern is needed.
 - Keep aggregate entry files (e.g., `src/styles/controls.css`, `messaging.css`, `panels.css`) lean—they should only `@import` feature-specific subfiles located inside `src/styles/{components|messaging|panels}`.
