@@ -22,6 +22,9 @@ import {
   runLint,
   runTypeCheck,
   gitBranchAction,
+  queryKnowledgeBase,
+  getArchitectureDigest,
+  getSepoliaDeployments,
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
@@ -112,6 +115,28 @@ const tools = [
   },
   {
     type: "function",
+    name: "query_knowledge_base",
+    description: "Query the StarCARD architecture knowledge base for entities (contracts, chains, venues, tokens, actors, diagrams). Use this to look up ecosystem architecture instead of grep-searching code.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free-text search (name, description, or keyword)" },
+        domain: { type: "string", description: "Filter by domain: SYSTEM_ARCHITECTURE, MULTI_CHAIN, FINANCIAL_MODEL, GOVERNANCE, SMART_CONTRACT, IMPLEMENTATION_TIMELINE, RWA, SYSTEM_STATE, COMPLIANCE" },
+        category: { type: "string", description: "Filter by category: CONTRACT, CHAIN, VENUE, TOKEN, INFRASTRUCTURE, ACTOR, TREASURY, BRIDGE, COMPLIANCE, ORGANIZATION, FLOW, DOCUMENT, METRIC" },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "get_sepolia_deployments",
+    description: "Get all known Sepolia testnet contract addresses for the StarCARD ecosystem (DynamicSplitter, StarBridge, STARX token, etc.).",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    type: "function",
     name: "run_tests",
     description: "Run the test suite and return pass/fail results with duration.",
     parameters: {
@@ -177,7 +202,8 @@ const tools = [
     parameters: {
       type: "object",
       properties: {
-        prompt: { type: "string", description: "Description of the agent's task" },
+        prompt: { type: "string", description: "Description of the agent's task and desired output" },
+        context: { type: "string", description: "Summarize what you've already discovered or decided so the spawned agent doesn't start from zero. Include key findings, file paths, git state, or decisions." },
       },
       required: ["prompt"],
     },
@@ -347,6 +373,15 @@ async function executeTool(
         return await investigateCodebase(query, config.workspaceRoot)
       }
 
+      case "query_knowledge_base": {
+        const { query = "", domain, category } = JSON.parse(argsStr)
+        return await queryKnowledgeBase(query, domain, category)
+      }
+
+      case "get_sepolia_deployments": {
+        return await getSepoliaDeployments()
+      }
+
       case "run_tests": {
         return await runTests(config.workspaceRoot)
       }
@@ -374,8 +409,11 @@ async function executeTool(
       }
 
       case "spawn_agent": {
-        const { prompt } = JSON.parse(argsStr)
-        return await spawnAgent(prompt, config.starguardBase, config.workspaceRoot)
+        const { prompt, context: parentContext } = JSON.parse(argsStr)
+        const enrichedPrompt = parentContext
+          ? `Parent context (discoveries so far):\n${parentContext}\n\nTask:\n${prompt}`
+          : prompt
+        return await spawnAgent(enrichedPrompt, config.starguardBase, config.workspaceRoot)
       }
 
       case "schedule_task": {
@@ -469,10 +507,18 @@ async function executeTool(
           onLog: () => {},
         })
 
+        // Collect DAG node outputs to feed back into Realtime conversation context
+        const outputEntries = Object.entries(result.outputs || {})
+          .filter(([, v]) => v && typeof v === "string" && v.length < 2000)
+          .slice(0, 8)
+        const outputsSummary = outputEntries.length > 0
+          ? "\n\nKey outputs:\n" + outputEntries.map(([k, v]) => `[${k}]: ${v.slice(0, 300)}`).join("\n")
+          : ""
+
         if (result.success) {
-          return `Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s. Summary: ${result.completedNodes} steps succeeded.`
+          return `Orchestration complete! ${result.completedNodes} tasks completed in ${(result.durationMs / 1000).toFixed(1)}s.${outputsSummary}`
         } else {
-          return `Orchestration finished with issues: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}`
+          return `Orchestration finished with issues: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}${outputsSummary}`
         }
       }
 
@@ -522,6 +568,9 @@ export function createRealtimeSession(
   onResponseDone?: () => void,
   outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
   userId?: string,
+  /** Optional enriched instructions appended to VOICE_INSTRUCTIONS.
+   *  Used to inject architecture knowledge base digest at session start. */
+  enrichedInstructions?: string,
 ): RealtimeSession {
   console.log("[openai-realtime] createRealtimeSession sessionId:", sessionId, "hasKey:", !!OPENAI_API_KEY, "keyPrefix:", OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 8) + "..." : "none")
   if (!OPENAI_API_KEY) {
@@ -602,12 +651,16 @@ export function createRealtimeSession(
     session.connected = true
     flushPendingForSession(session)
 
+    const instructions = enrichedInstructions
+      ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions
+      : VOICE_INSTRUCTIONS
+
     const config = {
       type: "session.update",
       session: {
         type: "realtime",
         output_modalities: ["audio"],
-        instructions: VOICE_INSTRUCTIONS,
+        instructions,
         ...(SUPPORTS_REASONING ? { reasoning: { effort: REALTIME_REASONING_EFFORT } } : {}),
         audio: {
           input: {

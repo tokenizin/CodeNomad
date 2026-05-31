@@ -2,6 +2,76 @@ import { execSync } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback"
+import { apiGet } from "../orchestrator/starguard-client"
+
+// ── Knowledge Base ─────────────────────────────────────────────
+
+/** Query the StarCARD architecture knowledge base via StarGuard.
+ *  Searches entities by keyword, domain, or category. Returns a
+ *  human-readable summary of matching entities, relations, and diagrams. */
+export async function queryKnowledgeBase(
+  query: string,
+  domain?: string,
+  category?: string,
+): Promise<string> {
+  const params: Record<string, string> = {}
+  if (query?.trim()) params.search = query.trim()
+  if (domain?.trim()) params.domain = domain.trim()
+  if (category?.trim()) params.category = category.trim()
+  params.limit = "10"
+
+  try {
+    const res = await apiGet("/api/architecture/entities", params)
+    if (!res.ok) {
+      return `Knowledge base unavailable (${res.status}). Try investigate_codebase instead.`
+    }
+    const data = await res.json()
+    const entities = data.entities || data || []
+    if (!Array.isArray(entities) || entities.length === 0) {
+      return "No matching entities found in the architecture knowledge base."
+    }
+
+    return entities.map((e: any) => {
+      const lines = [
+        `• ${e.name || e.stableId || "(unnamed)"}`,
+        e.stableId ? `  ID: ${e.stableId}` : undefined,
+        e.domain ? `  Domain: ${e.domain}` : undefined,
+        e.category ? `  Category: ${e.category}` : undefined,
+        e.description ? `  ${e.description.slice(0, 200)}` : undefined,
+      ].filter(Boolean).join("\n")
+      return lines
+    }).join("\n\n")
+  } catch (err) {
+    return `Knowledge base query failed: ${(err as Error).message}`
+  }
+}
+
+/** Get a compact summary of key architecture entities for prompt enrichment.
+ *  Returns a plain-text digest of the most important entities. */
+export async function getArchitectureDigest(): Promise<string> {
+  try {
+    const res = await apiGet("/api/architecture/entities", { limit: "20" })
+    if (!res.ok) return ""
+    const data = await res.json()
+    const entities = data.entities || data || []
+    if (!Array.isArray(entities)) return ""
+
+    const byDomain = new Map<string, string[]>()
+    for (const e of entities) {
+      const domain = e.domain || "GENERAL"
+      if (!byDomain.has(domain)) byDomain.set(domain, [])
+      byDomain.get(domain)!.push(e.name || e.stableId || "(unnamed)")
+    }
+
+    const parts: string[] = ["Key StarCARD ecosystem entities:"]
+    for (const [domain, names] of byDomain) {
+      parts.push(`  ${domain}: ${names.slice(0, 5).join(", ")}`)
+    }
+    return parts.join("\n")
+  } catch {
+    return ""
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -800,5 +870,27 @@ export async function gitBranchAction(
     }
   } catch (err) {
     return `Git branch error: ${(err as Error).message}`
+  }
+}
+
+// ── Sepolia Deployments ──────────────────────────────────────────
+
+/** Return known Sepolia testnet contract addresses for the StarCARD ecosystem. */
+export async function getSepoliaDeployments(): Promise<string> {
+  try {
+    const filePath = path.join(__dirname, "../../../../../src/data/sepolia-deployments.ts")
+    const absPath = path.resolve(filePath)
+    if (!fs.existsSync(absPath)) {
+      return "Sepolia deployments file not found."
+    }
+    const content = fs.readFileSync(absPath, "utf-8")
+    // Extract just the deployment map
+    const mapMatch = content.match(/(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*({[\s\S]*?})\s*(?:as\s+const)?\s*;?/m)
+    if (mapMatch) {
+      return `Sepolia deployments:\n\n\`\`\`\n${mapMatch[1].slice(0, 2000)}\n\`\`\``
+    }
+    return `Sepolia deployments file found but could not parse.\n\n\`\`\`\n${content.slice(0, 2000)}\n\`\`\``
+  } catch (err) {
+    return `Error reading deployments: ${(err as Error).message}`
   }
 }

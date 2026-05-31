@@ -18,6 +18,7 @@ import {
   ensureSingleUserSession,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
+import { getArchitectureDigest } from "../../plugins/tokidapp/concierge/codebase-tools"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
 import {
   createApprovalRequest,
@@ -79,7 +80,7 @@ interface VoiceRealtimeSocket {
   close: (code?: number, reason?: string) => void
 }
 
-function startVoiceRealtimeSession(
+async function startVoiceRealtimeSession(
   sessionId: string,
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
@@ -107,6 +108,10 @@ function startVoiceRealtimeSession(
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
   if (!getRealtimeSession(sessionId)) {
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
+
+    // Fetch architecture knowledge base digest for prompt enrichment
+    const digest = await getArchitectureDigest().catch(() => "")
+
     createRealtimeSession(
       sessionId,
       (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
@@ -121,6 +126,7 @@ function startVoiceRealtimeSession(
       undefined,
       voice,
       userId,
+      digest || undefined,
     )
   } else {
     console.log("[voice-ws] existing session found, calling notifyReady directly")
