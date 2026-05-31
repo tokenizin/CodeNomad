@@ -27,6 +27,11 @@ import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
+/** Tracks one active session per user — prevents two sessions for the same
+ *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
+ *  When a new session starts for a user, any existing session is ended first. */
+const activeUserSessions = new Map<string, string>() // userId → sessionId
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 /** Default: gpt-realtime-2 (GA). Override with OPENAI_REALTIME_MODEL. */
 const REALTIME_MODEL =
@@ -872,6 +877,38 @@ export function endVoiceSession(sessionId: string) {
     session.ws.close()
     sessions.delete(sessionId)
   }
+  // Clean up per-user tracking — only remove if this was the tracked session
+  // for that user, in case it was already replaced by a newer one.
+  for (const [userId, trackedId] of activeUserSessions) {
+    if (trackedId === sessionId) {
+      activeUserSessions.delete(userId)
+      break
+    }
+  }
+}
+
+/** Get the userId from a sessionId (supports "voice_*" and "tokidapp_*" prefixes). */
+function getUserIdFromSessionId(sessionId: string): string | null {
+  if (sessionId.startsWith("voice_")) return sessionId.slice(6)
+  if (sessionId.startsWith("tokidapp_")) return sessionId.slice(9)
+  return null
+}
+
+/** Ensure only one Realtime session is active per user.
+ *  If another session (with a different prefix) already exists for this user, end it first.
+ *  Returns true if the caller should proceed, false if it was already handled. */
+export function ensureSingleUserSession(sessionId: string): boolean {
+  const userId = getUserIdFromSessionId(sessionId)
+  if (!userId) return true // can't determine user, allow
+
+  const existingSessionId = activeUserSessions.get(userId)
+  if (existingSessionId && existingSessionId !== sessionId) {
+    // Another session exists for this user — end it before creating a new one
+    endVoiceSession(existingSessionId)
+  }
+
+  activeUserSessions.set(userId, sessionId)
+  return true
 }
 
 export function getRealtimeSession(sessionId: string): RealtimeSession | undefined {

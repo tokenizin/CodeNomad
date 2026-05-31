@@ -15,6 +15,7 @@ import {
   endVoiceSession,
   getRealtimeSession,
   getRealtimeSessionVoice,
+  ensureSingleUserSession,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
@@ -99,6 +100,9 @@ function startVoiceRealtimeSession(
     // user message causes the AI to respond to a request the user never made,
     // potentially calling tools or investigating before the user has spoken.
   }
+  // Ensure only ONE Realtime session per user across voice WS and tokidapp WS
+  ensureSingleUserSession(sessionId)
+
   // Extract userId from sessionId (format: "voice_${userId}")
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
   if (!getRealtimeSession(sessionId)) {

@@ -61,10 +61,10 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
       // 3. Get microphone permission early (so we fail fast)
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
-      // 4. Enable conversation mode for TTS playback
-      if (!isConversationModeEnabled(options.instanceId)) {
-        toggleConversationMode(options.instanceId)
-      }
+      // 4. Skip conversation-mode TTS — the Realtime API produces native audio
+      //    output. Enabling the separate conversation-speech TTS (which reads
+      //    text aloud via SpeechSynthesis/streaming) would double the audio.
+      //    Disabled: toggleConversationMode(options.instanceId)
 
       // 5. Create RealtimeVoiceClient with custom callbacks
       client = new RealtimeVoiceClient(

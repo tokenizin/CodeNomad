@@ -30,6 +30,11 @@ function resampleTo24k(float32: Float32Array, sourceRate: number): Float32Array 
   return out
 }
 
+/** Noise gate threshold — frames below this RMS amplitude are dropped to
+ *  prevent background hum/fan noise from triggering VAD or consuming bandwidth.
+ *  Matches the TokiDAPP audio-utils.ts threshold. */
+const NOISE_GATE_THRESHOLD = 0.015
+
 export async function startPCM16Capture(
   onChunk: (base64: string) => void,
 ): Promise<AudioCapture> {
@@ -49,6 +54,16 @@ export async function startPCM16Capture(
 
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer.getChannelData(0)
+
+    // Noise gate — drop silent frames to prevent VAD false-triggers from
+    // background noise and low-level playback echo.
+    let rms = 0
+    for (let i = 0; i < input.length; i++) {
+      rms += input[i] * input[i]
+    }
+    rms = Math.sqrt(rms / input.length)
+    if (rms < NOISE_GATE_THRESHOLD) return
+
     const resampled = resampleTo24k(input, context.sampleRate)
     const pcm16 = float32ToPCM16(resampled)
     const base64 = arrayBufferToBase64(pcm16.buffer as ArrayBuffer)
