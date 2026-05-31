@@ -17,7 +17,9 @@ Before claiming a CodeNomad deploy is done, load and follow **`codenomad-build-r
 ## Workflow
 
 1. Implement and typecheck/build locally if needed (`npm run build --workspace @neuralnomads/codenomad` from `CodeNomad/`).
-2. Run **`bun run codenomad:build-restart`** from the StarGuard repo root (`contracts/`).
+2. **`bun run codenomad:build-restart`** from the StarGuard repo root (`contracts/`).
+   - This automatically runs **context reconciliation + deploy readiness checks** before building.
+   - See `.tmp/reconcile/deploy-readiness-*.md` for the report.
 3. Verify `curl -s http://127.0.0.1:9899/api/auth/status`.
 4. Tell the user to re-open CodeNomad from StarGuard (launch → `/auth/starguard`) if sessions were invalidated.
 
