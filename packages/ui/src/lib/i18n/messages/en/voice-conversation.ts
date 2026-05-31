@@ -5,6 +5,8 @@ const messages: Record<string, string> = {
   "voiceConversation.button.paused": "Paused — tap to resume",
   "voiceConversation.button.connecting": "Connecting...",
   "voiceConversation.button.error": "Error — tap to retry",
+  "voiceConversation.button.stop": "End conversation",
+  "voiceConversation.button.endTitle": "End voice conversation",
   "voiceConversation.error.microphone": "Microphone access is required for voice conversation.",
   "voiceConversation.error.connection": "Failed to connect to voice service.",
   "voiceConversation.error.apiKey": "Speech API key is not configured.",

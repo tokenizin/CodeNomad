@@ -208,6 +208,16 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         return
       }
 
+      if (msg.type === "voice_disconnect") {
+        // Full teardown of the voice session — close OpenAI Realtime WS,
+        // clear audio buffers, and reset state. The WebSocket itself stays
+        // open so the client can re-connect with voice_start if needed.
+        endVoiceSession(sessionId)
+        clearAudioBuffer(sessionId)
+        socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
+        return
+      }
+
       if (msg.type === "audio" && msg.data) {
         sendAudioChunk(sessionId, msg.data)
         return
@@ -961,6 +971,14 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 content: "No speech detected. Hold the microphone a little longer.",
               }))
             }
+            return
+          }
+
+          if (msg.type === "voice_disconnect") {
+            // Full teardown of the voice session
+            endVoiceSession(sessionId)
+            clearAudioBuffer(sessionId)
+            socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
             return
           }
 

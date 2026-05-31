@@ -393,6 +393,10 @@ export class RealtimeVoiceClient {
     this.stopRecording()
     clearAudioQueue()
     if (this.ws) {
+      // Signal full session teardown before closing
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "voice_disconnect" }))
+      }
       this.ws.onclose = null
       this.ws.onmessage = null
       this.ws.onerror = null

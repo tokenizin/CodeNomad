@@ -1,5 +1,5 @@
 import { createMemo, Show } from "solid-js"
-import { Loader2, Mic, Volume2, Pause, AlertCircle } from "lucide-solid"
+import { Loader2, Mic, Volume2, Pause, Square, AlertCircle } from "lucide-solid"
 import { voiceConversationStore } from "./store"
 import { tGlobal } from "../../lib/i18n"
 import type { VoiceConversationState } from "./types"
@@ -24,16 +24,19 @@ const STATE_CLASSES: Record<VoiceConversationState, string> = {
 }
 
 /**
- * Single unified voice conversation button.
+ * Single unified voice conversation button with visible end button.
  *
- * Click behavior depends on the current state:
+ * Mic button click behavior depends on the current state:
  *  - idle/error: start conversation
  *  - listening: pause (stop listening, keep session alive)
  *  - speaking: interrupt agent mid-speech
  *  - paused: resume listening
  *  - connecting: no-op
  *
- * Long-press (800ms) in any active state → stop and save recording.
+ * Long-press (800ms) mic button in any active state → stop and save recording.
+ *
+ * When conversation is active, a separate visible "End" button appears
+ * next to the mic button for immediate stop without long-press.
  */
 export function VoiceConversationButton(props: VoiceConversationButtonProps) {
   const state = voiceConversationStore.state
@@ -100,46 +103,69 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
   }
 
   const isBusy = () => state() === "connecting" || state() === "processing"
+  const isActive = createMemo(() => state() !== "idle" && state() !== "error" && state() !== "connecting")
+
+  function handleEndClick() {
+    if (props.disabled) return
+    props.onStop()
+  }
 
   return (
-    <button
-      type="button"
-      class={`prompt-voice-button prompt-nav-voice-button voice-conversation-btn ${STATE_CLASSES[state()]}`}
-      onClick={handleClick}
-      onPointerDown={handlePointerDown}
-      disabled={props.disabled}
-      aria-label={label()}
-      aria-pressed={state() !== "idle" && state() !== "error"}
-      title={label()}
-    >
-      {/* Pulse ring when listening or speaking */}
-      <div
-        class="voice-conv-ring"
-        data-active={state() === "listening" || state() === "speaking"}
-      />
-
-      {/* Audio level bar when listening */}
-      <Show when={state() === "listening"}>
-        <div
-          class="voice-conv-level"
-          style={{ height: `${Math.max(3, audioLevel() * 36)}px` }}
-        />
-      </Show>
-
-      {/* Icon — Lucide SVGs matching the rest of the UI */}
-      <Show
-        when={isBusy()}
-        fallback={
-          <span aria-hidden="true" class="voice-conv-icon">
-            {state() === "speaking" ? <Volume2 class="h-4 w-4" /> :
-             state() === "paused" ? <Pause class="h-4 w-4" /> :
-             state() === "error" ? <AlertCircle class="h-4 w-4" /> :
-             <Mic class="h-4 w-4" />}
-          </span>
-        }
+    <div class="voice-conversation-container" role="group" aria-label="Voice conversation controls">
+      <button
+        type="button"
+        class={`prompt-voice-button prompt-nav-voice-button voice-conversation-btn ${STATE_CLASSES[state()]}`}
+        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        disabled={props.disabled}
+        aria-label={label()}
+        aria-pressed={state() !== "idle" && state() !== "error"}
+        title={label()}
       >
-        <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        {/* Pulse ring when listening or speaking */}
+        <div
+          class="voice-conv-ring"
+          data-active={state() === "listening" || state() === "speaking"}
+        />
+
+        {/* Audio level bar when listening */}
+        <Show when={state() === "listening"}>
+          <div
+            class="voice-conv-level"
+            style={{ height: `${Math.max(3, audioLevel() * 36)}px` }}
+          />
+        </Show>
+
+        {/* Icon — Lucide SVGs matching the rest of the UI */}
+        <Show
+          when={isBusy()}
+          fallback={
+            <span aria-hidden="true" class="voice-conv-icon">
+              {state() === "speaking" ? <Volume2 class="h-4 w-4" /> :
+               state() === "paused" ? <Pause class="h-4 w-4" /> :
+               state() === "error" ? <AlertCircle class="h-4 w-4" /> :
+               <Mic class="h-4 w-4" />}
+            </span>
+          }
+        >
+          <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        </Show>
+      </button>
+
+      {/* Visible end button — shown when conversation is active */}
+      <Show when={isActive()}>
+        <button
+          type="button"
+          class="voice-conv-end-btn"
+          onClick={handleEndClick}
+          disabled={props.disabled}
+          aria-label={tGlobal("voiceConversation.button.endTitle")}
+          title={tGlobal("voiceConversation.button.endTitle")}
+        >
+          <Square class="h-3.5 w-3.5 fill-current" />
+          <span class="voice-conv-end-label">{tGlobal("voiceConversation.button.stop")}</span>
+        </button>
       </Show>
-    </button>
+    </div>
   )
 }

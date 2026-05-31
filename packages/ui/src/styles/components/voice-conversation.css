@@ -1,5 +1,9 @@
 /* ── Voice Conversation Button (unified mic button) ── */
 
+.voice-conversation-container {
+  @apply flex items-center gap-2;
+}
+
 .voice-conversation-btn {
   @apply relative flex items-center justify-center w-10 h-10 rounded-full
          transition-all duration-300 ease-out cursor-pointer;
@@ -42,6 +46,31 @@
 .voice-conversation-btn.voice-conv-connecting {
   opacity: 0.7;
   pointer-events: none;
+}
+
+/* ── Visible End Button ── */
+
+.voice-conv-end-btn {
+  @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer
+         transition-all duration-200 text-sm font-medium;
+  background: var(--status-error);
+  color: var(--text-on-accent);
+  border: none;
+  outline: none;
+  white-space: nowrap;
+}
+
+.voice-conv-end-btn:hover {
+  opacity: 0.85;
+  transform: scale(1.02);
+}
+
+.voice-conv-end-btn:active {
+  transform: scale(0.97);
+}
+
+.voice-conv-end-label {
+  @apply text-sm font-medium;
 }
 
 /* ── Pulse ring ── */

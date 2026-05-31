@@ -5,6 +5,8 @@ const messages: Record<string, string> = {
   "voiceConversation.button.paused": "Dijeda — ketuk untuk melanjutkan",
   "voiceConversation.button.connecting": "Menghubungkan...",
   "voiceConversation.button.error": "Error — ketuk untuk coba lagi",
+  "voiceConversation.button.stop": "Akhiri percakapan",
+  "voiceConversation.button.endTitle": "Akhiri percakapan suara",
   "voiceConversation.error.microphone": "Akses mikrofon diperlukan untuk percakapan suara.",
   "voiceConversation.error.connection": "Gagal terhubung ke layanan suara.",
   "voiceConversation.error.apiKey": "Kunci API Suara belum dikonfigurasi.",
