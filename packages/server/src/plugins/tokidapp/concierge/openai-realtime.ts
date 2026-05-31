@@ -40,12 +40,14 @@ const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
 
-/** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.7. */
+/** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.9.
+ *  The 0.9 threshold is intentionally high to reject low-level playback echo
+ *  and background noise while still catching clear speech near the mic. */
 const REALTIME_VAD_THRESHOLD = (() => {
   const raw = process.env.OPENAI_REALTIME_VAD_THRESHOLD?.trim()
-  if (!raw) return 0.7
+  if (!raw) return 0.9
   const val = parseFloat(raw)
-  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.7
+  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.9
 })()
 /** Audio captured before speech onset in ms. Default: 300. */
 const REALTIME_VAD_PREFIX_PADDING_MS = (() => {
@@ -74,6 +76,10 @@ interface RealtimeSession {
   audioBytes: number
   pendingChunks: string[]
   onReady?: () => void
+  /** Track whether a response is currently in progress to avoid race conditions */
+  responseInProgress: boolean
+  /** Queue of response.create requests to send after current response completes */
+  pendingResponseQueue: Array<() => void>
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -529,6 +535,8 @@ export function createRealtimeSession(
       audioBytes: 0,
       pendingChunks: [],
       onReady,
+      responseInProgress: false,
+      pendingResponseQueue: [],
     }
   }
 
@@ -553,6 +561,35 @@ export function createRealtimeSession(
     audioBytes: 0,
     pendingChunks: [],
     onReady,
+    responseInProgress: false,
+    pendingResponseQueue: [],
+  }
+
+  /** Send response.create, guarding against concurrent responses */
+  function sendResponseCreate() {
+    if (session.responseInProgress) {
+      console.log("[openai-realtime] response already in progress, queuing for session:", sessionId)
+      session.pendingResponseQueue.push(() => {
+        if (session.connected) {
+          session.responseInProgress = true
+          session.ws.send(JSON.stringify({ type: "response.create" }))
+        }
+      })
+      return
+    }
+    session.responseInProgress = true
+    session.ws.send(JSON.stringify({ type: "response.create" }))
+  }
+
+  /** Cancel the current in-progress response so a new one can start */
+  function cancelCurrentResponse() {
+    if (session.responseInProgress) {
+      session.ws.send(JSON.stringify({ type: "response.cancel" }))
+      session.responseInProgress = false
+      // Drain any queued responses
+      const next = session.pendingResponseQueue.shift()
+      if (next) next()
+    }
   }
 
   ws.addEventListener("open", () => {
@@ -639,10 +676,18 @@ export function createRealtimeSession(
         // Response done (GA event names + legacy fallbacks)
         case "response.done":
         case "response.completed":
+          session.responseInProgress = false
           onResponseDone?.()
           // With VAD, the server auto-resumes listening after response completes.
           // Notify client that voice is ready again.
           session.onReady?.()
+          // Drain any queued response.create requests
+          {
+            const next = session.pendingResponseQueue.shift()
+            if (next) next()
+          }
+          // Flush audio chunks that were buffered during response generation
+          flushPendingForSession(session)
           break
 
         case "conversation.item.created":
@@ -655,7 +700,7 @@ export function createRealtimeSession(
 
           // Skip response.cancel for wait_for_user — it's a no-op tool
           if (toolName !== "wait_for_user") {
-            ws.send(JSON.stringify({ type: "response.cancel" }))
+            cancelCurrentResponse()
           }
 
           const result = await executeTool(toolName, args, {
@@ -676,7 +721,7 @@ export function createRealtimeSession(
 
           // Only create new response for non-wait tools
           if (toolName !== "wait_for_user") {
-            ws.send(JSON.stringify({ type: "response.create" }))
+            sendResponseCreate()
           }
           break
         }
@@ -684,7 +729,21 @@ export function createRealtimeSession(
         case "error": {
           const message = parsed.error?.message || "OpenAI Realtime error"
           if (/buffer too small|buffer only has 0/i.test(message)) break
-          onError(message)
+          // If there's an "active response in progress" error, reset the tracking state
+          // and do NOT propagate to the client — this is a recoverable server-side race.
+          if (/active response in progress/i.test(message)) {
+            console.log("[openai-realtime] Active response error — resetting response state and processing queue")
+            session.responseInProgress = false
+            // Process any queued responses after a short delay
+            setTimeout(() => {
+              while (session.pendingResponseQueue.length > 0) {
+                const next = session.pendingResponseQueue.shift()!
+                next()
+              }
+            }, 100)
+          } else {
+            onError(message)
+          }
           break
         }
 
@@ -719,6 +778,12 @@ export function sendAudioChunk(sessionId: string, base64: string): boolean {
   if (!session) return false
 
   if (!session.connected) {
+    session.pendingChunks.push(base64)
+    return true
+  }
+
+  // Buffer chunks while a response is generating to avoid "active response in progress" errors
+  if (session.responseInProgress) {
     session.pendingChunks.push(base64)
     return true
   }
@@ -766,7 +831,19 @@ export function commitAudioBuffer(sessionId: string): boolean {
   }
 
   session.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }))
-  session.ws.send(JSON.stringify({ type: "response.create" }))
+  // Guard against concurrent responses — queue if one is already in progress
+  if (session.responseInProgress) {
+    console.log("[openai-realtime] commitAudioBuffer: response in progress, queuing for session:", sessionId)
+    session.pendingResponseQueue.push(() => {
+      if (session.connected) {
+        session.responseInProgress = true
+        session.ws.send(JSON.stringify({ type: "response.create" }))
+      }
+    })
+  } else {
+    session.responseInProgress = true
+    session.ws.send(JSON.stringify({ type: "response.create" }))
+  }
   session.audioBytes = 0
   return true
 }

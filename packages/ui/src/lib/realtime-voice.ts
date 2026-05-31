@@ -280,6 +280,13 @@ export class RealtimeVoiceClient {
           case "pong":
             break
           case "error":
+            // Suppress "active response in progress" errors — these are recoverable
+            // server-side races that get resolved internally. No need to alarm the user.
+            if (msg.content && /active response in progress/i.test(msg.content)) {
+              console.log("[realtime-voice] Active response error suppressed (recoverable)")
+              this.onStateChange("recording")
+              break
+            }
             this.isRecording = false
             this.voiceReady = false
             this.onError(msg.content || "Realtime voice error")

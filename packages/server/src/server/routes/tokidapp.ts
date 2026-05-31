@@ -84,7 +84,6 @@ function startVoiceRealtimeSession(
   socketRef: { send: (msg: string) => void },
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
-  let greetingTriggered = false
   const existingVoice = getRealtimeSessionVoice(sessionId)
   console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
   if (existingVoice && existingVoice !== voice) {
@@ -95,25 +94,10 @@ function startVoiceRealtimeSession(
   const notifyReady = () => {
     console.log("[voice-ws] notifyReady — sending voice_ready to client")
     socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
-
-    // Trigger the AI to speak a greeting once, right when the voice session
-    // becomes ready (fires on session.created / session.updated from OpenAI).
-    if (!greetingTriggered) {
-      greetingTriggered = true
-      const sess = getRealtimeSession(sessionId)
-      if (sess?.connected) {
-        console.log("[voice-ws] triggering AI greeting via OpenAI Realtime")
-        sess.ws.send(JSON.stringify({
-          type: "conversation.item.create",
-          item: {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "Hi." }],
-          },
-        }))
-        sess.ws.send(JSON.stringify({ type: "response.create" }))
-      }
-    }
+    // No auto-greeting: let the user speak first. The client already sends a
+    // text greeting (see attachTokidappSocket). Injecting a fake "Hi." as a
+    // user message causes the AI to respond to a request the user never made,
+    // potentially calling tools or investigating before the user has spoken.
   }
   // Extract userId from sessionId (format: "voice_${userId}")
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
@@ -178,7 +162,16 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "cancel") {
-        socketRef.send(JSON.stringify({ type: "message", content: "Cancelled." }))
+        // Cancel the in-progress OpenAI Realtime response
+        const sess = getRealtimeSession(sessionId)
+        if (sess?.connected && sess.responseInProgress) {
+          sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+          sess.responseInProgress = false
+          // Drain queued responses
+          const next = sess.pendingResponseQueue.shift()
+          if (next) next()
+        }
+        socketRef.send(JSON.stringify({ type: "voice_cancelled" }))
         return
       }
 
@@ -190,6 +183,15 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
           socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
         }
+        return
+      }
+
+      if (msg.type === "voice_reset") {
+        // Client finished playing an AI response — clear any residual audio
+        // (echo / background noise captured during playback) so it doesn't
+        // get committed as user input.
+        console.log("[voice-ws] voice_reset received — clearing audio buffer")
+        clearAudioBuffer(sessionId)
         return
       }
 

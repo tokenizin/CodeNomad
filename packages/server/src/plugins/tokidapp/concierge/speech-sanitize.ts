@@ -1,4 +1,172 @@
-/** Mirror of StarGuard src/lib/tokidapp/speech-sanitize.ts for server-side voice text. */
+/**
+ * Mirror of StarGuard src/lib/tokidapp/speech-sanitize.ts for server-side voice text.
+ * Includes word-spacing recovery for ASR transcripts that occasionally
+ * arrive without spaces between words (e.g. "Thanksforpointingthatout").
+ */
+
+/**
+ * Common conversational English words used by restoreWordSpacing() to
+ * greedily split concatenated ASR output into readable text.
+ */
+const COMMON_WORDS: Set<string> = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'some', 'any', 'every',
+  'each', 'all', 'both', 'few', 'many', 'much', 'no', 'none', 'several',
+  'such', 'enough', 'more', 'most', 'less', 'little', 'least', 'own',
+  'same', 'other', 'another', 'next', 'last', 'previous', 'final',
+  'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her',
+  'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their', 'mine',
+  'yours', 'hers', 'ours', 'theirs', 'myself', 'yourself', 'himself',
+  'herself', 'itself', 'ourselves', 'themselves', 'who', 'whom', 'whose',
+  'which', 'what', 'that', 'this', 'anyone', 'everyone', 'someone',
+  'anybody', 'everybody', 'somebody', 'nobody', 'anything', 'everything',
+  'something', 'nothing', 'anywhere', 'everywhere', 'somewhere', 'nowhere',
+  'about', 'above', 'across', 'after', 'against', 'along', 'among',
+  'around', 'at', 'before', 'behind', 'below', 'beneath', 'beside',
+  'between', 'beyond', 'by', 'down', 'during', 'except', 'for', 'from',
+  'in', 'inside', 'into', 'near', 'of', 'off', 'on', 'onto', 'out',
+  'outside', 'over', 'through', 'throughout', 'to', 'toward', 'towards',
+  'under', 'underneath', 'until', 'up', 'upon', 'with', 'within', 'without',
+  'and', 'but', 'or', 'nor', 'yet', 'so', 'because', 'since', 'although',
+  'though', 'while', 'whereas', 'unless', 'if', 'whether', 'after',
+  'before', 'once', 'than', 'that', 'when', 'where', 'why', 'how',
+  'is', 'are', 'was', 'were', 'been', 'being', 'be', 'am',
+  'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing',
+  'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might',
+  'must', 'need', 'dare', 'ought',
+  'get', 'got', 'getting', 'make', 'made', 'making', 'take', 'took',
+  'taking', 'go', 'went', 'going', 'gone', 'come', 'came', 'coming',
+  'see', 'saw', 'seen', 'know', 'knew', 'known', 'think', 'thought',
+  'give', 'gave', 'given', 'find', 'found', 'tell', 'told', 'use',
+  'used', 'using', 'say', 'said', 'try', 'tried', 'trying', 'ask',
+  'asked', 'asking', 'work', 'worked', 'working', 'call', 'called',
+  'calling', 'keep', 'kept', 'keeping', 'let', 'start', 'started',
+  'show', 'showed', 'shown', 'hear', 'heard', 'play', 'played',
+  'run', 'ran', 'running', 'move', 'moved', 'moving', 'live', 'lived',
+  'living', 'believe', 'bring', 'brought', 'happen', 'happened',
+  'write', 'wrote', 'written', 'provide', 'sit', 'sat', 'stand',
+  'stood', 'lose', 'lost', 'pay', 'paid', 'meet', 'met', 'include',
+  'continue', 'set', 'learn', 'learned', 'change', 'changed', 'lead',
+  'led', 'understand', 'understood', 'watch', 'follow', 'stop', 'stopped',
+  'create', 'created', 'speak', 'spoke', 'spoken', 'read', 'allow',
+  'add', 'spend', 'spent', 'grow', 'grew', 'grown', 'open', 'opened',
+  'walk', 'win', 'won', 'offer', 'remember', 'love', 'consider',
+  'appear', 'buy', 'bought', 'wait', 'serve', 'send', 'sent', 'expect',
+  'build', 'built', 'stay', 'fall', 'fell', 'fallen', 'cut', 'reach',
+  'kill', 'remain', 'suggest', 'raise', 'pass', 'sell', 'sold',
+  'require', 'report', 'decide', 'pull', 'develop', 'fix', 'fixed',
+  'fixing', 'share', 'shared', 'sharing', 'point', 'pointed', 'pointing',
+  'figure', 'transmit', 'transmitted', 'cause', 'caused', 'causing',
+  'message', 'spacing', 'happening', 'working', 'meaning', 'feeling',
+  'looking', 'trying', 'asking', 'following', 'checking', 'waiting',
+  'good', 'better', 'best', 'bad', 'worse', 'worst', 'new', 'old',
+  'first', 'last', 'long', 'great', 'little', 'right', 'high', 'low',
+  'different', 'small', 'large', 'next', 'early', 'young', 'important',
+  'few', 'same', 'able', 'possible', 'sure', 'real', 'simple',
+  'clear', 'hard', 'easy', 'nice', 'fine', 'okay', 'ok', 'alright',
+  'very', 'too', 'also', 'just', 'only', 'even', 'still', 'already',
+  'yet', 'always', 'never', 'often', 'usually', 'sometimes', 'rarely',
+  'ever', 'again', 'well', 'really', 'quite', 'pretty', 'almost',
+  'nearly', 'soon', 'later', 'then', 'now', 'today', 'once', 'here',
+  'there', 'where', 'when', 'why', 'how', 'so', 'much', 'many',
+  'actually', 'basically', 'honestly', 'frankly', 'hopefully',
+  'probably', 'possibly', 'maybe', 'perhaps', 'absolutely', 'definitely',
+  'certainly', 'obviously', 'apparently', 'unfortunately', 'fortunately',
+  'especially', 'particularly', 'specifically', 'generally', 'typically',
+  'not', "n't", 'no', 'never', 'nothing', 'none', 'nobody', 'nowhere',
+  "'s", "'t", "'re", "'ve", "'ll", "'d", "'m",
+  'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'why', 'how',
+  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+  'nine', 'ten', 'first', 'second', 'third', 'time', 'times', 'day',
+  'days', 'week', 'weeks', 'month', 'months', 'year', 'years', 'now',
+  'today', 'tomorrow', 'yesterday', 'minute', 'minutes', 'hour', 'hours',
+  'ago', 'later', 'soon', 'early', 'late',
+  'please', 'thanks', 'thank', 'sorry', 'hello', 'hi', 'hey', 'yes',
+  'yeah', 'no', 'nope', 'sure', 'okay', 'ok', 'alright', 'right',
+  'example', 'issue', 'problem', 'question', 'answer', 'solution',
+  'idea', 'way', 'thing', 'things', 'part', 'parts', 'kind', 'sort',
+  'type', 'lot', 'lots', 'bit', 'little', 'bit', 'big', 'huge',
+  'whole', 'every', 'each', 'either', 'neither', 'whether', 'whatever',
+  'maybe', 'perhaps', 'actually', 'thing', 'stuff', 'something',
+  'everything', 'nothing', 'anything',
+  // Application-specific
+  'starguard', 'codenomad', 'tokidapp', 'star', 'card', 'token',
+  // Contraction fragments
+  "'s", "'t", "'re", "'ve", "'ll", "'d", "'m",
+  // Common contractions
+  "it's", "that's", "what's", "there's", "here's", "he's", "she's",
+  "let's", "how's", "why's", "where's", "when's", "who's",
+  "don't", "can't", "won't", "didn't", "doesn't", "isn't", "aren't",
+  "wasn't", "weren't", "haven't", "hasn't", "hadn't", "couldn't",
+  "shouldn't", "wouldn't", "mustn't", "needn't", "mightn't",
+  "i'm", "i've", "i'll", "i'd",
+  "you're", "you've", "you'll", "you'd",
+  "we're", "we've", "we'll", "we'd",
+  "they're", "they've", "they'll", "they'd",
+  "he'll", "she'll", "it'll", "there'll",
+  "he'd", "she'd", "it'd",
+  "gonna", "wanna", "gotta", "kinda", "sorta", "gotcha", "lemme", "dunno",
+])
+
+function restoreWordSpacing(text: string): string {
+  if (!text || /\s/.test(text)) return text
+
+  // Phase 1: Regex-based boundary fixes for punctuation and casing
+  let out = text
+    .replace(/([.!?])([A-Za-z])/g, '$1 $2')
+    .replace(/([,;])([A-Za-z])/g, '$1 $2')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([)\]}])([A-Za-z])/g, '$1 $2')
+    .replace(/([A-Za-z])([\[({])/g, '$1 $2')
+
+  // Phase 2: Greedy dictionary-based word segmentation for remaining
+  //          concatenated runs (e.g. "sowecan" → "so we can").
+  //          Trailing punctuation is stripped before matching and re-attached
+  //          afterward so that e.g. "fixit?" matches "fix" and "it".
+  const segments = out.split(/\s+/)
+  const result: string[] = []
+
+  for (const seg of segments) {
+    if (seg.length <= 3 || COMMON_WORDS.has(seg.toLowerCase())) {
+      result.push(seg)
+      continue
+    }
+
+    // Strip trailing punctuation for dictionary matching
+    const trailingPunct = seg.match(/[.!?,'";:)\]}\u2019]+$/)
+    const cleanSeg = trailingPunct ? seg.slice(0, -trailingPunct[0].length) : seg
+    const suffix = trailingPunct ? trailingPunct[0] : ''
+
+    if (cleanSeg.length <= 3 || COMMON_WORDS.has(cleanSeg.toLowerCase())) {
+      result.push(seg)
+      continue
+    }
+
+    // Greedy longest-prefix match on clean segment
+    const words: string[] = []
+    let remaining = cleanSeg
+
+    while (remaining.length > 0) {
+      let matched = false
+      const maxLen = Math.min(20, remaining.length)
+      for (let len = maxLen; len >= 2; len--) {
+        if (COMMON_WORDS.has(remaining.substring(0, len).toLowerCase())) {
+          words.push(remaining.substring(0, len))
+          remaining = remaining.substring(len)
+          matched = true
+          break
+        }
+      }
+      if (!matched) {
+        words.push(remaining[0])
+        remaining = remaining.substring(1)
+      }
+    }
+
+    result.push(words.join(' ') + suffix)
+  }
+
+  return result.join(' ')
+}
 
 const UUID_RE =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi
@@ -30,6 +198,8 @@ export function sanitizeSpeechText(text: string): string {
     const name = base.replace(/\.(tsx?|jsx?|sol|md|json)$/i, "").replace(/[-_]/g, " ")
     return ` ${name || "the file"} `
   })
+  out = restoreWordSpacing(out)
+
   return out.replace(/\s{2,}/g, " ").trim()
 }
 
