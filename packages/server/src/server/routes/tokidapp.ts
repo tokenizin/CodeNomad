@@ -53,6 +53,12 @@ import {
   runTypeCheck,
   gitBranchAction,
 } from "../../plugins/tokidapp/concierge/codebase-tools"
+import {
+  scanContract,
+  getScanStatus,
+  listSecurityScans,
+  listSolidityContracts,
+} from "../../plugins/tokidapp/concierge/security-tools"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -477,6 +483,23 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "16", tool: "git_branch", status: "running", summary: `Branch action: ${action}...` }))
     const result = await gitBranchAction(action, branchName, WORKSPACE_ROOT)
     send(JSON.stringify({ type: "tool_result", id: "16", tool: "git_branch", status: "complete", summary: result }))
+  } else if (lower.includes("scan") || lower.includes("security") || lower.includes("vulnerabilit")) {
+    // Extract contract name from message
+    const contractMatch = content.match(/(?:scan|check|audit)\s+(\w[\w-]*)/i)
+    const contractName = contractMatch ? contractMatch[1] : ""
+    if (contractName) {
+      send(JSON.stringify({ type: "tool_call", id: "20", tool: "security_scan", status: "running", summary: `Scanning ${contractName}...` }))
+      const result = await scanContract(contractName, WORKSPACE_ROOT, send)
+      send(JSON.stringify({ type: "tool_result", id: "20", tool: "security_scan", status: "complete", summary: result }))
+    } else {
+      // List contracts and scans if no specific contract
+      const contracts = await listSolidityContracts(WORKSPACE_ROOT)
+      const scanList = await listSecurityScans()
+      send(JSON.stringify({
+        type: "message",
+        content: `Available contracts to scan:\n${contracts.map(c => `  \u2022 ${c.name}`).join("\n") || "  (none)"}\n\n${scanList}`,
+      }))
+    }
   } else {
     send(JSON.stringify({
       type: "message",
@@ -492,6 +515,7 @@ async function routeMessage(
 • **Assign task** — assign a task to a specific user
 • **Rollback deploy** — revert to the previous commit and redeploy
 • **Accessibility** — run a11y audits (Lighthouse, axe-core)
+• **Security scan** — scan Solidity contracts for vulnerabilities
 • **Read file** — view file contents or list directories
 • **Lint** — run the linter
 • **Type check** — run TypeScript type checking
