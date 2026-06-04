@@ -104,11 +104,11 @@ const tools = [
   {
     type: "function",
     name: "investigate_codebase",
-    description: "Search the codebase for files matching keywords. Returns file paths with previews.",
+    description: "Search the codebase by filename or identifier. Use this when you need specific import paths, class names, function names, or TypeScript types — NOT for conceptual questions (use query_knowledge_base instead). Extract 2-5 precise search terms from the user's question; do NOT pass the full user message.",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Keywords to search for in the codebase" },
+        query: { type: "string", description: "2-5 specific keywords or identifiers (e.g. 'RevenuePool DynamicSplitter' — NOT the full user message)" },
       },
       required: ["query"],
     },
@@ -505,6 +505,7 @@ async function executeTool(
           onApprovalRequired: async () => "approved",
           onBroadcast: () => {},
           onLog: () => {},
+          onCausalGraphUpdate: () => {},
         })
 
         // Collect DAG node outputs to feed back into Realtime conversation context

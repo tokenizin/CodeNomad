@@ -1,3 +1,5 @@
+import type { CausalNode, CausalEdge } from "./causal-graph"
+
 export type DAGNodeType =
   | 'tool_exec'
   | 'approval_gate'
@@ -51,6 +53,7 @@ export interface ExecutionCallbacks {
   onApprovalRequired: (node: DAGNode, context: Record<string, unknown>) => Promise<'approved' | 'rejected' | 'pending'>
   onBroadcast: (channel: string, event: string, data: unknown) => void
   onLog: (eventType: string, severity: string, title: string, metadata?: Record<string, unknown>) => void
+  onCausalGraphUpdate: (nodes: CausalNode[], edges: CausalEdge[]) => void
 }
 
 export interface DAGResult {

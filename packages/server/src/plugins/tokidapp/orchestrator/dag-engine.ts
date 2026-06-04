@@ -1,4 +1,5 @@
 import type { DAGNode, DAGNodeStatus, DAGDefinition, ExecutionCallbacks, DAGResult, LifecyclePhase } from './types'
+import { CausalGraphManager } from './causal-graph'
 import { rollbackToPreviousCommit } from './rollback'
 import { apiPost, apiGet, apiPut, STARGUARD_BASE } from './starguard-client'
 
@@ -9,6 +10,7 @@ interface DAGContext {
   nodes: DAGNode[]
   callbacks: ExecutionCallbacks
   abort: boolean
+  causalManager: CausalGraphManager
 }
 
 /**
@@ -32,7 +34,25 @@ export async function executeDAG(
   const startTime = Date.now()
   const nodes = dag.nodes.map((n) => ({ ...n, status: 'PENDING' as DAGNodeStatus }))
 
-  const ctx: DAGContext = { orchestratorId, nodes, callbacks, abort: false }
+  // ── Causal Graph ─────────────────────────────────────────────
+  const causalManager = new CausalGraphManager()
+
+  const ctx: DAGContext = { orchestratorId, nodes, callbacks, abort: false, causalManager }
+
+  if (ctx.callbacks.onCausalGraphUpdate) {
+    causalManager.onUpdate((cNodes, cEdges) => {
+      ctx.callbacks.onCausalGraphUpdate(cNodes, cEdges)
+    })
+  }
+
+  // Emit initial AttackGoal for the DAG intent
+  const firstNode = nodes.find(n => n.dependencies.length === 0)
+  if (firstNode) {
+    causalManager.addAttackGoal(firstNode.metadata?.phase as string || 'workflow', {
+      description: `Executing workflow: ${dag.id} with ${nodes.length} steps`,
+      sourceStepId: firstNode.title,
+    })
+  }
 
   // Build adjacency
   const byTitle = new Map<string, DAGNode>()
@@ -297,6 +317,43 @@ async function executeToolNode(ctx: DAGContext, node: DAGNode, outputs: Record<s
 
   node.toolOutput = result
   outputs[node.title] = result
+
+  // ── Causal Graph: emit evidence from tool output ─────────────
+  const sourceNodeId = `evidence-${node.title}-${Date.now()}`
+  ctx.causalManager.addEvidence(`Tool: ${toolName}`, {
+    description: result.slice(0, 300),
+    confidence: 1.0,
+    sourceStepId: node.title,
+  })
+
+  // For analysis/diagnosis tools, also emit a Hypothesis
+  if (['investigate_codebase', 'analyze', 'diagnose', 'plan', 'evaluate', 'reason'].includes(toolName)) {
+    ctx.causalManager.addHypothesis(`Analysis from ${toolName}`, {
+      description: `Inferred from ${node.title}: ${result.slice(0, 150)}`,
+      confidence: 0.6,
+      sourceStepId: node.title,
+      supportedBy: sourceNodeId,
+    })
+  }
+
+  // For security/vulnerability tools, emit a Vulnerability
+  if (toolName === 'security_scan' || toolName === 'run_a11y_audit' || toolName === 'audit') {
+    ctx.causalManager.addVulnerability(`Finding: ${toolName}`, {
+      description: `Detected during ${node.title}: ${result.slice(0, 200)}`,
+      confidence: 0.8,
+      sourceStepId: node.title,
+      revealedBy: sourceNodeId,
+    })
+  }
+
+  // For test failures, emit an Exploit
+  if (toolName === 'run_tests' && result.toLowerCase().includes('fail')) {
+    ctx.causalManager.addExploit(`Test failure: ${node.title}`, {
+      description: result.slice(0, 200),
+      confidence: 0.9,
+      sourceStepId: node.title,
+    })
+  }
 }
 
 async function executeApprovalGate(ctx: DAGContext, node: DAGNode): Promise<void> {
