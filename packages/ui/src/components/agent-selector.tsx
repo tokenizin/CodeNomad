@@ -3,7 +3,7 @@ import { Show, createEffect, createMemo } from "solid-js"
 import { canFetchInstanceResource } from "../lib/connection-recovery"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
-import { isSelectablePrimaryAgent, type Agent } from "../types/session"
+import { getSelectableAgentsForSession, type Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("session")
@@ -30,12 +30,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
   })
 
   const availableAgents = createMemo(() => {
-    const allAgents = instanceAgents()
-    if (isChildSession()) {
-      return allAgents.filter((agent) => !agent.hidden)
-    }
-
-    return allAgents.filter(isSelectablePrimaryAgent)
+    return getSelectableAgentsForSession(instanceAgents(), props.currentAgent, isChildSession())
   })
 
   createEffect(() => {
