@@ -108,6 +108,41 @@ export async function checkDeployStatus(
 
 // ── Tool Functions ────────────────────────────────────────────
 
+// Stop words to filter out when AI passes the full user message verbatim
+const STOP_WORDS = new Set([
+  'i', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be', 'been',
+  'being', 'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+  'should', 'may', 'might', 'can', 'shall', 'need', 'want', 'like', 'just',
+  'also', 'very', 'too', 'so', 'if', 'then', 'than', 'that', 'this', 'these',
+  'those', 'it', 'its', 'my', 'your', 'our', 'we', 'he', 'she', 'they', 'me',
+  'you', 'us', 'no', 'not', 'nor', 'about', 'into', 'over', 'after', 'before',
+  'between', 'under', 'above', 'below', 'out', 'off', 'up', 'down', 'how',
+  'what', 'when', 'where', 'which', 'who', 'whom', 'why', 'all', 'any', 'each',
+  'every', 'both', 'few', 'more', 'most', 'some', 'such', 'only', 'own', 'same',
+  'here', 'there', 'now', 'then', 'tell', 'show', 'find', 'look', 'read',
+  'please', 'help', 'start', 'begin', 'first', 'next', 'last', 'finally',
+  'step', 'through', 'across', 'along', 'around', 'back', 'because', 'been',
+  'during', 'end', 'far', 'get', 'going', 'got', 'make', 'made', 'much',
+  'must', 'never', 'once', 'other', 'quite', 'rather', 'really', 'still',
+  'well', 'yet', 'investigate', 'search', 'examine', 'understand', 'explain',
+  'describe', 'check', 'verify', 'confirm', 'ensure', 'guarantee', 'provide',
+  'give', 'take', 'use', 'using', 'used', 'via', 'way', 'ways', 'thing',
+  'things', 'something', 'anything', 'everything', 'nothing', 'does', 'done',
+  'doing', 'going', 'gone', 'goes', 'came', 'come', 'coming', 'bring',
+  'brings', 'brought', 'without', 'within', 'whether', 'while', 'whole',
+  'though', 'think', 'thanks', 'thank', 'say', 'says', 'said', 'see', 'seen',
+  'saw', 'know', 'known', 'knew', 'new', 'old', 'big', 'small', 'large',
+  'long', 'short', 'high', 'low', 'good', 'bad', 'best', 'worst', 'better',
+  'worse', 'every', 'each', 'either', 'neither', 'enough', 'else', 'ever',
+  'always', 'usually', 'often', 'sometimes', 'rarely', 'seldom', 'already',
+  'yet', 'just', 'about', 'almost', 'nearly', 'really', 'actually', 'pretty',
+  'quite', 'rather', 'somewhat', 'total', 'completely', 'entirely',
+  'absolutely', 'perfectly', 'fully', 'partially', 'partly', 'largely',
+  'mainly', 'mostly', 'primarily', 'mainly', 'running', 'running',
+  'walk', 'walking', 'walked', 'run', 'ran',
+])
+
 export async function investigateCodebase(
   query: string,
   workspaceRoot: string,
@@ -115,22 +150,38 @@ export async function investigateCodebase(
 ): Promise<string> {
   if (send) send(JSON.stringify({ type: "stream", delta: "Searching the codebase..." }))
 
-  const keywords = query.replace(/investigate|find|search|look|show|read|examine/gi, "").trim().split(/\s+/).filter(Boolean)
-  if (keywords.length === 0) return "What would you like me to investigate?"
+  // Extract meaningful keywords: keep capitalized words, identifiers, and short technical terms
+  const words = query
+    .replace(/[^\w\s-]/g, ' ')      // replace punctuation with space (keep hyphens)
+    .split(/\s+/)                     // split on whitespace
+    .filter(Boolean)                 // remove empty
+    .filter((w) => w.length > 2)     // remove 1-2 char words
+    .filter((w) => !STOP_WORDS.has(w.toLowerCase())) // remove stop words
+    .filter((w) => !/^\d+$/.test(w)) // remove pure numbers
+
+  // Prioritize capitalized / CamelCase / snake_case / hyphenated terms (identifiers)
+  const identifiers = words.filter((w) => /[A-Z]/.test(w) || /[-_]/.test(w) || /^\w+\.\w+$/.test(w))
+  const remaining = words.filter((w) => !identifiers.includes(w))
+
+  // Take up to 10 keywords total, prioritizing identifiers
+  const keywords = [...identifiers, ...remaining].slice(0, 10)
+  if (keywords.length === 0) {
+    return "What specific code would you like me to investigate? Try mentioning a filename, component name, or contract address."
+  }
 
   try {
     const pattern = keywords.join("|")
     let results: string
     try {
       results = execSync(
-        `rg -l -i "${pattern}" --type ts --type tsx --type css --glob '!node_modules' --glob '!.next' --glob '!public/codenomad' 2>/dev/null | head -20`,
+        `rg -l -i --engine auto "${pattern}" --type-add 'web:*.{ts,tsx,js,jsx,css,json}' --type web --glob '!node_modules' --glob '!.next' --glob '!public/codenomad' -m 5 2>/dev/null || true`,
         { cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 1024 * 1024 },
       )
     } catch {
       results = ""
     }
 
-    const fileList = results.trim().split("\n").filter(Boolean)
+    const fileList = results.trim().split("\n").filter(Boolean).slice(0, 20)
     if (fileList.length === 0) return `No files found matching: ${keywords.join(", ")}`
 
     const previews: string[] = []

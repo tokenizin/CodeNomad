@@ -53,10 +53,16 @@ import {
   runTypeCheck,
   gitBranchAction,
 } from "../../plugins/tokidapp/concierge/codebase-tools"
+import {
+  scanContract,
+  getScanStatus,
+  listSecurityScans,
+  listSolidityContracts,
+} from "../../plugins/tokidapp/concierge/security-tools"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starguard.vercel.app"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
 // Cache for workflow definitions fetched from StarGuard
 let workflowDefinitionsCache: any = null
@@ -403,14 +409,17 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "1", tool: "investigate_codebase", status: "running", summary: "Searching codebase..." }))
     const result = await investigateCodebase(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "1", tool: "investigate_codebase", status: "complete", summary: result }))
+    emitCausalGraphUpdate(send, "investigate_codebase", result, "route-investigate")
   } else if (lower.includes("generate") || lower.includes("create") || lower.includes("add") || lower.includes("make")) {
     send(JSON.stringify({ type: "tool_call", id: "2", tool: "generate_feature", status: "running", summary: "Generating feature..." }))
     const result = await generateFeature(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "2", tool: "generate_feature", status: "complete", summary: result }))
+    emitCausalGraphUpdate(send, "generate_feature", result, "route-generate")
   } else if (lower.includes("test") || lower.includes("verify") || lower.includes("check")) {
     send(JSON.stringify({ type: "tool_call", id: "3", tool: "run_tests", status: "running", summary: "Running tests..." }))
     const result = await runTests(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "3", tool: "run_tests", status: "complete", summary: result }))
+    emitCausalGraphUpdate(send, "run_tests", result, "route-test")
   } else if (lower.includes("git status") || lower.includes("branch") || lower.includes("repo")) {
     send(JSON.stringify({ type: "tool_call", id: "4", tool: "git_status", status: "running", summary: "Checking git state..." }))
     const result = await gitStatus(WORKSPACE_ROOT)
@@ -423,6 +432,7 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "6", tool: "trigger_deploy", status: "running", summary: "Triggering Vercel deploy..." }))
     const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "6", tool: "trigger_deploy", status: "complete", summary: deployResult }))
+    emitCausalGraphUpdate(send, "trigger_deploy", deployResult, "route-deploy")
   } else if (lower.includes("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
     send(JSON.stringify({ type: "tool_call", id: "7", tool: "spawn_agent", status: "running", summary: "Spawning agent..." }))
     const result = await spawnAgent(content, STARGUARD_BASE, WORKSPACE_ROOT, send)
@@ -445,7 +455,7 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_result", id: "11", tool: "rollback_deploy", status: "complete", summary: result }))
   } else if (lower.includes("a11y") || lower.includes("accessibility") || lower.includes("wcag") || lower.includes("lighthouse")) {
     const urlMatch = content.match(/https?:\/\/[^\s]+/)
-    const url = urlMatch ? urlMatch[0] : "https://starguard.vercel.app"
+    const url = urlMatch ? urlMatch[0] : "https://star-worlds.vercel.app"
     send(JSON.stringify({ type: "tool_call", id: "12", tool: "run_a11y_audit", status: "running", summary: "Running accessibility audit..." }))
     const result = await runA11yAudit(url, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "12", tool: "run_a11y_audit", status: "complete", summary: result }))
@@ -477,6 +487,24 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "16", tool: "git_branch", status: "running", summary: `Branch action: ${action}...` }))
     const result = await gitBranchAction(action, branchName, WORKSPACE_ROOT)
     send(JSON.stringify({ type: "tool_result", id: "16", tool: "git_branch", status: "complete", summary: result }))
+  } else if (lower.includes("scan") || lower.includes("security") || lower.includes("vulnerabilit")) {
+    // Extract contract name from message
+    const contractMatch = content.match(/(?:scan|check|audit)\s+(\w[\w-]*)/i)
+    const contractName = contractMatch ? contractMatch[1] : ""
+    if (contractName) {
+      send(JSON.stringify({ type: "tool_call", id: "20", tool: "security_scan", status: "running", summary: `Scanning ${contractName}...` }))
+      const result = await scanContract(contractName, WORKSPACE_ROOT, send)
+      send(JSON.stringify({ type: "tool_result", id: "20", tool: "security_scan", status: "complete", summary: result }))
+      emitCausalGraphUpdate(send, "security_scan", result, "route-security")
+    } else {
+      // List contracts and scans if no specific contract
+      const contracts = await listSolidityContracts(WORKSPACE_ROOT)
+      const scanList = await listSecurityScans()
+      send(JSON.stringify({
+        type: "message",
+        content: `Available contracts to scan:\n${contracts.map(c => `  \u2022 ${c.name}`).join("\n") || "  (none)"}\n\n${scanList}`,
+      }))
+    }
   } else {
     send(JSON.stringify({
       type: "message",
@@ -492,6 +520,7 @@ async function routeMessage(
 • **Assign task** — assign a task to a specific user
 • **Rollback deploy** — revert to the previous commit and redeploy
 • **Accessibility** — run a11y audits (Lighthouse, axe-core)
+• **Security scan** — scan Solidity contracts for vulnerabilities
 • **Read file** — view file contents or list directories
 • **Lint** — run the linter
 • **Type check** — run TypeScript type checking
@@ -881,6 +910,91 @@ export function registerRecordingRoutes(app: FastifyInstance) {
 
 // ── WebSocket Upgrade Handler ────────────────────────────────
 
+
+
+// ── Causal Graph Update Helper ───────────────────────────────
+
+function emitCausalGraphUpdate(
+  send: (msg: string) => void,
+  toolName: string,
+  result: string,
+  stepId: string,
+) {
+  const now = Date.now()
+  const rand = Math.random().toString(36).slice(2, 6)
+  const evidenceId = `evidence-${now}-${rand}`
+  const nodes: any[] = [{
+    id: evidenceId,
+    nodeType: "Evidence",
+    label: `Tool: ${toolName}`,
+    description: result.slice(0, 300),
+    confidence: 1.0,
+    sourceStepId: stepId,
+  }]
+  const edges: any[] = []
+
+  // Hypothesis for analysis tools
+  if (["investigate_codebase", "analyze", "diagnose", "plan", "evaluate"].includes(toolName)) {
+    const hypothesisId = `hypothesis-${now}-${rand}`
+    nodes.push({
+      id: hypothesisId,
+      nodeType: "Hypothesis",
+      label: `Analysis from ${toolName}`,
+      description: result.slice(0, 150),
+      confidence: 0.6,
+      sourceStepId: stepId,
+    })
+    edges.push({
+      sourceId: evidenceId,
+      targetId: hypothesisId,
+      label: "REVEALS",
+    })
+  }
+
+  // Vulnerability for security/audit tools
+  if (["security_scan", "run_a11y_audit"].includes(toolName)) {
+    const vulnId = `vuln-${now}-${rand}`
+    nodes.push({
+      id: vulnId,
+      nodeType: "Vulnerability",
+      label: `Finding: ${toolName}`,
+      description: result.slice(0, 200),
+      confidence: 0.8,
+      sourceStepId: stepId,
+    })
+    edges.push({
+      sourceId: evidenceId,
+      targetId: vulnId,
+      label: "REVEALS",
+    })
+  }
+
+  // Exploit for test failures
+  if (toolName === "run_tests" && result.toLowerCase().includes("fail")) {
+    const exploitId = `exploit-${now}-${rand}`
+    nodes.push({
+      id: exploitId,
+      nodeType: "Exploit",
+      label: `Test failure: ${stepId}`,
+      description: result.slice(0, 200),
+      confidence: 0.9,
+      sourceStepId: stepId,
+    })
+    edges.push({
+      sourceId: evidenceId,
+      targetId: exploitId,
+      label: "ENABLES",
+    })
+  }
+
+  send(JSON.stringify({
+    type: "causal_graph_update",
+    causalNodes: nodes,
+    causalEdges: edges,
+  }))
+}
+
+
 export function registerTokidappWebSocket(app: FastifyInstance) {
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
@@ -1185,6 +1299,13 @@ async function handleOrchestrateMessage(
           channel,
           event,
           data,
+        }))
+      },
+      onCausalGraphUpdate: (nodes, edges) => {
+        socketRef.send(JSON.stringify({
+          type: "causal_graph_update",
+          causalNodes: nodes,
+          causalEdges: edges,
         }))
       },
       onLog: (eventType: string, severity: string, title: string, metadata?: Record<string, unknown>) => {
