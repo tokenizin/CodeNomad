@@ -7,15 +7,9 @@ type Messages = Record<string, string>
 
 export type TranslateParams = Record<string, unknown>
 
-<<<<<<< HEAD
-export type Locale = "en" | "id" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he"
+export type Locale = "en" | "id" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he" | "de" | "ne"
 
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "id", "es", "fr", "ru", "ja", "zh-Hans", "he"] as const
-=======
-export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he" | "de" | "ne"
-
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he", "de", "ne"] as const
->>>>>>> upstream-v0.17.0
+const SUPPORTED_LOCALES: readonly Locale[] = ["en", "id", "es", "fr", "ru", "ja", "zh-Hans", "he", "de", "ne"] as const
 const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
 const RTL_LOCALES = new Set<Locale>(["he"])
 
