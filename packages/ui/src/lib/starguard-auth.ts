@@ -1,5 +1,5 @@
 const STORAGE_KEY = "starguard_jwt"
-const DEFAULT_STARGUARD_PUBLIC_URL = "https://star-worlds.vercel.app"
+const DEFAULT_STARGUARD_PUBLIC_URL = "https://shapiro-vip.vercel.app"
 
 declare global {
   interface Window {

@@ -1,6 +1,6 @@
 ---
 name: codenomad-build-restart
-description: Builds the CodeNomad server and UI package, then restarts the Mac mini tunnel on port 9899. Use after CodeNomad server/UI changes, auth or TokiDAPP route fixes, or when asked to rebuild and restart the tunnel for codenomad.tokenizin.com.
+description: Builds the CodeNomad server and UI package, then restarts the Mac mini tunnel on port 9899. Use after CodeNomad server/UI changes, auth or TokiDAPP route fixes, or when asked to rebuild and restart the tunnel for codenomad.prestix.vip.
 ---
 
 # CodeNomad build + tunnel restart

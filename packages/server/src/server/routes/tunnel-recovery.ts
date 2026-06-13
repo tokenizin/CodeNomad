@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify"
 const REPO_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const QUEUE_PATH = path.join(REPO_ROOT, "logs", "codenomad-host-restart.queue")
 
-/** Same-origin queue for Mac host restart (avoids CORS to StarGuard from codenomad.tokenizin.com). */
+/** Same-origin queue for Mac host restart (avoids CORS to StarGuard from codenomad.prestix.vip). */
 export function registerTunnelRecoveryRoutes(app: FastifyInstance) {
   app.post("/api/tunnel/restart-request", async (request, reply) => {
     const body = (request.body ?? {}) as { reason?: string; source?: string }

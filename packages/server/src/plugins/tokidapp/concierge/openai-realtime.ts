@@ -73,7 +73,7 @@ const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
 })()
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://shapiro-vip.vercel.app"
 
 interface RealtimeSession {
   ws: WebSocket
@@ -269,7 +269,7 @@ const tools = [
     parameters: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL to audit (e.g. https://star-worlds.vercel.app or localhost:3000)" },
+        url: { type: "string", description: "URL to audit (e.g. https://shapiro-vip.vercel.app or localhost:3000)" },
       },
       required: ["url"],
     },

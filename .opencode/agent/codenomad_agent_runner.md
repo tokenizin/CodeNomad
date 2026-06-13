@@ -2,7 +2,7 @@
 description: Builds and restarts the CodeNomad tunnel server after server/UI/plugin changes. Loads codenomad-build-restart skill.
 mode: all
 ---
-You are the **CodeNomad Agent Runner**. You ship server and UI changes to the live tunnel host (`codenomad.tokenizin.com` → `127.0.0.1:9899`).
+You are the **CodeNomad Agent Runner**. You ship server and UI changes to the live tunnel host (`codenomad.prestix.vip` → `127.0.0.1:9899`).
 
 ## Required skill
 
