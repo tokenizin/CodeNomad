@@ -26,6 +26,7 @@ import {
   getArchitectureDigest,
   getSepoliaDeployments,
 } from "./codebase-tools"
+import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
@@ -357,6 +358,21 @@ const tools = [
       required: ["intent"],
     },
   },
+  {
+    type: "function",
+    name: "nomadworks_invoke",
+    description: "Create a NomadWorks task for structured multi-agent orchestration — use when the user's request involves investigation, feature work, or a complex change that should be tracked as a formal task. The task appears in the Evidence Browser and Causal Graph tabs.",
+    parameters: {
+      type: "object",
+      properties: {
+        intent: { type: "string", description: "What needs to be accomplished — the full task description" },
+        agentType: { type: "string", description: "NomadWorks agent type: developer, business_analyst, tech_lead, technical_architect, or qa_engineer", enum: ["developer", "business_analyst", "tech_lead", "technical_architect", "qa_engineer"] },
+        contextDescription: { type: "string", description: "Summary of relevant findings, decisions, or state from the current conversation to pass to the agent" },
+        complexity: { type: "string", description: "Task complexity: tiny for small fixes, standard for bounded work, complex for multi-step", enum: ["tiny", "standard", "complex"] },
+      },
+      required: ["intent"],
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -579,6 +595,49 @@ async function executeTool(
         } else {
           return `Orchestration finished with issues: ${result.failedNodes} failed, ${result.skippedNodes} skipped. ${result.error || ""}${outputsSummary}`
         }
+      }
+
+      case "nomadworks_invoke": {
+        const { intent, agentType = "developer", contextDescription = "", complexity = "standard" } = JSON.parse(argsStr)
+        const workspaceRoot = config.workspaceRoot
+        const sessionId = config.sessionId || `voice_${Date.now()}`
+
+        // Gather context from what the concierge has already discussed
+        const context: Record<string, unknown> = {}
+        if (contextDescription) context.contextDescription = contextDescription
+        context.source = "concierge"
+        context.sessionId = sessionId
+
+        const result = await bridge.createTaskFile({
+          intent,
+          agentType,
+          context,
+          complexity,
+          sessionId,
+        })
+
+        // Also try to notify the tokidapp WS so the Evidence tab updates
+        try {
+          const userId = sessionId ? sessionId.replace(/^voice_/, "") : null
+          if (userId) {
+            const { getTokidappSocket, tokidappSessionId } = await import("../../../server/ws-socket-registry")
+            const socket = getTokidappSocket(tokidappSessionId(userId))
+            if (socket) {
+              socket.send(JSON.stringify({
+                type: "nomadworks_task_status",
+                taskId: result.taskId,
+                status: "created",
+                title: intent.slice(0, 120),
+                agentType,
+                complexity,
+              }))
+            }
+          }
+        } catch {
+          // Non-critical — task was created regardless
+        }
+
+        return `NomadWorks task created: ${result.taskId} (${agentType}, ${complexity}). Task file: ${result.taskFilePath}. Evidence will appear in the Evidence Browser and Causal tabs once the task is completed.`
       }
 
       default:
