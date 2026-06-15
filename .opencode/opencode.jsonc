@@ -4,7 +4,152 @@
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
   ],
-  "plugin": [
-    // "@neuralnomads/nomadworks@0.1.0-rc.10"
-  ]
+  "plugin": [],
+  "agent": {
+    "opencoder": {
+      "description": "Orchestration agent for complex coding, architecture, and multi-file refactoring with approval gates",
+      "mode": "primary",
+      "prompt": "{file:../../.opencode/agents/opencoder.md}"
+    },
+    "openagent": {
+      "description": "Universal agent for answering queries, executing tasks, and coordinating workflows across any domain",
+      "mode": "primary",
+      "prompt": "{file:../../.opencode/agents/openagent.md}"
+    },
+    "eval-runner": {
+      "description": "Runs evaluations and test suites against project benchmarks",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/eval-runner.md}"
+    },
+    "copywriter": {
+      "description": "Content creation and marketing copy specialist",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/copywriter.md}"
+    },
+    "technical-writer": {
+      "description": "Technical documentation and API reference writer",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/technical-writer.md}"
+    },
+    "data-analyst": {
+      "description": "Data analysis, visualization, and insight generation",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/data-analyst.md}"
+    },
+    "solidity-architect": {
+      "description": "Expert-level Solidity & EVM Blockchain Architect. Absolute domain authority for smart contract design, OpenZeppelin libraries, upgradeable patterns, ERC-4337 AA, and security review.",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/solidity-architect.md}"
+    },
+    "ceo": {
+      "description": "Chief Executive Officer — ecosystem vision, risk management, resource allocation, strategic decisions",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/ceo.md}"
+    },
+    "cto": {
+      "description": "Chief Technology Officer — technology strategy, architecture decisions, technical risk, infrastructure",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/cto.md}"
+    },
+    "cmo": {
+      "description": "Chief Marketing Officer — brand strategy, campaign execution, dApp UI governance, community growth",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/cmo.md}"
+    },
+    "cso": {
+      "description": "Chief Security Officer — smart contract audit governance, incident response, threat modeling, security review gates",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/cso.md}"
+    },
+    "cfo": {
+      "description": "Chief Financial Officer — treasury management, tokenomics, budget allocation, investor reporting, financial risk",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/cfo.md}"
+    },
+    "cao": {
+      "description": "Chief Acquisition Officer — merchant acquisition, venue onboarding, Prestix.vip partnership, consumer growth, and strategic partnerships",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/cao.md}"
+    },
+    "coo": {
+      "description": "Chief Operating Officer — process optimization, infrastructure operations, release management, cross-team coordination, and incident response",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/coo.md}"
+    },
+    "product_manager": {
+      "description": "Product Manager Agent (PMA) — central orchestrator for all NomadWorks agent activities, task assignment, and workflow management",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/product_manager.md}"
+    },
+    "business_analyst": {
+      "description": "Business Analyst — document steward, requirements analyst, translates product goals into specifications",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/business_analyst.md}"
+    },
+    "tech_lead": {
+      "description": "Tech Lead — leads technical development, ensures code quality, architectural adherence, and functional verification",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/tech_lead.md}"
+    },
+    "technical_architect": {
+      "description": "Technical Architect — defines technical interfaces, architectural patterns, and ensures technical consistency",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/technical_architect.md}"
+    },
+    "developer": {
+      "description": "Developer — implements features and writes tests according to architectural designs",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/developer.md}"
+    },
+    "qa_engineer": {
+      "description": "QA Engineer — designs, develops, and executes automated test suites, verifies manual scripts",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/qa_engineer.md}"
+    },
+    "ui_ux_designer": {
+      "description": "UI/UX Designer — god-mode design authority with systemic thinking, heuristic evaluation, neuro-inclusive accessibility, dark pattern audits, and award-winning visual review",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/ui_ux_designer.md}"
+    },
+    "mui_engineer": {
+      "description": "MUI Engineer — expert MUI component developer, produces production-ready Material-UI components, design critiques, Storybook stories, and Jest tests with accessibility enforcement",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/mui_engineer.md}"
+    },
+    "workflow_runner": {
+      "description": "Workflow Runner — delegated workflow executor for PMA-started task lifecycles, including implementation, verification, and finalization",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/workflow_runner.md}"
+    },
+    "cloudflare-tunnel-setup": {
+      "description": "Cloudflare Tunnel Setup Wizard — interactive Q&A-guided bidirectional tunnel configuration for CodeNomad, matching the verified production tunnel setup",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/cloudflare-tunnel-setup.md}"
+    },
+    "contract_security_auditor": {
+      "description": "Contract Security Auditor — smart contract vulnerability assessment, risk analysis, and security verification",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/contract_security_auditor.md}"
+    },
+    "evm_optimization_engineer": {
+      "description": "EVM Optimization Engineer — gas optimization, contract efficiency, deployment cost reduction",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/evm_optimization_engineer.md}"
+    },
+    "upgrade_specialist": {
+      "description": "Upgrade Specialist — upgradeable smart contract architecture, storage layout compatibility, proxy safety",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/upgrade_specialist.md}"
+    },
+    "codenomad_agent_runner": {
+      "description": "CodeNomad codenomad agent runner",
+      "mode": "primary",
+      "prompt": "{file:agent/codenomad_agent_runner.md}"
+    },
+    "web_developer": {
+      "description": "CodeNomad web developer",
+      "mode": "primary",
+      "prompt": "{file:agent/web_developer.md}"
+    }
+  }
 }
