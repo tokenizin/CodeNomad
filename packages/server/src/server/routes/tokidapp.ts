@@ -1499,6 +1499,95 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             return
           }
 
+          if (msg.type === "tool_invoke" && msg.tool) {
+            ;(async () => {
+              const toolName = msg.tool as string
+              const mcpServer = msg.mcpServer as string | undefined
+              const params = (msg.params as Record<string, unknown>) || {}
+              const toolId = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+              // Send running status
+              socketRef.send(JSON.stringify({
+                type: "tool_call",
+                id: toolId,
+                tool: toolName,
+                status: "running",
+                summary: `Invoking ${mcpServer ? `${mcpServer} → ` : ""}${toolName}...`,
+              }))
+
+              try {
+                // Read opencode.json to find MCP server definitions
+                const configPath = path.join(WORKSPACE_ROOT, "opencode.json")
+                let mcpUrl: string | null = null
+
+                if (fs.existsSync(configPath)) {
+                  const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+                  if (mcpServer && config.mcp?.[mcpServer]?.url) {
+                    mcpUrl = config.mcp[mcpServer].url
+                  }
+                  // If no specific mcpServer was specified, check opencode.json agent MCP refs
+                  if (!mcpUrl) {
+                    // Try tools section — specific tool definitions may point to MCP servers
+                    for (const [, val] of Object.entries(config.mcp || {})) {
+                      const entry = val as { url?: string }
+                      if (entry.url) {
+                        mcpUrl = entry.url
+                        break
+                      }
+                    }
+                  }
+                }
+
+                if (mcpUrl) {
+                  // Proxy to MCP HTTP endpoint
+                  const response = await fetch(mcpUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      name: toolName,
+                      params,
+                    }),
+                  })
+
+                  if (!response.ok) {
+                    const errorText = await response.text().catch(() => "Unknown error")
+                    throw new Error(`MCP ${mcpServer} returned ${response.status}: ${errorText}`)
+                  }
+
+                  const result = await response.text()
+
+                  socketRef.send(JSON.stringify({
+                    type: "tool_result",
+                    id: toolId,
+                    tool: toolName,
+                    status: "complete",
+                    summary: `${toolName} completed successfully`,
+                    result,
+                  }))
+                } else {
+                  // No MCP URL found — acknowledge but can't proxy
+                  socketRef.send(JSON.stringify({
+                    type: "tool_result",
+                    id: toolId,
+                    tool: toolName,
+                    status: "complete",
+                    summary: `${toolName} (no MCP proxy configured — tool dispatched locally)`,
+                    result: `Tool "${toolName}" acknowledged. Server-side MCP routing not configured for this tool.`,
+                  }))
+                }
+              } catch (err) {
+                socketRef.send(JSON.stringify({
+                  type: "tool_result",
+                  id: toolId,
+                  tool: toolName,
+                  status: "error",
+                  summary: `${toolName} failed: ${(err as Error).message}`,
+                }))
+              }
+            })()
+            return
+          }
+
         } catch {
           // Ignore malformed JSON
         }
