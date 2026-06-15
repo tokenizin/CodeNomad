@@ -227,6 +227,32 @@ export async function executeDAG(
   // Update orchestrator session on StarGuard
   await updateOrchestratorState(orchestratorId, 'completed', null)
 
+  // Persist final DAG node states so they're recoverable via HTTP
+  // on WS reconnect (fetchOrchestratorState in the client).
+  try {
+    await apiPost(`/api/tokidapp/orchestrator/${orchestratorId}/nodes`, {
+      nodes: nodes.map((n) => ({
+        order: n.order,
+        title: n.title,
+        nodeType: n.nodeType,
+        toolName: n.toolName || null,
+        toolInput: n.toolInput || null,
+        toolOutput: n.toolOutput || null,
+        status: n.status,
+        errorMessage: n.errorMessage || null,
+        parallelGroup: n.parallelGroup || null,
+        dependencies: n.dependencies || [],
+        maxRetries: n.maxRetries ?? 2,
+        retryCount: n.retryCount ?? 0,
+        timeoutMs: n.timeoutMs || null,
+        assignedAgentId: n.assignedAgentId || null,
+        agentType: n.agentType || null,
+      })),
+    })
+  } catch {
+    // Non-critical — nodes are available via WS during execution
+  }
+
   return {
     success: failedCount === 0,
     completedNodes: completedCount,

@@ -32,6 +32,13 @@ import { apiPost, apiGet, apiPut } from "../../plugins/tokidapp/orchestrator/sta
 import { addLocalRecording, getLocalRecordings } from "./local-recordings"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 import {
+  registerTokidappSocket,
+  unregisterTokidappSocket,
+  getTokidappSocket,
+  tokidappSessionId,
+  type WsSocketRef,
+} from "./ws-socket-registry"
+import {
   investigateCodebase,
   generateFeature,
   runTests,
@@ -69,12 +76,6 @@ let workflowDefinitionsCache: any = null
 let workflowCacheTime = 0
 const WORKFLOW_CACHE_TTL = 300_000 // 5 minutes
 
-interface TokiDAPPWebSocket {
-  send: (msg: string) => void
-  close: (code?: number, reason?: string) => void
-}
-
-const activeSockets = new Map<string, TokiDAPPWebSocket>()
 const tokidappWss = new WebSocketServer({ noServer: true })
 
 // ── CodeNomad Voice Realtime WebSocket ─────────────────────
@@ -405,26 +406,33 @@ async function routeMessage(
   }
   const lower = content.toLowerCase()
 
-  if (lower.includes("investigate") || lower.includes("find") || lower.includes("search") || lower.includes("look")) {
+  // Word-boundary keyword matcher — avoids false positives like
+  // "review" matching "view" or "ready" matching "read".
+  // Builds: \b<word>(?:s|ing|ed|es|er)?\b
+  function hasWord(...words: string[]): boolean {
+    return words.some(w => new RegExp(`\\b${w}(?:s|ing|ed|es|er)?\\b`, 'i').test(lower))
+  }
+
+  if (hasWord("investigate") || hasWord("search") || hasWord("find") || hasWord("look")) {
     send(JSON.stringify({ type: "tool_call", id: "1", tool: "investigate_codebase", status: "running", summary: "Searching codebase..." }))
     const result = await investigateCodebase(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "1", tool: "investigate_codebase", status: "complete", summary: result }))
     emitCausalGraphUpdate(send, "investigate_codebase", result, "route-investigate")
-  } else if (lower.includes("generate") || lower.includes("create") || lower.includes("add") || lower.includes("make")) {
+  } else if (hasWord("generate") || hasWord("create") || hasWord("add") || hasWord("make")) {
     send(JSON.stringify({ type: "tool_call", id: "2", tool: "generate_feature", status: "running", summary: "Generating feature..." }))
     const result = await generateFeature(content, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "2", tool: "generate_feature", status: "complete", summary: result }))
     emitCausalGraphUpdate(send, "generate_feature", result, "route-generate")
-  } else if (lower.includes("test") || lower.includes("verify") || lower.includes("check")) {
+  } else if (hasWord("test") || hasWord("verify") || hasWord("check")) {
     send(JSON.stringify({ type: "tool_call", id: "3", tool: "run_tests", status: "running", summary: "Running tests..." }))
     const result = await runTests(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "3", tool: "run_tests", status: "complete", summary: result }))
     emitCausalGraphUpdate(send, "run_tests", result, "route-test")
-  } else if (lower.includes("git status") || lower.includes("branch") || lower.includes("repo")) {
+  } else if (lower.includes("git status") || hasWord("branch") || lower.includes("repo")) {
     send(JSON.stringify({ type: "tool_call", id: "4", tool: "git_status", status: "running", summary: "Checking git state..." }))
     const result = await gitStatus(WORKSPACE_ROOT)
     send(JSON.stringify({ type: "tool_result", id: "4", tool: "git_status", status: "complete", summary: result }))
-  } else if (lower.includes("deploy") || lower.includes("release") || lower.includes("publish")) {
+  } else if (hasWord("deploy") || hasWord("release") || hasWord("publish")) {
     send(JSON.stringify({ type: "tool_call", id: "5", tool: "git_commit_push", status: "running", summary: "Committing and pushing..." }))
     const gitResult = await gitCommitPush(content, WORKSPACE_ROOT, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "5", tool: "git_commit_push", status: "complete", summary: gitResult }))
@@ -433,11 +441,11 @@ async function routeMessage(
     const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "6", tool: "trigger_deploy", status: "complete", summary: deployResult }))
     emitCausalGraphUpdate(send, "trigger_deploy", deployResult, "route-deploy")
-  } else if (lower.includes("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
+  } else if (hasWord("spawn") || lower.includes("start agent") || lower.includes("launch agent")) {
     send(JSON.stringify({ type: "tool_call", id: "7", tool: "spawn_agent", status: "running", summary: "Spawning agent..." }))
     const result = await spawnAgent(content, STARGUARD_BASE, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "7", tool: "spawn_agent", status: "complete", summary: result }))
-  } else if (lower.includes("schedule") || lower.includes("create task") || (lower.includes("add task") && !lower.includes("add a page"))) {
+  } else if (hasWord("schedule") || lower.includes("create task") || (lower.includes("add task") && !lower.includes("add a page"))) {
     send(JSON.stringify({ type: "tool_call", id: "8", tool: "schedule_task", status: "running", summary: "Scheduling task..." }))
     const result = await scheduleTask(content, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "8", tool: "schedule_task", status: "complete", summary: result }))
@@ -449,19 +457,19 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "10", tool: "assign_task", status: "running", summary: "Assigning task..." }))
     const result = await assignTask(content, STARGUARD_BASE, send)
     send(JSON.stringify({ type: "tool_result", id: "10", tool: "assign_task", status: "complete", summary: result }))
-  } else if (lower.includes("rollback") || lower.includes("undo deploy") || lower.includes("revert")) {
+  } else if (hasWord("rollback") || lower.includes("undo deploy") || hasWord("revert")) {
     send(JSON.stringify({ type: "tool_call", id: "11", tool: "rollback_deploy", status: "running", summary: "Rolling back deploy..." }))
     const result = await rollbackDeploy(send)
     send(JSON.stringify({ type: "tool_result", id: "11", tool: "rollback_deploy", status: "complete", summary: result }))
-  } else if (lower.includes("a11y") || lower.includes("accessibility") || lower.includes("wcag") || lower.includes("lighthouse")) {
+  } else if (hasWord("a11y") || hasWord("accessibility") || hasWord("wcag") || hasWord("lighthouse")) {
     const urlMatch = content.match(/https?:\/\/[^\s]+/)
     const url = urlMatch ? urlMatch[0] : "https://shapiro-vip.vercel.app"
     send(JSON.stringify({ type: "tool_call", id: "12", tool: "run_a11y_audit", status: "running", summary: "Running accessibility audit..." }))
     const result = await runA11yAudit(url, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "12", tool: "run_a11y_audit", status: "complete", summary: result }))
-  } else if (lower.includes("read") || lower.includes("show") || lower.includes("view") || lower.includes("open")) {
-    const fileMatch = content.match(/(?:read|show|view|open|list)\s+([^\s]+(?:\/[^\s]+)*)/i)
-    const filePath = fileMatch ? fileMatch[1] : (content.replace(/read|show|view|open|list/gi, "").trim())
+  } else if (hasWord("read") || hasWord("show") || hasWord("view") || hasWord("open")) {
+    const fileMatch = content.match(/\b(?:read|show|view|open|list)\s+([^\s]+(?:\/[^\s]+)*)/i)
+    const filePath = fileMatch ? fileMatch[1] : (content.replace(/\b(?:read|show|view|open|list)\s*/gi, "").trim())
     if (filePath && filePath.length > 1) {
       send(JSON.stringify({ type: "tool_call", id: "13", tool: "read_file", status: "running", summary: `Reading ${filePath}...` }))
       const result = await readFileContent(filePath, WORKSPACE_ROOT)
@@ -469,15 +477,15 @@ async function routeMessage(
     } else {
       send(JSON.stringify({ type: "message", content: "What file would you like to read? Specify the path like: read src/app/page.tsx" }))
     }
-  } else if (lower.includes("lint") || lower.includes("eslint")) {
+  } else if (hasWord("lint") || hasWord("eslint")) {
     send(JSON.stringify({ type: "tool_call", id: "14", tool: "run_lint", status: "running", summary: "Running linter..." }))
     const result = await runLint(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "14", tool: "run_lint", status: "complete", summary: result }))
-  } else if (lower.includes("typecheck") || lower.includes("type-check") || lower.includes("type check") || lower.includes("tsc")) {
+  } else if (hasWord("typecheck") || hasWord("type-check") || hasWord("type check") || hasWord("tsc")) {
     send(JSON.stringify({ type: "tool_call", id: "15", tool: "run_typecheck", status: "running", summary: "Running type check..." }))
     const result = await runTypeCheck(WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "15", tool: "run_typecheck", status: "complete", summary: result }))
-  } else if (lower.includes("branch")) {
+  } else if (hasWord("branch")) {
     const isCreate = lower.includes("create") || lower.includes("new")
     const isDelete = lower.includes("delete") || lower.includes("remove")
     const isSwitch = lower.includes("switch") || lower.includes("checkout") || lower.includes("go to")
@@ -487,7 +495,7 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_call", id: "16", tool: "git_branch", status: "running", summary: `Branch action: ${action}...` }))
     const result = await gitBranchAction(action, branchName, WORKSPACE_ROOT)
     send(JSON.stringify({ type: "tool_result", id: "16", tool: "git_branch", status: "complete", summary: result }))
-  } else if (lower.includes("scan") || lower.includes("security") || lower.includes("vulnerabilit")) {
+  } else if (hasWord("scan") || hasWord("security") || lower.indexOf("vulnerabilit") !== -1) {
     // Extract contract name from message
     const contractMatch = content.match(/(?:scan|check|audit)\s+(\w[\w-]*)/i)
     const contractName = contractMatch ? contractMatch[1] : ""
@@ -506,28 +514,76 @@ async function routeMessage(
       }))
     }
   } else {
-    send(JSON.stringify({
-      type: "message",
-      content: `I can help with:
-• **Investigate** — search and read codebase files
-• **Generate** — create new pages, components, routes
-• **Test** — run the test suite
-• **Git status** — check branch, changes, history
-• **Deploy** — commit, push, and deploy to Vercel
-• **Spawn agent** — launch OpenCode/OpenCoder/OpenAgent workspaces
-• **Schedule task** — create and schedule tasks for agents or users
-• **List tasks** — view all pending/assigned/completed tasks
-• **Assign task** — assign a task to a specific user
-• **Rollback deploy** — revert to the previous commit and redeploy
-• **Accessibility** — run a11y audits (Lighthouse, axe-core)
-• **Security scan** — scan Solidity contracts for vulnerabilities
-• **Read file** — view file contents or list directories
-• **Lint** — run the linter
-• **Type check** — run TypeScript type checking
-• **Git branch** — list, create, switch, or delete branches
-
-What would you like to do?`,
-    }))
+    // Unrecognized query — try GPT for a natural-language answer
+    // before falling back to the static capabilities list.
+    let answered = false
+    const OPENAI_KEY = process.env.OPENAI_API_KEY
+    if (OPENAI_KEY) {
+      try {
+        const gptRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content:
+                  `You are the TokiDAPP concierge for the StarWORLD ecosystem. ` +
+                  `You help users with codebase tasks: investigating code, generating features, running tests, ` +
+                  `checking git status, deploying to Vercel, spawning agents, scheduling tasks, and scanning contracts. ` +
+                  `If the user's request matches one of these capabilities, route them to the appropriate tool. ` +
+                  `If they ask a general question, answer concisely from your knowledge. ` +
+                  `Keep responses under 200 words. Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud.`,
+              },
+              { role: "user", content },
+            ],
+            max_tokens: 500,
+          }),
+        })
+        if (gptRes.ok) {
+          const gptData = (await gptRes.json()) as {
+            choices?: Array<{ message?: { content?: string } }>
+          }
+          const reply = gptData?.choices?.[0]?.message?.content?.trim()
+          if (reply) {
+            send(JSON.stringify({ type: "message", content: reply }))
+            answered = true
+          }
+        }
+      } catch {
+        // GPT unreachable — fall through to static list
+      }
+    }
+    if (!answered) {
+      send(JSON.stringify({
+        type: "message",
+        content: [
+          "I can help with:",
+          "• **Investigate** — search and read codebase files",
+          "• **Generate** — create new pages, components, routes",
+          "• **Test** — run the test suite",
+          "• **Git status** — check branch, changes, history",
+          "• **Deploy** — commit, push, and deploy to Vercel",
+          "• **Spawn agent** — launch OpenCode/OpenCoder/OpenAgent workspaces",
+          "• **Schedule task** — create and schedule tasks for agents or users",
+          "• **List tasks** — view all pending/assigned/completed tasks",
+          "• **Assign task** — assign a task to a specific user",
+          "• **Rollback deploy** — revert to the previous commit and redeploy",
+          "• **Accessibility** — run a11y audits (Lighthouse, axe-core)",
+          "• **Security scan** — scan Solidity contracts for vulnerabilities",
+          "• **Read file** — view file contents or list directories",
+          "• **Lint** — run the linter",
+          "• **Type check** — run TypeScript type checking",
+          "• **Git branch** — list, create, switch, or delete branches",
+          "",
+          "What would you like to do?",
+        ].join("\n"),
+      }))
+    }
   }
 }
 
@@ -583,7 +639,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     }
     return {
       status: "ok",
-      activeSockets: activeSockets.size,
+      activeSockets: 0, // computed by StarGuard // TODO: restore active socket count via registry
       workspaceRoot: WORKSPACE_ROOT,
       vercelCliAvailable: true,
       realtimeEnabled: REALTIME_ENABLED,
@@ -618,7 +674,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
   app.get("/api/tokidapp/ws/info", async (request, reply) => {
     try {
       const query = SessionQuerySchema.parse(request.query)
-      return { sessionId: `tokidapp_${query.token}`, active: activeSockets.has(`tokidapp_${query.token}`) }
+      return { sessionId: tokidappSessionId(query.token), active: !!getTokidappSocket(tokidappSessionId(query.token)) }
     } catch {
       reply.code(400)
       return { error: "token required" }
@@ -1021,8 +1077,8 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
 }
 
 function attachTokidappSocket(ws: WebSocket, token: string) {
-  const sessionId = `tokidapp_${token}`
-  const socketRef: TokiDAPPWebSocket = {
+  const sessionId = tokidappSessionId(token)
+  const socketRef: WsSocketRef = {
     send: (msg: string) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(msg)
     },
@@ -1031,7 +1087,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     },
   }
 
-  activeSockets.set(sessionId, socketRef)
+  registerTokidappSocket(sessionId, socketRef)
 
   socketRef.send(JSON.stringify({
     type: "orchestrator_greeting",
@@ -1051,7 +1107,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   const orchestratorSessions = new Map<string, string>()
 
   const cleanup = () => {
-    activeSockets.delete(sessionId)
+    unregisterTokidappSocket(sessionId)
     orchestratorSessions.delete(sessionId)
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)

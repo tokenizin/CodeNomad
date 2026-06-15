@@ -28,7 +28,8 @@ import {
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
-import type { DAGNode, DAGDefinition } from "../orchestrator/types"
+import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
+import { getTokidappSocket, tokidappSessionId } from "../../../server/ws-socket-registry"
 
 /** Tracks one active session per user — prevents two sessions for the same
  *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
@@ -41,7 +42,7 @@ const REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2"
 /** Reasoning effort: minimal, low, medium, high, xhigh. Default: low. */
 const REALTIME_REASONING_EFFORT =
-  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
+  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "medium"
 
 /** Only gpt-realtime-2 supports the reasoning parameter. */
 const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
@@ -57,19 +58,21 @@ const REALTIME_VAD_THRESHOLD = (() => {
   const val = parseFloat(raw)
   return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.9
 })()
-/** Audio captured before speech onset in ms. Default: 300. */
+/** Audio captured before speech onset in ms. Default: 500.
+ *  Increased from 300ms to capture first syllables that were being clipped
+ *  in natural speech, especially for fast speakers. */
 const REALTIME_VAD_PREFIX_PADDING_MS = (() => {
   const raw = process.env.OPENAI_REALTIME_VAD_PREFIX_PADDING_MS?.trim()
-  if (!raw) return 300
+  if (!raw) return 500
   const val = parseInt(raw, 10)
-  return Number.isFinite(val) && val > 0 ? val : 300
+  return Number.isFinite(val) && val > 0 ? val : 500
 })()
-/** Silence duration before end-of-turn in ms. Default: 400. */
+/** Silence duration before end-of-turn in ms. Default: 500. */
 const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
   const raw = process.env.OPENAI_REALTIME_VAD_SILENCE_DURATION_MS?.trim()
-  if (!raw) return 400
+  if (!raw) return 500
   const val = parseInt(raw, 10)
-  return Number.isFinite(val) && val > 0 ? val : 400
+  return Number.isFinite(val) && val > 0 ? val : 500
 })()
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
@@ -364,6 +367,7 @@ async function executeTool(
   config: {
     workspaceRoot: string
     starguardBase: string
+    sessionId?: string  // e.g. "voice_<userId>" — used for progress callbacks
   },
 ): Promise<string> {
   try {
@@ -475,9 +479,10 @@ async function executeTool(
       case "orchestrate": {
         const { intent, intentType = "QUERY_INFO" } = JSON.parse(argsStr)
 
-        // Create orchestrator session via StarGuard
-        const sessionId = "voice_" + Date.now()
-        const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: true })
+        // Resolve orchestrator session from config.sessionId (voice_<userId>)
+        // or fall back to a generated one (no tokidapp WS progress possible).
+        const orchSessionId = config.sessionId || ("voice_" + Date.now())
+        const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId: orchSessionId, voiceMode: true })
         if (!orchRes.ok) {
           return "Failed to create orchestrator session."
         }
@@ -497,16 +502,69 @@ async function executeTool(
           createdAt: new Date().toISOString(),
         }
 
-        // Execute DAG with default callbacks (no WS socket in voice context — results returned inline)
-        const result = await executeDAG(orchestratorId, dag, {
-          onNodeStart: () => {},
-          onNodeComplete: () => {},
-          onNodeFail: () => {},
-          onApprovalRequired: async () => "approved",
-          onBroadcast: () => {},
-          onLog: () => {},
-          onCausalGraphUpdate: () => {},
-        })
+        // If the user has a tokidapp WS socket open, stream DAG progress to it
+        // so the Pipeline and Causal tabs update in real time.
+        const userId = config.sessionId ? getUserIdFromSessionId(config.sessionId) : null
+        const tokidappSocket = userId ? getTokidappSocket(tokidappSessionId(userId)) : undefined
+
+        const callbacks: ExecutionCallbacks = tokidappSocket
+          ? {
+              onNodeStart: (node) => {
+                tokidappSocket.send(JSON.stringify({
+                  type: "dag_node_status",
+                  nodeId: node.title,
+                  nodeName: node.title,
+                  status: "RUNNING",
+                  progress: 0,
+                }))
+              },
+              onNodeComplete: (node) => {
+                tokidappSocket.send(JSON.stringify({
+                  type: "dag_node_status",
+                  nodeId: node.title,
+                  nodeName: node.title,
+                  status: "COMPLETED",
+                  progress: 100,
+                  output: node.toolOutput,
+                }))
+              },
+              onNodeFail: (node, error) => {
+                tokidappSocket.send(JSON.stringify({
+                  type: "dag_node_status",
+                  nodeId: node.title,
+                  nodeName: node.title,
+                  status: "FAILED",
+                  progress: 0,
+                  error,
+                }))
+              },
+              onApprovalRequired: async (node, ctx) => {
+                // Voice path: auto-approve (no approval modal possible over voice)
+                // Future: could send an approval_request WS message and wait
+                return "approved" as const
+              },
+              onBroadcast: () => {},
+              onLog: () => {},
+              onCausalGraphUpdate: (cNodes, cEdges) => {
+                tokidappSocket.send(JSON.stringify({
+                  type: "causal_graph_update",
+                  causalNodes: cNodes,
+                  causalEdges: cEdges,
+                }))
+              },
+            }
+          : {
+              // No tokidapp WS — fall back to silent execution
+              onNodeStart: () => {},
+              onNodeComplete: () => {},
+              onNodeFail: () => {},
+              onApprovalRequired: async () => "approved" as const,
+              onBroadcast: () => {},
+              onLog: () => {},
+              onCausalGraphUpdate: () => {},
+            }
+
+        const result = await executeDAG(orchestratorId, dag, callbacks)
 
         // Collect DAG node outputs to feed back into Realtime conversation context
         const outputEntries = Object.entries(result.outputs || {})
@@ -765,6 +823,7 @@ export function createRealtimeSession(
           const result = await executeTool(toolName, args, {
             workspaceRoot: WORKSPACE_ROOT,
             starguardBase: STARGUARD_BASE,
+            sessionId: session.sessionId,
           })
 
           ws.send(
