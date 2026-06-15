@@ -315,6 +315,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           (outgoing) => socketRef.send(outgoing),
           msg.workflowSlug as string | undefined,
           msg.workflowStep as number | undefined,
+          msg.agentType as string | undefined,
+          dbSessionId,
         )
         return
       }
@@ -502,6 +504,48 @@ export function registerVoiceRealtimeWebSocket(
   })
 }
 
+// ── Agent-Aware Routing Helper ──────────────────────────────
+
+/** Route a message to a specific NomadWorks agent type.
+ *  Creates a task file via the bridge and streams status updates.
+ *  Fire-and-forget for Phase 1 — unwatch not stored; cleaned up on WS close. */
+async function handleAgentRouting(
+  agentType: string,
+  content: string,
+  dbSessionId: string | null,
+  send: (msg: string) => void,
+): Promise<void> {
+  const starworldSessionId = resolveStarworldSessionId(dbSessionId)
+  if (!starworldSessionId) {
+    send(JSON.stringify({
+      type: 'error',
+      content: 'Session not bound. Reconnect TokiDAPP from StarGuard.',
+    }))
+    return
+  }
+  try {
+    const result = await bridge.createTaskFile({
+      intent: content,
+      agentType,
+      context: {},
+      sessionId: starworldSessionId,
+    })
+    send(JSON.stringify({
+      type: 'nomadworks_task_status',
+      ...result,
+      status: 'created',
+      agentType,
+    }))
+    // Start watching for task status changes (fire and forget — no unwatch storage)
+    bridge.watchTask(result.taskId, (outgoing) => send(outgoing))
+  } catch (err) {
+    send(JSON.stringify({
+      type: 'error',
+      content: `Agent routing failed: ${(err as Error).message}`,
+    }))
+  }
+}
+
 // ── Message Router ────────────────────────────────────────────
 
 async function routeMessage(
@@ -509,7 +553,16 @@ async function routeMessage(
   send: (msg: string) => void,
   workflowSlug?: string,
   workflowStep?: number,
+  agentType?: string,
+  dbSessionId?: string | null,
 ): Promise<void> {
+  // ── Agent-Aware Routing ───────────────────────────────────
+  if (agentType) {
+    await handleAgentRouting(agentType, content, dbSessionId ?? null, send)
+    return
+  }
+  // ── End Agent-Aware Routing ───────────────────────────────
+
   // If workflow context is provided, route by workflow slug
   if (workflowSlug && workflowStep) {
     const slugToHint: Record<string, string> = {
@@ -1363,6 +1416,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               (outgoing) => socketRef.send(outgoing),
               msg.workflowSlug,
               msg.workflowStep,
+              msg.agentType,
+              dbSessionId,
             )
             return
           }
