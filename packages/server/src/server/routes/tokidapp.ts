@@ -357,6 +357,21 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         return
       }
 
+      if (msg.type === "nomadworks_list") {
+        ;(async () => {
+          try {
+            const tasks = await bridge.listTasks()
+            socketRef.send(JSON.stringify({
+              type: "nomadworks_list",
+              tasks,
+            }))
+          } catch (err) {
+            socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_list failed: ${(err as Error).message}` }))
+          }
+        })()
+        return
+      }
+
     } catch {
       // Ignore malformed JSON
     }
@@ -1333,10 +1348,25 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             return
           }
 
+          if (msg.type === "nomadworks_list") {
+            ;(async () => {
+              try {
+                const tasks = await bridge.listTasks()
+                socketRef.send(JSON.stringify({
+                  type: "nomadworks_list",
+                  tasks,
+                }))
+              } catch (err) {
+                socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_list failed: ${(err as Error).message}` }))
+              }
+            })()
+            return
+          }
+
         } catch {
           // Ignore malformed JSON
         }
-  })
+      })
 
   ws.on("close", cleanup)
   ws.on("error", cleanup)

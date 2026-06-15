@@ -59,6 +59,8 @@ export interface TaskStatus {
   title?: string
   createdAt?: string
   updatedAt?: string
+  hasEvidence?: boolean
+  evidenceSummary?: string
   [key: string]: unknown
 }
 
@@ -71,6 +73,7 @@ export interface NomadworksBridge {
   createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult>
   readTaskStatus(taskId: string): Promise<TaskStatus | null>
   watchTask(taskId: string, send: (msg: string) => void): () => void
+  listTasks(): Promise<TaskStatus[]>
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -409,10 +412,71 @@ function watchTask(
   return unsubscribe
 }
 
+/**
+ * List all NomadWorks task files from disk.
+ * Scans tasks/todo/ and tasks/done/ directories for .md files with
+ * YAML frontmatter, and checks whether evidence exists for each task.
+ */
+async function listTasks(): Promise<TaskStatus[]> {
+  const results: TaskStatus[] = []
+  const seen = new Set<string>()
+
+  const directories = [
+    { dir: TODO_DIR, prefix: "todo" },
+    { dir: path.join(TASKS_ROOT, "done"), prefix: "done" },
+  ]
+
+  for (const { dir } of directories) {
+    if (!fs.existsSync(dir)) continue
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue
+
+      const filePath = path.join(dir, entry.name)
+      try {
+        const content = fs.readFileSync(filePath, "utf-8")
+        const status = parseTaskFile(content, entry.name.replace(".md", ""))
+
+        if (status && status.taskId && !seen.has(status.taskId)) {
+          seen.add(status.taskId)
+
+          // Check for evidence directory
+          const evidenceDir = path.join(EVIDENCES_ROOT, status.taskId)
+          const hasEvidence = fs.existsSync(path.join(evidenceDir, "SUMMARY.md"))
+          if (hasEvidence) {
+            status.hasEvidence = true
+            try {
+              status.evidenceSummary = fs.readFileSync(
+                path.join(evidenceDir, "SUMMARY.md"),
+                "utf-8",
+              )
+            } catch {
+              // ignore read errors on evidence
+            }
+          }
+
+          results.push(status)
+        }
+      } catch {
+        // Skip unparseable files
+      }
+    }
+  }
+
+  // Sort newest-first by updatedAt, then createdAt
+  return results.sort((a, b) => {
+    const aTime = a.updatedAt || a.createdAt || ""
+    const bTime = b.updatedAt || b.createdAt || ""
+    return bTime.localeCompare(aTime)
+  })
+}
+
 // ── Default Bridge Instance ───────────────────────────────────
 
 export const bridge: NomadworksBridge = {
   createTaskFile,
   readTaskStatus,
   watchTask,
+  listTasks,
 }
