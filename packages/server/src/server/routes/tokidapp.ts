@@ -529,12 +529,16 @@ async function handleAgentRouting(
       agentType,
       context: {},
       sessionId: starworldSessionId,
+      initialStage: "thinking",
+      initialMessage: "Creating task and analyzing request...",
     })
     send(JSON.stringify({
       type: 'nomadworks_task_status',
       ...result,
       status: 'created',
       agentType,
+      progress_stage: "thinking",
+      progress_message: "Creating task and analyzing request...",
     }))
     // Start watching for task status changes (fire and forget — no unwatch storage)
     bridge.watchTask(result.taskId, (outgoing) => send(outgoing))

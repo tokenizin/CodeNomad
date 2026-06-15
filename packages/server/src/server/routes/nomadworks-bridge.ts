@@ -13,8 +13,11 @@
  *                          ├── 2. nomadworks_status handler
  *                          │      └── Reads task file for latest status
  *                          │      └── Returns status to caller
- *                          └── 3. watchTask — fs.watch for status changes
- *                                 └── Sends nomadworks_task_status updates
+ *                          ├── 3. watchTask — fs.watch for status changes
+ *                          │      └── Sends nomadworks_task_status + agent_progress updates
+ *                          └── 4. updateTaskProgress — write progress to frontmatter
+ *                                 └── PMA agent writes progress_stage, progress_message
+ *                                 └── watchTask detects change → sends agent_progress WS event
  */
 
 import fs from "fs"
@@ -40,7 +43,24 @@ const taskCache = new Map<string, { taskId: string; taskFilePath: string }>()
 // key = taskId — ensures at most one watcher per task
 const activeWatchers = new Map<string, () => void>()
 
+// ── Last Known Progress ───────────────────────────────────────
+// key = taskId — tracks last progress_stage + progress_message to avoid duplicate events
+interface LastProgress {
+  stage?: string
+  message?: string
+}
+const lastProgressMap = new Map<string, LastProgress>()
+
 // ── Public Types ──────────────────────────────────────────────
+
+export type AgentProgressStage =
+  | 'thinking'
+  | 'tool_call'
+  | 'tool_result'
+  | 'executing'
+  | 'reviewing'
+  | 'complete'
+  | 'error'
 
 export interface CreateTaskParams {
   intent: string
@@ -48,6 +68,8 @@ export interface CreateTaskParams {
   context: Record<string, unknown>
   sessionId: string
   complexity?: "tiny" | "standard" | "complex"
+  initialStage?: AgentProgressStage
+  initialMessage?: string
 }
 
 export interface TaskStatus {
@@ -61,6 +83,9 @@ export interface TaskStatus {
   updatedAt?: string
   hasEvidence?: boolean
   evidenceSummary?: string
+  progressStage?: string
+  progressMessage?: string
+  progressPct?: number
   [key: string]: unknown
 }
 
@@ -74,6 +99,7 @@ export interface NomadworksBridge {
   readTaskStatus(taskId: string): Promise<TaskStatus | null>
   watchTask(taskId: string, send: (msg: string) => void): () => void
   listTasks(sessionId?: string): Promise<TaskStatus[]>
+  updateTaskProgress(taskId: string, stage: AgentProgressStage, message: string, pct?: number): void
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -124,7 +150,7 @@ function parseTaskFile(content: string, taskId: string): TaskStatus | null {
  * Idempotent: same intent+sessionId returns existing result.
  */
 async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult> {
-  const { intent, agentType, context, sessionId, complexity = "standard" } = params
+  const { intent, agentType, context, sessionId, complexity = "standard", initialStage, initialMessage } = params
 
   // Check idempotency cache first
   const cacheKey = `${sessionId}::${intent}`
@@ -157,6 +183,7 @@ async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResul
     `status: created`,
     `createdAt: ${timestamp}`,
     `updatedAt: ${timestamp}`,
+    ...(initialStage ? [`progress_stage: ${initialStage}`, `progress_message: ${initialMessage || ""}`, `progress_pct: 0`] : []),
     "---",
     "",
     `# ${intent.slice(0, 80)}`,
@@ -337,6 +364,68 @@ async function streamCausalUpdate(
 }
 
 /**
+ * Update the progress fields in a task file's YAML frontmatter.
+ * This is called by the PMA agent as it progresses through task stages.
+ * The watchTask handler detects the change and streams an agent_progress event.
+ */
+function updateTaskProgress(
+  taskId: string,
+  stage: AgentProgressStage,
+  message: string,
+  pct?: number,
+): void {
+  const candidates = [
+    path.join(TODO_DIR, `${taskId}.md`),
+    path.join(TASKS_ROOT, "done", `${taskId}.md`),
+  ]
+
+  let filePath: string | null = null
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      filePath = p
+      break
+    }
+  }
+
+  if (!filePath) {
+    console.warn(`[nomadworks-bridge] Cannot update progress for ${taskId}: file not found`)
+    return
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, "utf-8")
+    const match = content.match(/^---\n([\s\S]*?)\n---/)
+
+    if (!match) {
+      console.warn(`[nomadworks-bridge] Cannot parse frontmatter for ${taskId}`)
+      return
+    }
+
+    const frontmatter = YAML.parse(match[1])
+    if (!frontmatter || typeof frontmatter !== "object") return
+
+    frontmatter.progress_stage = stage
+    frontmatter.progress_message = message
+    frontmatter.progress_pct = pct ?? frontmatter.progress_pct ?? 0
+    frontmatter.updatedAt = new Date().toISOString()
+
+    // Rebuild the file with updated frontmatter
+    const newFrontmatter = YAML.stringify(frontmatter, {
+      lineWidth: 0,
+      indent: 2,
+    })
+
+    const bodyAfterFrontmatter = content.slice(match[0].length)
+    const newContent = `---\n${newFrontmatter}---${bodyAfterFrontmatter}`
+    fs.writeFileSync(filePath, newContent, "utf-8")
+
+    console.log(`[nomadworks-bridge] Progress update for ${taskId}: ${stage} — ${message}`)
+  } catch (err) {
+    console.error(`[nomadworks-bridge] Failed to update progress for ${taskId}:`, err)
+  }
+}
+
+/**
  * Watch a task file for status changes and stream updates via WS.
  * Returns an unsubscribe function for cleanup.
  */
@@ -385,6 +474,52 @@ function watchTask(
             ...status,
           }),
         )
+
+        // ── Agent Progress Detection ─────────────────────────
+        // If the frontmatter contains progress_stage and it differs from
+        // the last known progress, emit an agent_progress WS event.
+        const currentStage = status.progressStage
+        const currentMessage = status.progressMessage
+        const lastKnown = lastProgressMap.get(taskId)
+
+        if (currentStage && (
+          currentStage !== lastKnown?.stage ||
+          currentMessage !== lastKnown?.message
+        )) {
+          lastProgressMap.set(taskId, {
+            stage: currentStage,
+            message: currentMessage,
+          })
+
+          const stepId = `${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+          const rawSessionId = (status.sessionId as string) || ""
+          const rawAgentType = (status as any).agentType as string | undefined
+          const agentType = rawSessionId.startsWith("ses_")
+            ? rawAgentType || "developer"
+            : "developer"
+
+          send(
+            JSON.stringify({
+              type: "agent_progress",
+              taskId,
+              agentType,
+              sessionId: status.sessionId || "",
+              stepId,
+              stage: currentStage,
+              content: currentMessage || "",
+              pct: status.progressPct,
+              timestamp: new Date().toISOString(),
+            }),
+          )
+
+          // When progress is "complete", stream final summary
+          if (currentStage === "complete") {
+            // Fire and forget — evidence collection + causal streaming is async best-effort
+            collectEvidence(taskId, status.sessionId as string || "", send).catch(() => {})
+            streamCausalUpdate(taskId, status.sessionId as string || "", send).catch(() => {})
+          }
+        }
+        // ── End Agent Progress Detection ─────────────────────
 
         // When a task completes or fails, collect evidence, stream causal update, and auto-unwatch
         if (status.status === "completed" || status.status === "failed") {
@@ -483,4 +618,5 @@ export const bridge: NomadworksBridge = {
   readTaskStatus,
   watchTask,
   listTasks,
+  updateTaskProgress,
 }
