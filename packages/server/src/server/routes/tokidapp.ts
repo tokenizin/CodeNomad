@@ -37,7 +37,7 @@ import {
   getTokidappSocket,
   tokidappSessionId,
   type WsSocketRef,
-} from "./ws-socket-registry"
+} from "../ws-socket-registry"
 import {
   investigateCodebase,
   generateFeature,
