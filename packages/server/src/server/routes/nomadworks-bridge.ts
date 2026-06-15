@@ -30,6 +30,7 @@ const TASKS_ROOT = path.join(REPO_ROOT, "tasks")
 const TODO_DIR = path.join(TASKS_ROOT, "todo")
 const CURRENT_FILE = path.join(TASKS_ROOT, "current.md")
 const BRIDGE_SECTION = "## Bridge-Initiated Tasks"
+const EVIDENCES_ROOT = path.join(REPO_ROOT, "evidences")
 
 // ── Idempotency Cache ─────────────────────────────────────────
 // key = `${sessionId}::${intent}` — avoids duplicate task files
@@ -235,6 +236,103 @@ async function readTaskStatus(taskId: string): Promise<TaskStatus | null> {
 }
 
 /**
+ * Collect evidence from the evidence directory for a completed/failed task.
+ */
+async function collectEvidence(
+  taskId: string,
+  sessionId: string,
+  send: (msg: string) => void,
+): Promise<void> {
+  const evidenceDir = path.join(EVIDENCES_ROOT, taskId)
+  const summaryPath = path.join(evidenceDir, "SUMMARY.md")
+
+  if (!fs.existsSync(summaryPath)) {
+    console.warn(`[nomadworks-bridge] No evidence found for ${taskId} at ${summaryPath}`)
+    return
+  }
+
+  try {
+    const summaryContent = fs.readFileSync(summaryPath, "utf-8")
+    const hasLogs = fs.existsSync(path.join(evidenceDir, "logs"))
+    const hasScreenshots = fs.existsSync(path.join(evidenceDir, "screenshots"))
+
+    send(
+      JSON.stringify({
+        type: "nomadworks_evidence",
+        taskId,
+        evidenceSummary: summaryContent,
+        evidencePath: summaryPath,
+        hasLogs,
+        hasScreenshots,
+      }),
+    )
+
+    console.log(`[nomadworks-bridge] Evidence sent for ${taskId}`)
+  } catch (err) {
+    console.error(`[nomadworks-bridge] Failed to read evidence for ${taskId}:`, err)
+  }
+}
+
+/**
+ * Create a causal graph update from a task's status and its dependencies.
+ */
+async function streamCausalUpdate(
+  taskId: string,
+  sessionId: string,
+  send: (msg: string) => void,
+): Promise<void> {
+  const filePath = path.join(TODO_DIR, `${taskId}.md`)
+
+  if (!fs.existsSync(filePath)) {
+    console.warn(`[nomadworks-bridge] Cannot stream causal update for ${taskId}: file not found`)
+    return
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, "utf-8")
+    const status = parseTaskFile(content, taskId)
+    if (!status) {
+      console.warn(`[nomadworks-bridge] Cannot parse task file for ${taskId}`)
+      return
+    }
+
+    const node = {
+      id: `nomadworks-${taskId}`,
+      nodeType: "Evidence" as const,
+      label: status.title || taskId,
+      description: `Status: ${status.status}`,
+      status: status.status,
+      sourceStepId: sessionId,
+    }
+
+    const edges: Array<{ sourceId: string; targetId: string; label: string; description?: string }> = []
+    const dependsOn = (status as any).dependsOn as string[] | undefined
+    if (Array.isArray(dependsOn)) {
+      for (const dep of dependsOn) {
+        edges.push({
+          sourceId: dep,
+          targetId: `nomadworks-${taskId}`,
+          label: "REQUIRES",
+          description: `${taskId} depends on ${dep}`,
+        })
+      }
+    }
+
+    send(
+      JSON.stringify({
+        type: "nomadworks_causal_update",
+        causalNodes: [node],
+        causalEdges: edges,
+      }),
+    )
+
+    console.log(`[nomadworks-bridge] Causal update sent for ${taskId}`)
+  } catch (err) {
+    console.error(`[nomadworks-bridge] Failed to stream causal update for ${taskId}:`, err)
+  }
+}
+
+/**
  * Watch a task file for status changes and stream updates via WS.
  * Returns an unsubscribe function for cleanup.
  */
@@ -283,6 +381,13 @@ function watchTask(
             ...status,
           }),
         )
+
+        // When a task completes or fails, collect evidence and stream causal update
+        if (status.status === "completed" || status.status === "failed") {
+          // Fire and forget — evidence collection + causal streaming is async best-effort
+          collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
+          streamCausalUpdate(taskId, status.sourceStepId as string || "", send).catch(() => {})
+        }
       }
     } catch {
       // Ignore transient errors during rapid writes
