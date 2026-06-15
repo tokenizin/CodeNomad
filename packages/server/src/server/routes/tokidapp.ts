@@ -157,10 +157,16 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
   voiceSockets.set(sessionId, socketRef)
   const orchestratorSessions = new Map<string, string>()
+  const taskWatchers = new Map<string, () => void>()
 
   const cleanup = () => {
     voiceSockets.delete(sessionId)
     orchestratorSessions.delete(sessionId)
+    // Clean up all nomadworks task watchers for this session
+    for (const [, unwatch] of taskWatchers) {
+      unwatch()
+    }
+    taskWatchers.clear()
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
   }
@@ -324,6 +330,10 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
             })
             socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
+
+            // Start watching for task status changes and stream updates back to client
+            const unwatch = bridge.watchTask(result.taskId, (outgoing) => socketRef.send(outgoing))
+            taskWatchers.set(result.taskId, unwatch)
           } catch (err) {
             socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
           }
@@ -1141,10 +1151,16 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   }
 
   const orchestratorSessions = new Map<string, string>()
+  const taskWatchers = new Map<string, () => void>()
 
   const cleanup = () => {
     unregisterTokidappSocket(sessionId)
     orchestratorSessions.delete(sessionId)
+    // Clean up all nomadworks task watchers for this session
+    for (const [, unwatch] of taskWatchers) {
+      unwatch()
+    }
+    taskWatchers.clear()
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
   }
@@ -1290,6 +1306,10 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
                 })
                 socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
+
+                // Start watching for task status changes and stream updates back to client
+                const unwatch = bridge.watchTask(result.taskId, (outgoing) => socketRef.send(outgoing))
+                taskWatchers.set(result.taskId, unwatch)
               } catch (err) {
                 socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
               }

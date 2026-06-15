@@ -616,7 +616,7 @@ async function executeTool(
           sessionId,
         })
 
-        // Also try to notify the tokidapp WS so the Evidence tab updates
+        // Also try to notify the tokidapp WS so the Evidence tab gets live updates
         try {
           const userId = sessionId ? sessionId.replace(/^voice_/, "") : null
           if (userId) {
@@ -631,6 +631,9 @@ async function executeTool(
                 agentType,
                 complexity,
               }))
+              // Start watching for task completion so the Evidence Browser gets
+              // live causal + evidence updates when the PMA finishes processing
+              bridge.watchTask(result.taskId, (msg) => socket.send(msg))
             }
           }
         } catch {

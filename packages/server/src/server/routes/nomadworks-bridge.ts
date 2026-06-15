@@ -382,11 +382,13 @@ function watchTask(
           }),
         )
 
-        // When a task completes or fails, collect evidence and stream causal update
+        // When a task completes or fails, collect evidence, stream causal update, and auto-unwatch
         if (status.status === "completed" || status.status === "failed") {
           // Fire and forget — evidence collection + causal streaming is async best-effort
           collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
           streamCausalUpdate(taskId, status.sourceStepId as string || "", send).catch(() => {})
+          // Auto-cleanup: remove the fs.watch so it doesn't leak
+          unsubscribe()
         }
       }
     } catch {
