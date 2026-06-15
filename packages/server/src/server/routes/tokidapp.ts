@@ -66,6 +66,7 @@ import {
   listSecurityScans,
   listSolidityContracts,
 } from "../../plugins/tokidapp/concierge/security-tools"
+import { bridge } from "./nomadworks-bridge"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -174,7 +175,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       const msg = JSON.parse(trimmed)
 
       if (msg.type === "ping") {
-        socketRef.send(JSON.stringify({ type: "pong" }))
+        socketRef.send(JSON.stringify({ type: "pong", ts: Date.now() }))
         return
       }
 
@@ -311,6 +312,41 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         })()
         return
       }
+
+      if (msg.type === "nomadworks_invoke") {
+        ;(async () => {
+          try {
+            const result = await bridge.createTaskFile({
+              intent: msg.intent || "",
+              agentType: msg.agentType || "developer",
+              context: (msg.context as Record<string, unknown>) || {},
+              sessionId,
+              complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
+            })
+            socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
+          } catch (err) {
+            socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
+          }
+        })()
+        return
+      }
+
+      if (msg.type === "nomadworks_status") {
+        ;(async () => {
+          try {
+            const status = await bridge.readTaskStatus(msg.taskId as string)
+            if (status) {
+              socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...status }))
+            } else {
+              socketRef.send(JSON.stringify({ type: "error", content: `Task ${msg.taskId} not found` }))
+            }
+          } catch (err) {
+            socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_status failed: ${(err as Error).message}` }))
+          }
+        })()
+        return
+      }
+
     } catch {
       // Ignore malformed JSON
     }
@@ -1123,7 +1159,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
       const msg = JSON.parse(trimmed)
 
           if (msg.type === "ping") {
-            socketRef.send(JSON.stringify({ type: "pong" }))
+            socketRef.send(JSON.stringify({ type: "pong", ts: Date.now() }))
             return
           }
 
@@ -1242,6 +1278,41 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             })()
             return
           }
+
+          if (msg.type === "nomadworks_invoke") {
+            ;(async () => {
+              try {
+                const result = await bridge.createTaskFile({
+                  intent: msg.intent || "",
+                  agentType: msg.agentType || "developer",
+                  context: (msg.context as Record<string, unknown>) || {},
+                  sessionId,
+                  complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
+                })
+                socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
+              } catch (err) {
+                socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
+              }
+            })()
+            return
+          }
+
+          if (msg.type === "nomadworks_status") {
+            ;(async () => {
+              try {
+                const status = await bridge.readTaskStatus(msg.taskId as string)
+                if (status) {
+                  socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...status }))
+                } else {
+                  socketRef.send(JSON.stringify({ type: "error", content: `Task ${msg.taskId} not found` }))
+                }
+              } catch (err) {
+                socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_status failed: ${(err as Error).message}` }))
+              }
+            })()
+            return
+          }
+
         } catch {
           // Ignore malformed JSON
         }
