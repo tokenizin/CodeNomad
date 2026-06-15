@@ -73,7 +73,7 @@ export interface NomadworksBridge {
   createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult>
   readTaskStatus(taskId: string): Promise<TaskStatus | null>
   watchTask(taskId: string, send: (msg: string) => void): () => void
-  listTasks(): Promise<TaskStatus[]>
+  listTasks(sessionId?: string): Promise<TaskStatus[]>
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -146,10 +146,11 @@ async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResul
       ? contextEntries.map(([key, val], i) => `- AC-${i + 1}: ${key}: ${String(val)}`)
       : ["- AC-1: Implement the requested functionality"]
 
-  // Build the task file content
+    // Build the task file content
   const taskContent = [
     "---",
     `task_id: ${taskId}`,
+    `sessionId: ${sessionId}`,
     `complexity: ${complexity}`,
     "track: implementation",
     "slice: core",
@@ -417,7 +418,7 @@ function watchTask(
  * Scans tasks/todo/ and tasks/done/ directories for .md files with
  * YAML frontmatter, and checks whether evidence exists for each task.
  */
-async function listTasks(): Promise<TaskStatus[]> {
+async function listTasks(sessionId?: string): Promise<TaskStatus[]> {
   const results: TaskStatus[] = []
   const seen = new Set<string>()
 
@@ -439,6 +440,9 @@ async function listTasks(): Promise<TaskStatus[]> {
         const status = parseTaskFile(content, entry.name.replace(".md", ""))
 
         if (status && status.taskId && !seen.has(status.taskId)) {
+          // When sessionId is provided, only include tasks whose frontmatter sessionId matches
+          if (sessionId && status.sessionId !== sessionId) continue
+
           seen.add(status.taskId)
 
           // Check for evidence directory

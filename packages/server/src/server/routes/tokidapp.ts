@@ -420,7 +420,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       if (msg.type === "nomadworks_list") {
         ;(async () => {
           try {
-            const tasks = await bridge.listTasks()
+            const sessionId = msg.sessionId as string | undefined
+            const tasks = await bridge.listTasks(sessionId)
             socketRef.send(JSON.stringify({
               type: "nomadworks_list",
               tasks,
@@ -1426,7 +1427,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "nomadworks_list") {
             ;(async () => {
               try {
-                const tasks = await bridge.listTasks()
+                const sessionId = msg.sessionId as string | undefined
+                const tasks = await bridge.listTasks(sessionId)
                 socketRef.send(JSON.stringify({
                   type: "nomadworks_list",
                   tasks,
