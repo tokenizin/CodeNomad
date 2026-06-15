@@ -72,6 +72,51 @@ const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://shapiro-vip.vercel.app"
 
+/** WS registry keys (tokidapp_*, voice_*) — not StarWorld TokiDAPPSession ids. */
+function isWsTransportSessionKey(id: string): boolean {
+  return id.startsWith("tokidapp_") || id.startsWith("voice_")
+}
+
+function resolveStarworldSessionId(boundDbSessionId: string | null): string | null {
+  if (!boundDbSessionId || isWsTransportSessionKey(boundDbSessionId)) return null
+  return boundDbSessionId
+}
+
+async function lookupOrchestratorIdForDbSession(dbSessionId: string): Promise<string | null> {
+  try {
+    const res = await apiGet(`/api/tokidapp/orchestrator?sessionId=${encodeURIComponent(dbSessionId)}`)
+    if (!res.ok) return null
+    const sessions = await res.json()
+    return Array.isArray(sessions) && sessions.length > 0 ? (sessions[0] as { id: string }).id : null
+  } catch {
+    return null
+  }
+}
+
+async function sendOrchestratorStateForSession(
+  wsSessionId: string,
+  dbSessionId: string | null,
+  orchestratorSessions: Map<string, string>,
+  socketRef: { send: (msg: string) => void },
+): Promise<void> {
+  let orchestratorId = orchestratorSessions.get(wsSessionId) ?? null
+  if (!orchestratorId) {
+    const starworldSessionId = resolveStarworldSessionId(dbSessionId)
+    if (starworldSessionId) {
+      orchestratorId = await lookupOrchestratorIdForDbSession(starworldSessionId)
+      if (orchestratorId) orchestratorSessions.set(wsSessionId, orchestratorId)
+    }
+  }
+  if (!orchestratorId) return
+  try {
+    const res = await apiGet(`/api/tokidapp/orchestrator/${orchestratorId}`)
+    if (res.ok) {
+      const data = await res.json()
+      socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
+    }
+  } catch { /* ignore */ }
+}
+
 // Cache for workflow definitions fetched from StarGuard
 let workflowDefinitionsCache: any = null
 let workflowCacheTime = 0
@@ -158,6 +203,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
   voiceSockets.set(sessionId, socketRef)
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
+  let dbSessionId: string | null = null
 
   const cleanup = () => {
     voiceSockets.delete(sessionId)
@@ -249,6 +295,20 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
       // ── Voice Socket Message Router ─────────────────────────
 
+      if (msg.type === "session_bind" && msg.sessionId) {
+        const candidate = String(msg.sessionId).trim()
+        if (!candidate || isWsTransportSessionKey(candidate)) {
+          socketRef.send(JSON.stringify({
+            type: "error",
+            content: "session_bind requires StarWorld DB sessionId",
+          }))
+          return
+        }
+        dbSessionId = candidate
+        socketRef.send(JSON.stringify({ type: "session_bound", sessionId: candidate }))
+        return
+      }
+
       if (msg.type === "message" && msg.content) {
         routeMessage(
           msg.content as string,
@@ -262,6 +322,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       if (msg.type === "orchestrate" && msg.intent) {
         handleOrchestrateMessage(
           sessionId,
+          dbSessionId,
           msg.intent as string,
           (msg.context as Record<string, unknown>) || {},
           socketRef,
@@ -295,16 +356,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
       if (msg.type === "dag_query") {
         ;(async () => {
-          const orchId = orchestratorSessions.get(sessionId)
-          if (orchId) {
-            try {
-              const res = await apiGet(`/api/tokidapp/orchestrator/${orchId}`)
-              if (res.ok) {
-                const data = await res.json()
-                socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
-              }
-            } catch { /* ignore */ }
-          }
+          await sendOrchestratorStateForSession(sessionId, dbSessionId, orchestratorSessions, socketRef)
         })()
         return
       }
@@ -322,11 +374,19 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       if (msg.type === "nomadworks_invoke") {
         ;(async () => {
           try {
+            const starworldSessionId = resolveStarworldSessionId(dbSessionId)
+            if (!starworldSessionId) {
+              socketRef.send(JSON.stringify({
+                type: "error",
+                content: "StarWorld session not bound. Reconnect TokiDAPP from StarGuard.",
+              }))
+              return
+            }
             const result = await bridge.createTaskFile({
               intent: msg.intent || "",
               agentType: msg.agentType || "developer",
               context: (msg.context as Record<string, unknown>) || {},
-              sessionId,
+              sessionId: starworldSessionId,
               complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
             })
             socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
@@ -1167,6 +1227,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
+  let dbSessionId: string | null = null
 
   const cleanup = () => {
     unregisterTokidappSocket(sessionId)
@@ -1234,9 +1295,24 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             return
           }
 
+          if (msg.type === "session_bind" && msg.sessionId) {
+            const candidate = String(msg.sessionId).trim()
+            if (!candidate || isWsTransportSessionKey(candidate)) {
+              socketRef.send(JSON.stringify({
+                type: "error",
+                content: "session_bind requires StarWorld DB sessionId",
+              }))
+              return
+            }
+            dbSessionId = candidate
+            socketRef.send(JSON.stringify({ type: "session_bound", sessionId: candidate }))
+            return
+          }
+
           if (msg.type === "orchestrate" && msg.intent) {
             handleOrchestrateMessage(
               sessionId,
+              dbSessionId,
               msg.intent as string,
               (msg.context as Record<string, unknown>) || {},
               socketRef,
@@ -1275,16 +1351,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "dag_query") {
             // Return current DAG state
             ;(async () => {
-              const orchestratorId = orchestratorSessions.get(sessionId)
-              if (orchestratorId) {
-                try {
-                  const res = await apiGet(`/api/tokidapp/orchestrator/${orchestratorId}`)
-                  if (res.ok) {
-                    const data = await res.json()
-                    socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
-                  }
-                } catch { /* ignore */ }
-              }
+              await sendOrchestratorStateForSession(sessionId, dbSessionId, orchestratorSessions, socketRef)
             })()
             return
           }
@@ -1313,11 +1380,19 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "nomadworks_invoke") {
             ;(async () => {
               try {
+                const starworldSessionId = resolveStarworldSessionId(dbSessionId)
+                if (!starworldSessionId) {
+                  socketRef.send(JSON.stringify({
+                    type: "error",
+                    content: "StarWorld session not bound. Reconnect TokiDAPP from StarGuard.",
+                  }))
+                  return
+                }
                 const result = await bridge.createTaskFile({
                   intent: msg.intent || "",
                   agentType: msg.agentType || "developer",
                   context: (msg.context as Record<string, unknown>) || {},
-                  sessionId,
+                  sessionId: starworldSessionId,
                   complexity: msg.complexity as "tiny" | "standard" | "complex" | undefined,
                 })
                 socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
@@ -1375,14 +1450,24 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 // ── Orchestrate Message Handler ──────────────────────────────
 
 async function handleOrchestrateMessage(
-  sessionId: string,
+  wsSessionId: string,
+  dbSessionId: string | null,
   intent: string,
   context: Record<string, unknown>,
   socketRef: { send: (msg: string) => void },
   orchestratorSessions: Map<string, string>,
 ): Promise<void> {
   try {
-    const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode: REALTIME_ENABLED })
+    const starworldSessionId = resolveStarworldSessionId(dbSessionId)
+    if (!starworldSessionId) {
+      socketRef.send(JSON.stringify({
+        type: "error",
+        content: "StarWorld session not bound. Reconnect TokiDAPP from StarGuard.",
+      }))
+      return
+    }
+
+    const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId: starworldSessionId, voiceMode: REALTIME_ENABLED })
 
     if (!orchRes.ok) {
       socketRef.send(JSON.stringify({ type: "error", content: "Failed to create orchestrator session" }))
@@ -1391,7 +1476,7 @@ async function handleOrchestrateMessage(
 
     const orchestrator = await orchRes.json()
     const orchestratorId = orchestrator.id
-    orchestratorSessions.set(sessionId, orchestratorId)
+    orchestratorSessions.set(wsSessionId, orchestratorId)
 
     socketRef.send(JSON.stringify({ type: "orchestrator_state", orchestratorId, status: "created", voiceMode: REALTIME_ENABLED }))
 
