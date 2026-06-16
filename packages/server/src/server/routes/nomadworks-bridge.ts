@@ -383,7 +383,11 @@ export async function invokePmaNode(params: {
         resolve({ taskId, evidence: status })
       } else if (status.status === 'failed') {
         unwatch()
-        reject(new Error(status.errorMessage || 'Task failed'))
+        const errorMessage =
+          typeof status.errorMessage === "string" && status.errorMessage.trim().length > 0
+            ? status.errorMessage
+            : "Task failed"
+        reject(new Error(errorMessage))
       }
     })
   })
