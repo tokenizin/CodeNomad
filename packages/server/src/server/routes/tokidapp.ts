@@ -67,6 +67,7 @@ import {
   listSolidityContracts,
 } from "../../plugins/tokidapp/concierge/security-tools"
 import { bridge } from "./nomadworks-bridge"
+import { processExecution } from "../../plugins/tokidapp/workflow-executor"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -1496,6 +1497,24 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_list failed: ${(err as Error).message}` }))
               }
             })()
+            return
+          }
+
+          if (msg.type === "start_execution") {
+            const executionId = msg.executionId as string
+            if (!executionId) {
+              socketRef.send(JSON.stringify({ type: "error", content: "executionId is required" }))
+              return
+            }
+            // Fire-and-forget — engine streams status via 'send'
+            processExecution(executionId, (data: string) => {
+              socketRef.send(data)
+            }).catch((err) => {
+              socketRef.send(JSON.stringify({
+                type: "error",
+                content: `Execution failed: ${err instanceof Error ? err.message : String(err)}`,
+              }))
+            })
             return
           }
 

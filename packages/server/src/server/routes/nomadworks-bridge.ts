@@ -24,6 +24,7 @@ import fs from "fs"
 import path from "path"
 import crypto from "crypto"
 import YAML from "yaml"
+import { apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -70,6 +71,10 @@ export interface CreateTaskParams {
   complexity?: "tiny" | "standard" | "complex"
   initialStage?: AgentProgressStage
   initialMessage?: string
+  /** Extra YAML frontmatter fields to embed (e.g. executionNodeId, executionId) */
+  extraFrontmatter?: Record<string, string>
+  /** Override the idempotency cache key. Use `${executionId}::${nodeId}` for execution nodes. */
+  cacheKeyOverride?: string
 }
 
 export interface TaskStatus {
@@ -97,7 +102,7 @@ export interface CreateTaskResult {
 export interface NomadworksBridge {
   createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult>
   readTaskStatus(taskId: string): Promise<TaskStatus | null>
-  watchTask(taskId: string, send: (msg: string) => void): () => void
+  watchTask(taskId: string, send: (msg: string) => void, onStatus?: (status: TaskStatus) => void): () => void
   listTasks(sessionId?: string): Promise<TaskStatus[]>
   updateTaskProgress(taskId: string, stage: AgentProgressStage, message: string, pct?: number): void
 }
@@ -150,10 +155,10 @@ function parseTaskFile(content: string, taskId: string): TaskStatus | null {
  * Idempotent: same intent+sessionId returns existing result.
  */
 async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult> {
-  const { intent, agentType, context, sessionId, complexity = "standard", initialStage, initialMessage } = params
+  const { intent, agentType, context, sessionId, complexity = "standard", initialStage, initialMessage, extraFrontmatter, cacheKeyOverride } = params
 
   // Check idempotency cache first
-  const cacheKey = `${sessionId}::${intent}`
+  const cacheKey = cacheKeyOverride || `${sessionId}::${intent}`
   const cached = taskCache.get(cacheKey)
   if (cached) return cached
 
@@ -184,6 +189,8 @@ async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResul
     `createdAt: ${timestamp}`,
     `updatedAt: ${timestamp}`,
     ...(initialStage ? [`progress_stage: ${initialStage}`, `progress_message: ${initialMessage || ""}`, `progress_pct: 0`] : []),
+    // Extra frontmatter from caller (e.g. executionNodeId, executionId)
+    ...(extraFrontmatter ? Object.entries(extraFrontmatter).map(([k, v]) => `${k}: ${String(v)}`) : []),
     "---",
     "",
     `# ${intent.slice(0, 80)}`,
@@ -298,10 +305,88 @@ async function collectEvidence(
       }),
     )
 
+    // Link evidence to execution node if this is an execution-scoped task
+    try {
+      const taskFilePath = path.join(TODO_DIR, `${taskId}.md`)
+      if (fs.existsSync(taskFilePath)) {
+        const frontmatterRaw = fs.readFileSync(taskFilePath, 'utf-8').match(/^---\n([\s\S]*?)\n---/)?.[1] || ''
+        const frontmatter = YAML.parse(frontmatterRaw) || {}
+        const executionNodeId = frontmatter.executionNodeId as string | undefined
+        const executionId = frontmatter.executionId as string | undefined
+        if (executionNodeId && executionId) {
+          const evidenceSummaryPath = path.join(EVIDENCES_ROOT, taskId, 'SUMMARY.md')
+          const hasSummary = fs.existsSync(evidenceSummaryPath)
+          await apiPut(`/api/tokidapp/executions/${executionId}/nodes/${executionNodeId}`, {
+            output: {
+              evidencePath: `evidences/${taskId}/SUMMARY.md`,
+              evidenceTaskId: taskId,
+              evidenceCount: (() => {
+                const logsDir = path.join(EVIDENCES_ROOT, taskId, 'logs')
+                const screenshotsDir = path.join(EVIDENCES_ROOT, taskId, 'screenshots')
+                let count = 0
+                if (fs.existsSync(logsDir)) count += fs.readdirSync(logsDir).length
+                if (fs.existsSync(screenshotsDir)) count += fs.readdirSync(screenshotsDir).length
+                return count
+              })(),
+              completedAt: new Date().toISOString(),
+              ...(hasSummary ? { summaryPath: evidenceSummaryPath } : {}),
+            },
+            status: 'COMPLETED',
+            completedAt: new Date().toISOString(),
+          })
+        }
+      }
+    } catch (err) {
+      // Non-critical — evidence is still collected, just the backlink failed
+      console.error('Failed to link evidence to execution node:', err)
+    }
+
     console.log(`[nomadworks-bridge] Evidence sent for ${taskId}`)
   } catch (err) {
     console.error(`[nomadworks-bridge] Failed to read evidence for ${taskId}:`, err)
   }
+}
+
+/**
+ * Invoke a PMA delegate node through the NomadWorks bridge.
+ * Creates a task file with execution context in frontmatter, watches for
+ * completion, and links evidence back to the execution node.
+ */
+export async function invokePmaNode(params: {
+  intent: string
+  agentType: string
+  executionNodeId: string
+  executionId: string
+  context?: Record<string, unknown>
+  send: (msg: string) => void
+}): Promise<{ taskId: string; evidence?: any }> {
+  const { intent, agentType, executionNodeId, executionId, context = {}, send } = params
+
+  // Create task file with execution context in frontmatter
+  const { taskId, taskFilePath } = await createTaskFile({
+    intent,
+    agentType,
+    sessionId: executionId, // Use executionId as sessionId for tracking
+    complexity: 'standard',
+    context,
+    cacheKeyOverride: `${executionId}::${executionNodeId}`,
+    extraFrontmatter: { executionNodeId, executionId },
+  })
+
+  // Watch for completion — return a promise
+  return new Promise((resolve, reject) => {
+    const unwatch = watchTask(taskId, send, (status: TaskStatus) => {
+      if (status.status === 'completed' || status.status === 'done') {
+        unwatch()
+        // Collect evidence and link to execution node
+        collectEvidence(taskId, executionId, send).catch(() => {})
+        resolve({ taskId, evidence: status })
+      } else if (status.status === 'failed') {
+        unwatch()
+        reject(new Error(status.errorMessage || 'Task failed'))
+      }
+    })
+  })
 }
 
 /**
@@ -432,6 +517,7 @@ function updateTaskProgress(
 function watchTask(
   taskId: string,
   send: (msg: string) => void,
+  onStatus?: (status: TaskStatus) => void,
 ): () => void {
   // If already watching, return existing unsubscribe
   const existing = activeWatchers.get(taskId)
@@ -474,6 +560,7 @@ function watchTask(
             ...status,
           }),
         )
+        if (onStatus) onStatus(status)
 
         // ── Agent Progress Detection ─────────────────────────
         // If the frontmatter contains progress_stage and it differs from
