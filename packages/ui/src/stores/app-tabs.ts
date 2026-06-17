@@ -38,12 +38,20 @@ function getPreferredTabId(): string | null {
     return getSidecarAppTabId(sidecarToken)
   }
 
+function getPreferredTabId(): string | null {
+  const sidecarToken = activeSidecarToken()
+  if (sidecarToken) {
+    return getSidecarAppTabId(sidecarToken)
+  }
+
   const instanceId = activeInstanceId()
   if (instanceId) {
     return getInstanceAppTabId(instanceId)
   }
 
-  return null
+  // Fallback: If no specific context is set, default to the root dashboard tab.
+  return getDashboardAppTabId()
+}
 }
 
 const [activeAppTabId, setActiveAppTabId] = createSignal<string | null>(null)
@@ -54,24 +62,34 @@ function rememberTabOrder(tabId: string) {
 }
 
 const appTabs = createMemo<AppTabRecord[]>(() => {
-  const currentTabs = [
+  // 1. Inject Dashboard as the first tab (highest priority)
+  /** @type {DashboardAppTabRecordExtension} */
+  const dashboardTab: &DashboardAppTabRecordExtension = {
+    id: getDashboardAppTabId(),
+    kind: "dashboard" as const,
+    componentPath: "/components/RootDashboard", // Placeholder path for the root dashboard component
+  };
+
+  // 2. Instance tabs follow standard construction
+  const instanceTabs: AppTabRecord[] = [
     ...Array.from(instances().values()).map((instance) => ({
       id: getInstanceAppTabId(instance.id),
       kind: "instance" as const,
       instance,
-    })),
+    }))
+  ]
+
+  // 3. Sidecar tabs remain the final group
+  const sidecarTabsList: AppTabRecord[] = [
     ...sidecarTabs().map((sidecarTab) => ({
       id: getSidecarAppTabId(sidecarTab.token),
       kind: "sidecar" as const,
       sidecarTab,
-    })),
+    }))
   ]
 
-  const tabsById = new Map(currentTabs.map((tab) => [tab.id, tab]))
-  const orderedIds = tabOrder().filter((tabId) => tabsById.has(tabId))
-  const missingIds = currentTabs.map((tab) => tab.id).filter((tabId) => !orderedIds.includes(tabId))
-
-  return [...orderedIds, ...missingIds].map((tabId) => tabsById.get(tabId)!).filter(Boolean)
+  // We maintain the logical order: Dashboard -> Instances -> Sidecars
+  return [dashboardTab, ...instanceTabs, ...sidecarTabsList]
 })
 
 const activeAppTab = createMemo(() => appTabs().find((tab) => tab.id === activeAppTabId()) ?? null)

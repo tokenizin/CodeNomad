@@ -141,6 +141,41 @@
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/upgrade_specialist.md}"
     },
+    "patternfly-ux-investigator": {
+      "description": "PatternFly UX Investigator — orchestrates UX SOP audits against PatternFly design system, dispatches 6 subagents across component compliance, a11y, cross-device, UX psychology, content design, and journey flow",
+      "mode": "primary",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-ux-investigator.md}"
+    },
+    "patternfly-component-auditor": {
+      "description": "PatternFly Component Auditor — audits UI implementations against PatternFly component standards: correct component choice, variants, states, modifiers, tokens, and deprecation awareness",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-component-auditor.md}"
+    },
+    "patternfly-a11y-auditor": {
+      "description": "PatternFly Accessibility Auditor — audits UI against WCAG 2.0 AA and PatternFly inclusive design standards: keyboard, focus, ARIA, contrast, screen readers, zoom, reduced motion",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-a11y-auditor.md}"
+    },
+    "patternfly-device-auditor": {
+      "description": "PatternFly Cross-Device Auditor — audits UI across viewports, input methods, themes, and display preferences: responsive breakpoints, touch, RTL, dark/high-contrast, print, zoom",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-device-auditor.md}"
+    },
+    "patternfly-psych-auditor": {
+      "description": "PatternFly UX Psychology Auditor — audits UI against cognitive psychology and UX principles: progressive disclosure, cognitive load, motion design, decision architecture, error prevention",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-psych-auditor.md}"
+    },
+    "patternfly-content-auditor": {
+      "description": "PatternFly Content Design Auditor — audits UI copy against PatternFly content standards: brand voice, error messages, tooltips, terminology, grammar, capitalization, localization readiness",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-content-auditor.md}"
+    },
+    "patternfly-journey-auditor": {
+      "description": "PatternFly Journey Flow Auditor — audits end-to-end user flows for coherence: goal achievement, step necessity, dead-ends, back nav, state preservation, permission gates, error recovery, timeout handling",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/patternfly-journey-auditor.md}"
+    },
     "codenomad_agent_runner": {
       "description": "CodeNomad codenomad agent runner",
       "mode": "primary",
@@ -150,6 +185,158 @@
       "description": "CodeNomad web developer",
       "mode": "primary",
       "prompt": "{file:agent/web_developer.md}"
+    },
+    "context-scout": {
+      "description": "Discovers all relevant context files for a given domain",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/contextscout.md}"
+    },
+    "external-scout": {
+      "description": "Fetches live documentation from external sources",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/externalscout.md}"
+    },
+    "task-manager": {
+      "description": "Breaks phases into atomic JSON subtasks with dependencies",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/task-manager.md}"
+    },
+    "coder-agent": {
+      "description": "Individual file implementation agent — precise, scoped code changes",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/coder-agent.md}"
+    },
+    "batch-executor": {
+      "description": "Manages 4+ parallel CoderAgents simultaneously",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/batch-executor.md}"
+    },
+    "build-agent": {
+      "description": "Runs type-check, lint, and production build on modified files",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/build-agent.md}"
+    },
+    "test-engineer": {
+      "description": "Writes new Vitest tests for components, hooks, and utilities",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/test-engineer.md}"
+    },
+    "code-reviewer": {
+      "description": "Reviews code against ALL project standards",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/reviewer.md}"
+    },
+    "frontend-specialist": {
+      "description": "Mobile UI/UX design review — Apple HIG + MD3 compliance, touch targets, dark mode",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/frontend-specialist.md}"
+    },
+    "devops-specialist": {
+      "description": "Vercel deployment compatibility review",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/devops-specialist.md}"
+    },
+    "doc-writer": {
+      "description": "Generates migration patterns docs, knowledge base entries, architecture guides",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/doc-writer.md}"
+    },
+    "animation-expert": {
+      "description": "framer-motion page transitions, gesture feedback, stagger list animations",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/animation-expert.md}"
+    },
+    "mobile-qa-auditor": {
+      "description": "Validates 48px touch targets, dead hover states, dark mode, mobile compliance",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/mobile-qa-auditor.md}"
+    },
+    "smart-account-wallet": {
+      "description": "Reown AppKit smart account wallet operations — sendCalls, EIP-5792, CAIP resolution",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/smart-account-wallet.md}"
+    },
+    "db-admin": {
+      "description": "Database operations — schema management, migrations, seeding, health checks",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/db-admin.md}"
+    },
+    "security-auditor": {
+      "description": "Read-only security audit agent for vulnerability scanning and code review",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/security-auditor.md}"
+    },
+    "blockchain-debug": {
+      "description": "Wallet connection, chain ID resolution, AppKit troubleshooting, wagmi debugging",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/blockchain-debug.md}"
+    },
+    "siwe-auth": {
+      "description": "SIWE authentication implementation, debugging, and modification with Reown AppKit",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/siwe-auth.md}"
+    },
+    "knowledge-sync": {
+      "description": "Synchronizes knowledge base artifacts across OpenCode, Cursor, and Claude ecosystems",
+      "mode": "subagent",
+      "prompt": "{file:../../.opencode/agents/knowledge-sync.md}"
+    },
+    "mobile-migration-commander": {
+      "description": "Orchestrator for mobile-first hub migration — coordinates parallel agent execution, enforces standards, validates deliverables",
+      "mode": "primary",
+      "color": "#6366f1",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/core/mobile-migration-commander.md}"
+    },
+    "hub-navigation": {
+      "description": "Hub navigation catalog — nav entries, DB overrides, AI code generation, translation sync",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/hub-navigation.md}"
+    },
+    "security-groups": {
+      "description": "Security group management for navigation permission gating and access enforcement",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/security-groups.md}"
+    },
+    "ptix": {
+      "description": "PTIX token system — smart contracts, bonding curve, commission exchange, claims",
+      "mode": "subagent",
+      "color": "#8b5cf6",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/ptix.md}"
+    },
+    "blog-fundraising-ds": {
+      "description": "Registers blog fundraising on Sepolia DynamicSplitter — payout wallet, split config, on-chain verify",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/blog-fundraising-ds.md}"
+    },
+    "partner-agreement": {
+      "description": "Partner agreement lifecycle — submission, review, EIP-191 signing, payment, revenue share",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/partner-agreement.md}"
+    },
+    "mobile-migration-animation": {
+      "description": "Animation & transition expert — framer-motion page transitions, gesture feedback, micro-interactions",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-animation.md}"
+    },
+    "mobile-migration-form-wizard": {
+      "description": "Form & wizard optimizer — multi-step to single-task-per-screen mobile flows",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-form-wizard.md}"
+    },
+    "mobile-migration-layout-nav": {
+      "description": "Mobile layout & navigation — desktop shells to BottomNavigation, SwipeableDrawers",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-layout-nav.md}"
+    },
+    "mobile-migration-qa-test": {
+      "description": "Mobile QA & test auditor — 48px touch targets, dead hover states, Playwright mobile emulation",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-qa-test.md}"
+    },
+    "mobile-migration-table-grid": {
+      "description": "Table & grid converter — data table rows to card stacks, multi-column to vertical stacks",
+      "mode": "subagent",
+      "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-table-grid.md}"
     }
   }
 }

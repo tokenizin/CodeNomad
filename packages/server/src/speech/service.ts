@@ -3,7 +3,8 @@ import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
-import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
+import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible";
+import { OllamaSpeechProvider } from "./providers/ollama-provider";
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
