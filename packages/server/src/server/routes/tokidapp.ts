@@ -266,6 +266,24 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         return
       }
 
+      if (msg.type === "voice_interrupt") {
+        // Barge-in: cancel the current assistant response so the user can
+        // interrupt mid-speech. Clear the audio buffer to discard any
+        // residual playback capture.
+        const sess = getRealtimeSession(sessionId)
+        if (sess && sess.responseInProgress) {
+          sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+          sess.responseInProgress = false
+          // Drain any queued responses
+          const next = sess.pendingResponseQueue.shift()
+          if (next) next()
+        }
+        clearAudioBuffer(sessionId)
+        console.log("[voice-ws] voice_interrupt — cancelled assistant response")
+        socketRef.send(JSON.stringify({ type: "voice_interrupted" }))
+        return
+      }
+
       if (msg.type === "voice_stop") {
         if (hasEnoughInputAudio(sessionId)) {
           commitAudioBuffer(sessionId)
@@ -1325,6 +1343,20 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             } else {
               socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
             }
+            return
+          }
+
+          if (msg.type === "voice_interrupt") {
+            // Barge-in: cancel the current assistant response
+            const sess = getRealtimeSession(sessionId)
+            if (sess && sess.responseInProgress) {
+              sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+              sess.responseInProgress = false
+              const next = sess.pendingResponseQueue.shift()
+              if (next) next()
+            }
+            clearAudioBuffer(sessionId)
+            socketRef.send(JSON.stringify({ type: "voice_interrupted" }))
             return
           }
 
