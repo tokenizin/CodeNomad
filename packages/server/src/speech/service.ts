@@ -57,7 +57,7 @@ export interface NormalizedSpeechSettings {
 const DEFAULT_PROVIDER = "openai-compatible"
 const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
 const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
-const DEFAULT_TTS_VOICE = "alloy"
+const DEFAULT_TTS_VOICE = "marin"
 const DEFAULT_TTS_FORMAT = "mp3"
 
 export class SpeechService {

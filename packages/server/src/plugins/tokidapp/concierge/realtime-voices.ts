@@ -16,7 +16,7 @@ export const REALTIME_VOICE_IDS = [
 export type RealtimeVoiceId = (typeof REALTIME_VOICE_IDS)[number]
 
 /**
- * Default voice resolved from OPENAI_REALTIME_VOICE env var, falling back to "alloy".
+ * Default voice resolved from OPENAI_REALTIME_VOICE env var, falling back to "marin".
  * Accepts any valid RealtimeVoiceId (case-insensitive).
  */
 function resolveDefaultVoice(): RealtimeVoiceId {
@@ -24,7 +24,7 @@ function resolveDefaultVoice(): RealtimeVoiceId {
   if (fromEnv && (REALTIME_VOICE_IDS as readonly string[]).includes(fromEnv)) {
     return fromEnv as RealtimeVoiceId
   }
-  return "alloy"
+  return "marin"
 }
 
 export const DEFAULT_REALTIME_VOICE: RealtimeVoiceId = resolveDefaultVoice()

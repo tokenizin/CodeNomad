@@ -43,7 +43,7 @@ const REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2"
 /** Reasoning effort: minimal, low, medium, high, xhigh. Default: low. */
 const REALTIME_REASONING_EFFORT =
-  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "medium"
+  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
 
 /** Only gpt-realtime-2 supports the reasoning parameter. */
 const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"

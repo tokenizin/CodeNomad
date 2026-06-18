@@ -165,7 +165,7 @@ const defaultSpeechSettings: SpeechSettings = {
   hasApiKey: false,
   sttModel: "gpt-4o-mini-transcribe",
   ttsModel: "gpt-4o-mini-tts",
-  ttsVoice: "alloy",
+  ttsVoice: "marin",
   playbackMode: "streaming",
   ttsFormat: "mp3",
 }
