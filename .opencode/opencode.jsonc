@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "ollama/gemma4:e4b",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
