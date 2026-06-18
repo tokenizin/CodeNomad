@@ -198,6 +198,32 @@ export function sanitizeSpeechText(text: string): string {
     const name = base.replace(/\.(tsx?|jsx?|sol|md|json)$/i, "").replace(/[-_]/g, " ")
     return ` ${name || "the file"} `
   })
+  // NOTE: restoreWordSpacing intentionally NOT applied here.
+  // sanitizeSpeechText is called on LLM text deltas and tool results,
+  // which already have proper spacing. restoreWordSpacing is only for
+  // ASR voice transcripts that arrive concatenated (e.g. "Thanksforthis").
+  // Voice transcripts go through sanitizeAsrText() instead.
+
+  return out.replace(/\s{2,}/g, " ").trim()
+}
+
+/**
+ * Sanitize ASR (Automatic Speech Recognition) voice transcripts.
+ * Includes word-spacing recovery for concatenated ASR output.
+ * Use this instead of sanitizeSpeechText for raw voice transcripts.
+ */
+export function sanitizeAsrText(text: string): string {
+  if (!text) return text
+  let out = text
+  for (const [key, label] of Object.entries(ENTITY_ALIASES)) {
+    out = out.replace(new RegExp(key, "gi"), label)
+  }
+  out = out.replace(URL_RE, "the link")
+  out = out.replace(ETH_ADDRESS_RE, "the contract")
+  out = out.replace(LONG_HEX_RE, "the identifier")
+  out = out.replace(UUID_RE, "the record")
+
+  // Restore word spacing for concatenated ASR output
   out = restoreWordSpacing(out)
 
   return out.replace(/\s{2,}/g, " ").trim()

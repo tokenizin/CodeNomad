@@ -1,6 +1,6 @@
 import WebSocket from "ws"
 import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
-import { sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import {
   investigateCodebase,
   generateFeature,
@@ -847,7 +847,7 @@ export function createRealtimeSession(
             parsed.item?.input_audio_transcription?.transcript ||
             ""
           if (transcript && onUserTranscript) {
-            onUserTranscript(sanitizeSpeechText(transcript))
+            onUserTranscript(sanitizeAsrText(transcript))
           }
           break
         }
