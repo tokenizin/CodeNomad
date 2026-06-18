@@ -3,7 +3,7 @@ import type { Provider } from "../types/session"
 import { serverApi } from "./api-client"
 
 export const LOCAL_LLM_PROVIDER_ID = "ollama"
-export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:e4b"
+export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:latest"
 
 export interface LocalLlmListedProvider {
   id: string
@@ -16,7 +16,7 @@ export interface OpenCodeOllamaProviderConfig {
   npm: string
   name: string
   options: { baseURL: string }
-  models: Record<string, { name: string; tool_call: boolean }>
+  models: Record<string, { id: string; name: string; tool_call: boolean }>
 }
 
 function toProvider(response: LocalLlmModelsResponse): Provider | null {
@@ -43,7 +43,10 @@ export function buildOpenCodeOllamaProviderConfig(response: LocalLlmModelsRespon
     name: response.providerName || "Ollama (local)",
     options: { baseURL: `${host}/v1` },
     models: Object.fromEntries(
-      response.models.map((model) => [model.id, { name: model.name, tool_call: true }]),
+      response.models.map((model) => [
+        model.id,
+        { id: model.id, name: model.name, tool_call: true },
+      ]),
     ),
   }
 }
