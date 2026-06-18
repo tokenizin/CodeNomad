@@ -179,7 +179,11 @@ const FILE_PATH_RE =
 const ENTITY_ALIASES: Record<string, string> = {
   "0xef89dc4e687d5ffa44bf3ed537cb37f1619756c1": "Dynamic Splitter",
   "0xc71829068aaff3c75c1c23a89c741570b51f839c": "Star Bridge",
-  "0x87387dd7c75bd129d8898f050924118004dbdcdf": "STARX token",
+  "0x87387dd7c75bd129d8898f050924118004dbdcdf": "STARX token (old)",
+  "0x3ea0eae1fe4029714e9e3ec834299078445aa391": "STARX token",
+  starguard: "StarWORLD",
+  codenomad: "CodeNomad",
+  tokidapp: "TokiDAPP",
 }
 
 export function sanitizeSpeechText(text: string): string {
