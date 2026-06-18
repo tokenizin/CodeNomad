@@ -85,7 +85,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const forwardedFor = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
     const visitorIp = forwardedFor || request.socket.remoteAddress
     if (!isLoopbackAddress(visitorIp)) {
-      const starguardBase = (process.env.STARGUARD_PUBLIC_URL ?? "https://shapiro-vip.vercel.app").replace(/\/$/, "")
+      const starguardBase = (process.env.STARGUARD_PUBLIC_URL ?? "https://star-worlds.vercel.app").replace(/\/$/, "")
       reply.redirect(`${starguardBase}/?codenomad=signin`)
       return
     }

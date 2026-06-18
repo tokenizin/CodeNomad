@@ -1,4 +1,4 @@
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || 'https://shapiro-vip.vercel.app'
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || 'https://star-worlds.vercel.app'
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY
 
 /** Default timeout for outbound fetch calls to StarGuard (ms). */
