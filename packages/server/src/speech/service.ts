@@ -3,8 +3,7 @@ import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
-import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible";
-import { OllamaSpeechProvider } from "./providers/ollama-provider";
+import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -60,6 +59,7 @@ const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
 const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 const DEFAULT_TTS_VOICE = "alloy"
 const DEFAULT_TTS_FORMAT = "mp3"
+
 export class SpeechService {
   constructor(
     private readonly settings: SettingsService,

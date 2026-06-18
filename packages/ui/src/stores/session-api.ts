@@ -47,6 +47,13 @@ import {
   setSessionSearchResults,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
+import {
+  buildOpenCodeOllamaProviderConfig,
+  fetchLocalLlmModelsResponse,
+  fetchLocalLlmProvider,
+  LOCAL_LLM_PROVIDER_ID,
+  mergeLocalLlmProviders,
+} from "../lib/local-llm-providers"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
@@ -778,6 +785,51 @@ async function fetchAgents(instanceId: string): Promise<void> {
   }
 }
 
+async function syncOpenCodeLocalOllamaProvider(instanceId: string): Promise<void> {
+  const localResponse = await fetchLocalLlmModelsResponse()
+  if (!localResponse?.available || localResponse.models.length === 0) {
+    return
+  }
+
+  const rootClient = getRootClient(instanceId)
+  const configResult = await requestData<any>((rootClient as any).config.get(), "config.get").catch(() => null)
+  if (!configResult) {
+    return
+  }
+
+  const currentProviders = (configResult.provider ?? {}) as Record<string, unknown>
+  const nextOllama = buildOpenCodeOllamaProviderConfig(localResponse)
+  const existingOllama = currentProviders[LOCAL_LLM_PROVIDER_ID] as { models?: Record<string, unknown> } | undefined
+  const existingModelIds = Object.keys(existingOllama?.models ?? {}).sort().join("|")
+  const nextModelIds = localResponse.models
+    .map((model) => model.id)
+    .sort()
+    .join("|")
+
+  if (existingOllama && existingModelIds === nextModelIds) {
+    return
+  }
+
+  log.info("Syncing local Ollama models into OpenCode config", {
+    instanceId,
+    models: localResponse.models.map((model) => model.id),
+  })
+
+  await requestData(
+    (rootClient as any).config.update({
+      body: {
+        provider: {
+          ...currentProviders,
+          [LOCAL_LLM_PROVIDER_ID]: nextOllama,
+        },
+      },
+    }),
+    "config.update",
+  )
+
+  await (rootClient as any).global.dispose().catch(() => undefined)
+}
+
 async function fetchProviders(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -791,6 +843,8 @@ async function fetchProviders(instanceId: string): Promise<void> {
   const rootClient = getRootClient(instanceId)
 
   try {
+    await syncOpenCodeLocalOllamaProvider(instanceId)
+
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
     const response = await rootClient.config.providers()
     if (!response.data) return
@@ -809,9 +863,12 @@ async function fetchProviders(instanceId: string): Promise<void> {
       })),
     }))
 
+    const localProvider = await fetchLocalLlmProvider()
+    const mergedProviders = mergeLocalLlmProviders(providerList, localProvider)
+
     setProviders((prev) => {
       const next = new Map(prev)
-      next.set(instanceId, providerList)
+      next.set(instanceId, mergedProviders)
       return next
     })
     completeInstanceResourceFetch(instanceId, "providers")

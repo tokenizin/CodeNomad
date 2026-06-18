@@ -361,6 +361,20 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
+export interface LocalLlmModelDescriptor {
+  id: string
+  name: string
+}
+
+export interface LocalLlmModelsResponse {
+  available: boolean
+  providerId: string
+  providerName: string
+  defaultModelId: string
+  models: LocalLlmModelDescriptor[]
+  host: string
+}
+
 export interface VoiceModeStateResponse {
   enabled: boolean
 }

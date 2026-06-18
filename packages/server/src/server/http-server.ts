@@ -25,6 +25,7 @@ import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
+import { registerLocalLlmRoutes } from "./routes/local-llm"
 import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes } from "./routes/tokidapp"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
@@ -317,6 +318,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerRemoteServerRoutes(app, { logger: apiLogger })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
+  registerLocalLlmRoutes(app)
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })

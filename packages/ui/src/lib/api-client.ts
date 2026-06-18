@@ -11,6 +11,7 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  LocalLlmModelsResponse,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
@@ -441,6 +442,9 @@ export const serverApi = {
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+  },
+  fetchLocalLlmModels(): Promise<LocalLlmModelsResponse> {
+    return request<LocalLlmModelsResponse>("/api/local-llm/models")
   },
   transcribeAudio(payload: {
     audioBase64: string

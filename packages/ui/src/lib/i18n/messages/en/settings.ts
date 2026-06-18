@@ -174,6 +174,7 @@ export const settingsMessages = {
   "settings.providers.method.oauth": "OAuth",
   "settings.providers.method.mixed": "API key and OAuth",
   "settings.providers.method.fallback": "API key",
+  "settings.providers.method.local": "Local (no API key)",
   "settings.providers.status.available": "Available",
   "settings.providers.auth.title": "Connect {provider}",
   "settings.providers.auth.subtitle": "Authentication is saved inside the active OpenCode server.",

@@ -1,7 +1,14 @@
 import { agents, providers } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
 
+export const LOCAL_LLM_PROVIDER_ID = "ollama"
+export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:e4b"
+
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
+
+function isLocalLlmProvider(providerId: string): boolean {
+  return providerId === LOCAL_LLM_PROVIDER_ID
+}
 
 function isModelValid(
   instanceId: string,
@@ -78,4 +85,4 @@ async function getDefaultModel(
   return { providerId: "", modelId: "" }
 }
 
-export { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, getRecentModelPreferenceForInstance, isModelValid }
+export { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, getRecentModelPreferenceForInstance, isLocalLlmProvider, isModelValid }

@@ -5,6 +5,33 @@
     "agent/codenomad_agent_runner.md"
   ],
   "plugin": [],
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "gemma4:e4b": {
+          "name": "Gemma 4 e4b (local)",
+          "tools": true
+        },
+        "gemma3:1b": {
+          "name": "Gemma 3 1b (local)",
+          "tools": true
+        },
+        "gpt-oss:20b": {
+          "name": "GPT OSS 20b (local)",
+          "tools": true
+        },
+        "gpt-oss:120b": {
+          "name": "GPT OSS 120b (local)",
+          "tools": true
+        }
+      }
+    }
+  },
   "agent": {
     "opencoder": {
       "description": "Orchestration agent for complex coding, architecture, and multi-file refactoring with approval gates",

@@ -16,6 +16,7 @@ import {
   type ProviderAuthMethod,
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
+import { fetchLocalLlmListedProvider, LOCAL_LLM_PROVIDER_ID, mergeLocalLlmListedProviders } from "../../lib/local-llm-providers"
 import { fetchProviders } from "../../stores/sessions"
 
 type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "success" | "error"
@@ -94,14 +95,17 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const ids = new Set<string>()
     for (const provider of availableProviders()) ids.add(provider.id)
     for (const id of Object.keys(methodsByProvider())) ids.add(id)
+    for (const id of configuredProviderIds()) ids.add(id)
     return Array.from(ids)
       .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
       .map((id) => {
         const listed = availableProviders().find((provider) => provider.id === id)
+        const configProvider = (configData().provider ?? {})[id] as { name?: string; models?: Record<string, unknown> } | undefined
+        const configModelCount = configProvider?.models ? Object.keys(configProvider.models).length : 0
         return {
           id,
-          name: providerNameById().get(id) ?? id,
-          modelCount: listed?.modelCount ?? 0,
+          name: listed?.name ?? (typeof configProvider?.name === "string" ? configProvider.name : providerNameById().get(id) ?? id),
+          modelCount: listed?.modelCount ?? configModelCount,
           connectionSummary: methodSummary(id),
         }
       })
@@ -244,10 +248,11 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoading(true)
     setLoadError(null)
     try {
-      const [providerListResponse, authResponse, configResponse] = await Promise.all([
+      const [providerListResponse, authResponse, configResponse, localLlmListed] = await Promise.all([
         (authClient as any).provider.list(),
         (authClient as any).provider.auth(),
         (authClient as any).config.get(),
+        fetchLocalLlmListedProvider(),
       ])
       const nextConfigData = (configResponse?.data ?? {}) as Record<string, any>
       const nextConfiguredIds = new Set(Object.keys((nextConfigData.provider ?? {}) as Record<string, unknown>))
@@ -260,7 +265,30 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
             ? provider.source
             : "unknown",
       })).filter((provider) => provider.id.length > 0)
-      setAvailableProviders(listed)
+
+      const configProviders = Object.entries((nextConfigData.provider ?? {}) as Record<string, unknown>).map(([id, value]) => {
+        const provider = (value ?? {}) as { name?: string; models?: Record<string, unknown> }
+        return {
+          id,
+          name: typeof provider.name === "string" && provider.name.trim() ? provider.name : id,
+          modelCount: provider.models ? Object.keys(provider.models).length : 0,
+          source: "config" as const,
+        }
+      })
+
+      let mergedListed = [...listed]
+      for (const configProvider of configProviders) {
+        if (!mergedListed.some((provider) => provider.id === configProvider.id)) {
+          mergedListed.push(configProvider)
+        }
+      }
+
+      mergedListed = mergeLocalLlmListedProviders(mergedListed, localLlmListed)
+      if (localLlmListed) {
+        nextConfiguredIds.add(localLlmListed.id)
+      }
+
+      setAvailableProviders(mergedListed)
       setConnectedProviderIds(new Set((providerListResponse?.data?.connected ?? []) as string[]))
       setConfiguredProviderIds(nextConfiguredIds)
       setConfigData(nextConfigData)
@@ -300,6 +328,12 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     await (authClient as any).global.dispose().catch(() => undefined)
     await fetchProviders(props.instanceId).catch(() => undefined)
     await loadProviderData(authClient).catch(() => undefined)
+  }
+
+  async function handleRefresh() {
+    const authClient = client()
+    if (!authClient) return
+    await refreshAfterAuth(authClient)
   }
 
   async function submitApiAuth(providerId: string, authClient: OpencodeClient) {
@@ -410,7 +444,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         }
         await requestData(
           (authClient as any).config.update({
-            config: {
+            body: {
               ...configData(),
               disabled_providers: disabledProviders,
             },
@@ -437,6 +471,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   function methodSummary(providerId: string) {
+    if (providerId === LOCAL_LLM_PROVIDER_ID && configuredProviderIds().has(LOCAL_LLM_PROVIDER_ID)) {
+      return t("settings.providers.method.local")
+    }
     const methods = methodsByProvider()[providerId]
     if (!methods || methods.length === 0) return t("settings.providers.method.fallback")
     const kinds = new Set(methods.map((method) => method.type))
@@ -517,7 +554,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
                   {t("settings.providers.actions.connect")}
                 </button>
-                <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => client() && void loadProviderData(client()!)}>
+                <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => void handleRefresh()}>
                   <RefreshCw class={loading() ? "providers-spin-icon" : "providers-button-icon"} />
                   {t("settings.providers.refresh")}
                 </button>

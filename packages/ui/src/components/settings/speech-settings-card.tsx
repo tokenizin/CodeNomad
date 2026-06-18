@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, type Component } from "solid-js"
 import { Loader2, Mic, Square, Volume2 } from "lucide-solid"
-import { useConfig, type SpeechSettings } from "../../stores/preferences"
+import { useConfig, type SpeechProviderPreference, type SpeechSettings } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
 import { getLogger } from "../../lib/logger"
