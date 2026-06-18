@@ -820,7 +820,7 @@ async function syncOpenCodeLocalOllamaProvider(instanceId: string): Promise<void
     // read-only provider metadata from models.dev and can trigger 400 on PATCH.
     await requestData(
       (rootClient as any).config.update({
-        body: {
+        config: {
           provider: {
             [LOCAL_LLM_PROVIDER_ID]: nextOllama,
           },
