@@ -45,6 +45,14 @@ import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
+import {
+  instanceProxyAllowsBody,
+  resolveInstanceProxyBody,
+  resolveInstanceProxyContentType,
+} from "./instance-proxy-body"
+
+// reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
+const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
 
 interface HttpServerDeps {
   bindHost: string
@@ -210,7 +218,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     undici: false as any,
     http: {
       requestOptions: {
-        timeout: 0,
+        timeout: INSTANCE_PROXY_HTTP_TIMEOUT_MS,
       },
     },
   })
@@ -545,7 +553,10 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
 function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
-    instance.addContentTypeParser("*", (req, body, done) => done(null, body))
+    // Buffer the payload so reply-from gets bytes, not a stream that may arrive empty.
+    instance.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
+      done(null, body)
+    })
 
     const proxyBaseHandler = async (
       request: FastifyRequest<{ Params: { id: string } }>,
@@ -672,10 +683,20 @@ async function proxyWorkspaceRequest(args: {
 
   logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
   if (logger.isLevelEnabled("trace")) {
-    logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
+    logger.trace({ workspaceId, targetUrl, body: bodyToJson(request.body) }, "Instance proxy payload")
   }
 
+  const forwardBody = instanceProxyAllowsBody(request.method) ? resolveInstanceProxyBody(request) : undefined
+  const forwardContentType =
+    forwardBody !== undefined ? resolveInstanceProxyContentType(request) ?? "application/octet-stream" : undefined
+
   return reply.from(targetUrl, {
+    ...(forwardBody !== undefined
+      ? {
+          body: forwardBody,
+          contentType: forwardContentType,
+        }
+      : {}),
     rewriteRequestHeaders: (_originalRequest, headers) => {
       if (instanceAuthHeader) {
         headers.authorization = instanceAuthHeader
