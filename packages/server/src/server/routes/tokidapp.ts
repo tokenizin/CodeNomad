@@ -177,7 +177,9 @@ async function startVoiceRealtimeSession(
       notifyReady,
       (transcript) =>
         socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
-      undefined,
+      // onResponseDone — tell the client to commit streaming text to a chat message
+      // when the assistant finishes speaking, so transcripts appear in real-time.
+      () => socketRef.send(JSON.stringify({ type: "voice_stream_complete" })),
       voice,
       userId,
       digest || undefined,
