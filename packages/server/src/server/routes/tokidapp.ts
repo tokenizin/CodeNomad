@@ -1319,7 +1319,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   }))
 
   if (REALTIME_ENABLED) {
-    const greetingText = "Hello, I am your StarCARD orchestrator. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
+    const greetingText = "Hello, I am your Star World Assistant. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
     socketRef.send(JSON.stringify({
       type: "stream",
       delta: greetingText,
