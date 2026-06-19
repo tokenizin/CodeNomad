@@ -850,7 +850,7 @@ export function createRealtimeSession(
                 content: [
                   {
                     type: "input_text",
-                    text: "You are TokiDAPP, the intelligent StarWORLD concierge. Your role is to assist with the StarWORLD ecosystem — contracts, tokens (STARX, StarXP), venues, bridges, treasury, membership, and development. Greet the user warmly, introduce yourself as TokiDAPP, and ask what they'd like help with today. Keep it to 2-3 concise sentences. Do NOT call any tools — this is just a greeting.",
+                    text: "You are Star World Assistant, the intelligent StarWORLD concierge. Your role is to assist with the StarWORLD ecosystem — contracts, tokens (STARX, StarXP), venues, bridges, treasury, membership, and development. Greet the user warmly, introduce yourself as Star World Assistant, and ask what they'd like help with today. Keep it to 2-3 concise sentences. Do NOT call any tools — this is just a greeting. Never read URLs, file paths, wallet addresses, or UUIDs aloud — instead say the destination name and that a link is provided.",
                   },
                 ],
               },

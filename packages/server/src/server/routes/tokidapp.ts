@@ -753,12 +753,13 @@ async function routeMessage(
               {
                 role: "system",
                 content:
-                  `You are the TokiDAPP concierge for the StarWORLD ecosystem. ` +
-                  `You help users with codebase tasks: investigating code, generating features, running tests, ` +
-                  `checking git status, deploying to Vercel, spawning agents, scheduling tasks, and scanning contracts. ` +
-                  `If the user's request matches one of these capabilities, route them to the appropriate tool. ` +
-                  `If they ask a general question, answer concisely from your knowledge. ` +
-                  `Keep responses under 200 words. Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud.`,
+`You are the Star World Assistant concierge for the StarWORLD ecosystem. ` +
+`You help users with codebase tasks: investigating code, generating features, running tests, ` +
+`checking git status, deploying to Vercel, spawning agents, scheduling tasks, and scanning contracts. ` +
+`If the user's request matches one of these capabilities, route them to the appropriate tool. ` +
+`If they ask a general question, answer concisely from your knowledge. ` +
+`Keep responses under 200 words. Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud. ` +
+`When mentioning a link, do not read the full URL — say the destination name and that a link is provided.`,
               },
               { role: "user", content },
             ],
@@ -1314,7 +1315,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     type: "orchestrator_greeting",
     sessionId,
     voiceMode: REALTIME_ENABLED,
-    content: "TokiDAPP Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
+    content: "Star World Assistant Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
   }))
 
   if (REALTIME_ENABLED) {
