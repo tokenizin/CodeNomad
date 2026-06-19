@@ -2,7 +2,7 @@ import { agents, providers } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
 
 export const LOCAL_LLM_PROVIDER_ID = "ollama"
-export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:e4b"
+export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:latest"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 

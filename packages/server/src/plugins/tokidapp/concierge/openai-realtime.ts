@@ -44,7 +44,7 @@ const REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2"
 /** Reasoning effort: minimal, low, medium, high, xhigh. Default: low. */
 const REALTIME_REASONING_EFFORT =
-  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "medium"
+  process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
 
 /** Only gpt-realtime-2 supports the reasoning parameter. */
 const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
@@ -831,13 +831,18 @@ export function createRealtimeSession(
         // Text deltas (GA event names + legacy fallbacks)
         case "response.output_text.delta":
         case "response.text.delta":
-          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
+          if (parsed.delta) onTextDelta(parsed.delta)
           break
 
         // Audio transcript deltas (GA event names + legacy fallbacks)
+        //
+        // CRITICAL: With output_modalities: ["audio"] the model generates only
+        // audio, NOT text. The "audio_transcript" is an ASR transcription of
+        // the generated speech. Send raw deltas — the client runs restoreWordSpacing
+        // once when the full utterance is committed to chat.
         case "response.output_audio_transcript.delta":
         case "response.audio_transcript.delta":
-          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
+          if (parsed.delta) onTextDelta(parsed.delta)
           break
 
         // User transcription (GA event names + legacy fallbacks)

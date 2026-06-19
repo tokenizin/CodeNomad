@@ -815,19 +815,27 @@ async function syncOpenCodeLocalOllamaProvider(instanceId: string): Promise<void
     models: localResponse.models.map((model) => model.id),
   })
 
-  await requestData(
-    (rootClient as any).config.update({
-      body: {
-        provider: {
-          ...currentProviders,
-          [LOCAL_LLM_PROVIDER_ID]: nextOllama,
+  try {
+    // Patch only the Ollama provider — spreading config.get().provider replays
+    // read-only provider metadata from models.dev and can trigger 400 on PATCH.
+    await requestData(
+      (rootClient as any).config.update({
+        config: {
+          provider: {
+            [LOCAL_LLM_PROVIDER_ID]: nextOllama,
+          },
         },
-      },
-    }),
-    "config.update",
-  )
+      }),
+      "config.update",
+    )
 
-  await (rootClient as any).global.dispose().catch(() => undefined)
+    await (rootClient as any).global.dispose().catch(() => undefined)
+  } catch (error) {
+    log.warn("Failed to sync local Ollama models into OpenCode config", {
+      instanceId,
+      error,
+    })
+  }
 }
 
 async function fetchProviders(instanceId: string): Promise<void> {
