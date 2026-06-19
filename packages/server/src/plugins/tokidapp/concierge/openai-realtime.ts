@@ -25,6 +25,7 @@ import {
   queryKnowledgeBase,
   getArchitectureDigest,
   getSepoliaDeployments,
+  visionAnalyze,
 } from "./codebase-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
@@ -316,6 +317,19 @@ const tools = [
   },
   {
     type: "function",
+    name: "vision_analyze",
+    description: "Analyze an image using AI vision. Use this when the user uploads an image (screenshot, diagram, photo, logo) and asks about its contents. Pass the image URL from the file attachment.",
+    parameters: {
+      type: "object",
+      properties: {
+        imageUrl: { type: "string", description: "URL of the image to analyze (from the file attachment)" },
+        prompt: { type: "string", description: "Optional specific question about the image. Default: general description." },
+      },
+      required: ["imageUrl"],
+    },
+  },
+  {
+    type: "function",
     name: "run_lint",
     description: "Run the project linter and return error/warning counts with the last 30 lines of output.",
     parameters: {
@@ -477,6 +491,11 @@ async function executeTool(
       case "read_file": {
         const { filePath } = JSON.parse(argsStr)
         return await readFileContent(filePath, config.workspaceRoot)
+      }
+
+      case "vision_analyze": {
+        const { imageUrl, prompt } = JSON.parse(argsStr)
+        return await visionAnalyze(imageUrl, prompt)
       }
 
       case "run_lint": {

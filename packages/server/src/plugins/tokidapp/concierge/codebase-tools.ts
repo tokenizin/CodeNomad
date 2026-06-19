@@ -924,6 +924,55 @@ export async function gitBranchAction(
   }
 }
 
+// ── Vision (Image Analysis) ─────────────────────────────────────
+
+/** Analyze an image using OpenAI gpt-4o vision. Accepts a direct URL
+ *  (Vercel Blob URL or any public image URL). Returns a text description
+ *  of what's in the image — usable by the concierge to answer questions
+ *  about user-uploaded screenshots, diagrams, logos, etc. */
+export async function visionAnalyze(imageUrl: string, prompt?: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return "Vision analysis requires OPENAI_API_KEY."
+
+  const userPrompt = prompt?.trim()
+    ? prompt
+    : "Describe this image in detail. What do you see? Include colors, objects, text, layout, and any notable elements."
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+            ],
+          },
+        ],
+        max_tokens: 1024,
+      }),
+    })
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "")
+      return `Vision API error (${res.status}): ${errBody.slice(0, 200)}`
+    }
+
+    const data = await res.json()
+    const content: string = data?.choices?.[0]?.message?.content || "(no description generated)"
+    return content.slice(0, 4000)
+  } catch (err) {
+    return `Vision analysis failed: ${(err as Error).message}`
+  }
+}
+
 // ── Sepolia Deployments ──────────────────────────────────────────
 
 /** Return known Sepolia testnet contract addresses for the StarCARD ecosystem. */
