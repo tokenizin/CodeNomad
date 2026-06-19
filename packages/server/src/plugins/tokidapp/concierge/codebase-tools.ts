@@ -973,6 +973,73 @@ export async function visionAnalyze(imageUrl: string, prompt?: string): Promise<
   }
 }
 
+// ── Mermaid Diagram Generation ───────────────────────────────────
+
+/** Generate Mermaid diagram source code from a text description.
+ *  Uses gpt-4o-mini to produce valid Mermaid syntax. The caller can
+ *  render the returned source on the client using the Mermaid library.
+ *  Returns the Mermaid code block (without markdown fences). */
+export async function generateMermaidDiagram(
+  description: string,
+  diagramType?: string,
+): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return "Mermaid generation requires OPENAI_API_KEY."
+
+  const typeHint = diagramType?.trim()
+    ? ` Use diagram type: ${diagramType}.`
+    : " Choose the most appropriate diagram type (flowchart, sequence, class, state, gantt, pie, gitgraph, erDiagram, quadrantChart, timeline, etc.)."
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a Mermaid diagram expert. Generate valid Mermaid.js source code based on the user's description. " +
+              "Follow these rules strictly:\n" +
+              "1. Output ONLY the Mermaid source code — no explanations, no markdown fences (no ```), no extra text.\n" +
+              "2. Use correct Mermaid syntax for the chosen diagram type.\n" +
+              "3. Keep node labels short and meaningful.\n" +
+              "4. For flowcharts, use graph TD or graph LR.\n" +
+              "5. For sequence diagrams, use sequenceDiagram with proper participant/actor syntax.\n" +
+              "6. For class diagrams, use classDiagram with proper class/relationship syntax.\n" +
+              "7. Do NOT use any stylings that require Mermaid configuration directives unless essential.\n" +
+              "8. If the description is ambiguous, choose the best diagram type and make reasonable assumptions.",
+          },
+          {
+            role: "user",
+            content: `Generate a Mermaid diagram for: ${description}.${typeHint}`,
+          },
+        ],
+        max_tokens: 1024,
+        temperature: 0.3,
+      }),
+    })
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "")
+      return `Mermaid generation error (${res.status}): ${errBody.slice(0, 200)}`
+    }
+
+    const data = await res.json()
+    const content: string = data?.choices?.[0]?.message?.content || ""
+    // Strip any markdown fences the model might add despite instructions
+    const cleaned = content.replace(/^```(?:mermaid)?\s*\n?/gm, "").replace(/```\s*$/gm, "").trim()
+    if (!cleaned) return "(no diagram generated)"
+    return cleaned
+  } catch (err) {
+    return `Mermaid generation failed: ${(err as Error).message}`
+  }
+}
+
 // ── Sepolia Deployments ──────────────────────────────────────────
 
 /** Return known Sepolia testnet contract addresses for the StarCARD ecosystem. */

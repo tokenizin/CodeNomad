@@ -26,6 +26,7 @@ import {
   getArchitectureDigest,
   getSepoliaDeployments,
   visionAnalyze,
+  generateMermaidDiagram,
 } from "./codebase-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
@@ -319,7 +320,7 @@ const tools = [
   {
     type: "function",
     name: "vision_analyze",
-    description: "Analyze an image using AI vision. Use this when the user uploads an image (screenshot, diagram, photo, logo) and asks about its contents. Pass the image URL from the file attachment.",
+    description: "Analyze an image using AI vision. Call this proactively when you detect that the user has attached an image (the file context will include images with 'Use vision_analyze to inspect'). Also use when the user asks about image contents. Pass the image URL from the file attachment.",
     parameters: {
       type: "object",
       properties: {
@@ -386,6 +387,19 @@ const tools = [
         complexity: { type: "string", description: "Task complexity: tiny for small fixes, standard for bounded work, complex for multi-step", enum: ["tiny", "standard", "complex"] },
       },
       required: ["intent"],
+    },
+  },
+  {
+    type: "function",
+    name: "generate_diagram",
+    description: "Generate a Mermaid diagram from a text description. Use this when the user asks you to create a diagram, chart, flowchart, sequence diagram, architecture diagram, or any visual representation. Returns Mermaid source code that can be rendered client-side.",
+    parameters: {
+      type: "object",
+      properties: {
+        description: { type: "string", description: "What diagram to generate — describe the nodes, relationships, flow, or structure" },
+        diagramType: { type: "string", description: "Optional Mermaid diagram type hint: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, gitgraph, quadrantChart, timeline, etc." },
+      },
+      required: ["description"],
     },
   },
 ]
@@ -497,6 +511,11 @@ async function executeTool(
       case "vision_analyze": {
         const { imageUrl, prompt } = JSON.parse(argsStr)
         return await visionAnalyze(imageUrl, prompt)
+      }
+
+      case "generate_diagram": {
+        const { description, diagramType } = JSON.parse(argsStr)
+        return await generateMermaidDiagram(description, diagramType)
       }
 
       case "run_lint": {

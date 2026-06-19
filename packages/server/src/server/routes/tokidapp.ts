@@ -59,6 +59,7 @@ import {
   runLint,
   runTypeCheck,
   gitBranchAction,
+  visionAnalyze,
 } from "../../plugins/tokidapp/concierge/codebase-tools"
 import {
   scanContract,
@@ -122,6 +123,51 @@ async function sendOrchestratorStateForSession(
 let workflowDefinitionsCache: any = null
 let workflowCacheTime = 0
 const WORKFLOW_CACHE_TTL = 300_000 // 5 minutes
+
+/**
+ * Parse a file-attachment context message for image proxy URLs and auto-analyze
+ * them via vision API. Returns the enriched content with vision analysis prepended,
+ * or the original content if no images are found.
+ *
+ * The file context message format (from TokiDAPPChatPanel.tsx) is:
+ *   [File attachment: image.png (/api/.../proxy?blobUrl=...) — image. ...]
+ */
+async function enrichAttachmentWithVision(content: string): Promise<string> {
+  if (!content.startsWith("[File attachment:")) return content
+
+  // Extract proxy URLs for images: "(url) — image"
+  const imageRegex = /\((\/api\/tokidapp\/files\/proxy\?blobUrl=[^)]+)\)\s*—\s*image/gi
+  const urls: string[] = []
+  let match: RegExpExecArray | null
+  while ((match = imageRegex.exec(content)) !== null) {
+    urls.push(match[1])
+  }
+
+  if (urls.length === 0) return content
+
+  // Limit to first 3 images to keep latency reasonable
+  const imagesToAnalyze = urls.slice(0, 3)
+  const results: string[] = []
+
+  for (let i = 0; i < imagesToAnalyze.length; i++) {
+    const relativeUrl = imagesToAnalyze[i]
+    // Resolve against StarGuard base so OpenAI can fetch the image
+    const fullUrl = `${STARGUARD_BASE.replace(/\/+$/, "")}${relativeUrl}`
+    try {
+      const analysis = await visionAnalyze(
+        fullUrl,
+        "Describe this image briefly. What kind of content is it? If it contains text, read it. If it's a diagram or chart, explain its structure.",
+      )
+      results.push(`[Image ${i + 1}: ${analysis}]`)
+    } catch (err) {
+      results.push(`[Image ${i + 1}: (vision analysis unavailable)]`)
+    }
+  }
+
+  // Prepend analysis, keep original attachment info for context
+  const visionBlock = `Auto-vision analysis of attached image(s):\n${results.join("\n\n")}`
+  return `${visionBlock}\n\n${content}`
+}
 
 const tokidappWss = new WebSocketServer({ noServer: true })
 
@@ -220,7 +266,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     endVoiceSession(sessionId)
   }
 
-  ws.on("message", (data, isBinary) => {
+  ws.on("message", async (data, isBinary) => {
     if (isBinary) return
     const raw = typeof data === "string" ? data : data.toString("utf8")
     const trimmed = raw.trim()
@@ -331,6 +377,11 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "message" && msg.content) {
+        // Auto-analyze image attachments via vision API and enrich the context.
+        // This runs asynchronously — the Realtime session content is enriched
+        // before injection so the AI can "see" images without the user asking.
+        const enrichedContent = await enrichAttachmentWithVision(msg.content)
+
         // Inject the text into the OpenAI Realtime session so the voice AI
         // can see what the user typed (e.g. file attachments, follow-ups).
         const rtSession = getRealtimeSession(sessionId)
@@ -340,7 +391,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             item: {
               type: "message",
               role: "user",
-              content: [{ type: "input_text", text: msg.content }],
+              content: [{ type: "input_text", text: enrichedContent }],
             },
           }))
           // Trigger a response so the AI processes the text and responds
@@ -355,7 +406,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           }
         }
         routeMessage(
-          msg.content as string,
+          enrichedContent,
           (outgoing) => socketRef.send(outgoing),
           msg.workflowSlug as string | undefined,
           msg.workflowStep as number | undefined,
@@ -1344,7 +1395,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     endVoiceSession(sessionId)
   }
 
-  ws.on("message", (data, isBinary) => {
+  ws.on("message", async (data, isBinary) => {
     if (isBinary) return
     const raw = typeof data === "string" ? data : data.toString("utf8")
     const trimmed = raw.trim()
@@ -1474,8 +1525,9 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "message" && msg.content) {
+            const enrichedContent = await enrichAttachmentWithVision(msg.content)
             routeMessage(
-              msg.content,
+              enrichedContent,
               (outgoing) => socketRef.send(outgoing),
               msg.workflowSlug,
               msg.workflowStep,
