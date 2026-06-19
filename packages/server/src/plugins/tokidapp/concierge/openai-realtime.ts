@@ -51,14 +51,15 @@ const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
 
-/** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.9.
- *  The 0.9 threshold is intentionally high to reject low-level playback echo
- *  and background noise while still catching clear speech near the mic. */
+/** VAD activation threshold (0.0–1.0). Higher = less sensitive. Default: 0.7.
+ *  Lowered from 0.9 to catch natural speech more reliably. If background
+ *  noise or playback echo triggers false VAD activations, raise back up
+ *  via OPENAI_REALTIME_VAD_THRESHOLD env var. */
 const REALTIME_VAD_THRESHOLD = (() => {
   const raw = process.env.OPENAI_REALTIME_VAD_THRESHOLD?.trim()
-  if (!raw) return 0.9
+  if (!raw) return 0.7
   const val = parseFloat(raw)
-  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.9
+  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : 0.7
 })()
 /** Audio captured before speech onset in ms. Default: 500.
  *  Increased from 300ms to capture first syllables that were being clipped
