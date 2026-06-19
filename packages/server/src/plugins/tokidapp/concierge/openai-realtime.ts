@@ -838,6 +838,27 @@ export function createRealtimeSession(
           console.log("[openai-realtime] OpenAI session ready event:", parsed.type, "for session:", sessionId)
           // Keep onReady persistent — fires on every session-ready event (initial + voice change)
           session.onReady?.()
+
+          // On initial session creation, inject a warm greeting so the assistant
+          // introduces itself before VAD starts listening for user speech.
+          if (parsed.type === "session.created") {
+            const greeting: any = {
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "system",
+                content: [
+                  {
+                    type: "input_text",
+                    text: "You are TokiDAPP, the intelligent StarWORLD concierge. Your role is to assist with the StarWORLD ecosystem — contracts, tokens (STARX, StarXP), venues, bridges, treasury, membership, and development. Greet the user warmly, introduce yourself as TokiDAPP, and ask what they'd like help with today. Keep it to 2-3 concise sentences. Do NOT call any tools — this is just a greeting.",
+                  },
+                ],
+              },
+            }
+            ws.send(JSON.stringify(greeting))
+            ws.send(JSON.stringify({ type: "response.create" }))
+            session.responseInProgress = true
+          }
           break
 
         // Audio deltas (GA event names + legacy fallbacks)
