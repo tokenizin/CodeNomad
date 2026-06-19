@@ -329,6 +329,29 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "message" && msg.content) {
+        // Inject the text into the OpenAI Realtime session so the voice AI
+        // can see what the user typed (e.g. file attachments, follow-ups).
+        const rtSession = getRealtimeSession(sessionId)
+        if (rtSession?.connected) {
+          rtSession.ws.send(JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: msg.content }],
+            },
+          }))
+          // Trigger a response so the AI processes the text and responds
+          if (!rtSession.responseInProgress) {
+            rtSession.responseInProgress = true
+            rtSession.ws.send(JSON.stringify({ type: "response.create" }))
+          } else {
+            rtSession.pendingResponseQueue.push(() => {
+              rtSession.responseInProgress = true
+              rtSession.ws.send(JSON.stringify({ type: "response.create" }))
+            })
+          }
+        }
         routeMessage(
           msg.content as string,
           (outgoing) => socketRef.send(outgoing),
