@@ -830,19 +830,18 @@ export function createRealtimeSession(
         // Text deltas (GA event names + legacy fallbacks)
         case "response.output_text.delta":
         case "response.text.delta":
-          if (parsed.delta) onTextDelta(sanitizeSpeechText(parsed.delta))
+          if (parsed.delta) onTextDelta(parsed.delta)
           break
 
         // Audio transcript deltas (GA event names + legacy fallbacks)
         //
         // CRITICAL: With output_modalities: ["audio"] the model generates only
         // audio, NOT text. The "audio_transcript" is an ASR transcription of
-        // the generated speech, which can arrive concatenated (no spaces)
-        // just like any other ASR output. Use sanitizeAsrText to run
-        // restoreWordSpacing on it.
+        // the generated speech. Send raw deltas — the client runs restoreWordSpacing
+        // once when the full utterance is committed to chat.
         case "response.output_audio_transcript.delta":
         case "response.audio_transcript.delta":
-          if (parsed.delta) onTextDelta(sanitizeAsrText(parsed.delta))
+          if (parsed.delta) onTextDelta(parsed.delta)
           break
 
         // User transcription (GA event names + legacy fallbacks)
