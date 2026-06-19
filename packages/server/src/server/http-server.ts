@@ -1165,7 +1165,8 @@ async function proxyTargetRequest(args: {
   await args.reply.from(args.targetUrl, {
     rewriteRequestHeaders: (_originalRequest, headers) =>
       sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin),
-    rewriteHeaders: args.rewriteHeaders,
+    rewriteHeaders: (headers) =>
+      args.rewriteHeaders(headers as Record<string, string | string[] | undefined>),
     onError: (reply, { error }) => {
       args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
       if (!reply.sent) {

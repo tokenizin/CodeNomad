@@ -1,4 +1,4 @@
-import os from "os"
+import os, { type NetworkInterfaceInfo } from "os"
 import type { NetworkAddress } from "../api-types"
 
 export interface ResolvedRemoteAddresses {
@@ -38,7 +38,7 @@ export function resolveNetworkAddresses(args: {
 
   if (host === "0.0.0.0") {
     // Enumerate system interfaces (IPv4 only)
-    for (const entries of Object.values(interfaces)) {
+    for (const entries of Object.values(interfaces) as Array<NetworkInterfaceInfo[] | undefined>) {
       if (!entries) continue
       for (const entry of entries) {
         const family = normalizeFamily(entry.family)

@@ -6,4 +6,10 @@ declare global {
   }
 }
 
+declare module "http" {
+  interface IncomingHttpHeaders {
+    [header: string]: string | string[] | undefined
+  }
+}
+
 export {}
