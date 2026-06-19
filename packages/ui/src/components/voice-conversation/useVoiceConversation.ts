@@ -2,6 +2,11 @@ import { onCleanup } from "solid-js"
 import { voiceConversationStore } from "./store"
 import { RealtimeVoiceClient, setOnPlaybackQueueEmpty, clearAudioQueue } from "../../lib/realtime-voice"
 import { getStarGuardBearerToken } from "../../lib/starguard-auth"
+import {
+  assertCodeNomadVoiceContext,
+  formatVoiceMicError,
+  isSecureVoiceContext,
+} from "../../lib/voice-protocol"
 import { loadSpeechCapabilities } from "../../stores/speech"
 import { showToastNotification } from "../../lib/notifications"
 import {
@@ -48,7 +53,24 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
       // 1. Ensure speech capabilities are loaded
       await loadSpeechCapabilities()
 
-        // 2. Check StarGuard auth
+      // 2. CodeNomad voice surface + secure context (mobile hardening)
+      const wrongSurface = assertCodeNomadVoiceContext()
+      if (wrongSurface) {
+        voiceConversationStore.setLastError(wrongSurface)
+        voiceConversationStore.setState("error")
+        showToastNotification({ title: "Voice conversation failed", message: wrongSurface, variant: "error", duration: 8000 })
+        return
+      }
+
+      if (!isSecureVoiceContext()) {
+        const msg = "Voice requires HTTPS — open CodeNomad via the secure tunnel URL."
+        voiceConversationStore.setLastError(msg)
+        voiceConversationStore.setState("error")
+        showToastNotification({ title: "Voice conversation failed", message: msg, variant: "error", duration: 8000 })
+        return
+      }
+
+      // 3. Check StarGuard auth (before WS — missing JWT must not trigger tunnel restart)
       const token = getStarGuardBearerToken()
       if (!token) {
         const msg = "Sign in via StarGuard first (SSO from StarGuard → CodeNomad)."
@@ -58,15 +80,24 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         return
       }
 
-      // 3. Get microphone permission early (so we fail fast)
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // 4. Get microphone permission early (so we fail fast with mobile-friendly copy)
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch (micErr) {
+        const msg = formatVoiceMicError(micErr)
+        voiceConversationStore.setLastError(msg)
+        voiceConversationStore.setState("error")
+        showToastNotification({ title: "Voice conversation failed", message: msg, variant: "error", duration: 8000 })
+        return
+      }
 
-      // 4. Skip conversation-mode TTS — the Realtime API produces native audio
+      // 5. Skip conversation-mode TTS — the Realtime API produces native audio
       //    output. Enabling the separate conversation-speech TTS (which reads
       //    text aloud via SpeechSynthesis/streaming) would double the audio.
       //    Disabled: toggleConversationMode(options.instanceId)
 
-      // 5. Create RealtimeVoiceClient with custom callbacks
+      // 6. Create RealtimeVoiceClient with custom callbacks
       client = new RealtimeVoiceClient(
         options.instanceId,
         // onStateChange
@@ -121,7 +152,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         },
       )
 
-      // 6. Register playback-empty callback for VAD loop
+      // 7. Register playback-empty callback for VAD loop
       setOnPlaybackQueueEmpty(() => {
         if (!client || voiceConversationStore.state() === "paused") return
         responseInProgress = false
@@ -129,13 +160,13 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         startCaptureAfterAgentResponse()
       })
 
-      // 7. Start MediaRecorder for session recording
+      // 8. Start MediaRecorder for session recording
       startSessionRecording(stream)
 
-      // 8. Release the mic stream (client will re-acquire via getUserMedia)
+      // 9. Release the mic stream (client will re-acquire via getUserMedia)
       stream.getTracks().forEach((t) => t.stop())
 
-      // 9. Start the voice session
+      // 10. Start the voice session
       await client.startRecording()
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start voice conversation"

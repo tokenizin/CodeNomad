@@ -70,32 +70,32 @@
     },
     "solidity-architect": {
       "description": "Expert-level Solidity & EVM Blockchain Architect. Absolute domain authority for smart contract design, OpenZeppelin libraries, upgradeable patterns, ERC-4337 AA, and security review.",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/solidity-architect.md}"
     },
     "ceo": {
       "description": "Chief Executive Officer — ecosystem vision, risk management, resource allocation, strategic decisions",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/ceo.md}"
     },
     "cto": {
       "description": "Chief Technology Officer — technology strategy, architecture decisions, technical risk, infrastructure",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/cto.md}"
     },
     "cmo": {
       "description": "Chief Marketing Officer — brand strategy, campaign execution, dApp UI governance, community growth",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/cmo.md}"
     },
     "cso": {
       "description": "Chief Security Officer — smart contract audit governance, incident response, threat modeling, security review gates",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/cso.md}"
     },
     "cfo": {
       "description": "Chief Financial Officer — treasury management, tokenomics, budget allocation, investor reporting, financial risk",
-      "mode": "primary",
+      "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/cfo.md}"
     },
     "cao": {
@@ -315,7 +315,7 @@
     },
     "mobile-migration-commander": {
       "description": "Orchestrator for mobile-first hub migration — coordinates parallel agent execution, enforces standards, validates deliverables",
-      "mode": "primary",
+      "mode": "subagent",
       "color": "#6366f1",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/core/mobile-migration-commander.md}"
     },

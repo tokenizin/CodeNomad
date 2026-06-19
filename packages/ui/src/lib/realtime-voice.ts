@@ -1,4 +1,11 @@
 import { getStarGuardBearerToken } from "./starguard-auth"
+import {
+  assertCodeNomadVoiceContext,
+  buildCodeNomadVoiceSessionWsUrl,
+  formatVoiceMicError,
+  formatVoiceWsError,
+  isSecureVoiceContext,
+} from "./voice-protocol"
 
 const SAMPLE_RATE = 24000
 
@@ -215,6 +222,19 @@ export class RealtimeVoiceClient {
       this.ws = null
     }
 
+    const wrongSurface = assertCodeNomadVoiceContext()
+    if (wrongSurface) {
+      this.onError(wrongSurface)
+      this.onStateChange("idle")
+      return
+    }
+
+    if (!isSecureVoiceContext()) {
+      this.onError(formatVoiceWsError("insecure"))
+      this.onStateChange("idle")
+      return
+    }
+
     const token = getStarGuardBearerToken()
     if (!token) {
       this.onError("Sign in via StarGuard first (SSO from StarGuard → CodeNomad).")
@@ -228,7 +248,7 @@ export class RealtimeVoiceClient {
       ? (window as any).__CODENOMAD_API_BASE__ || window.location.origin
       : "http://localhost:9899"
 
-    const wsUrl = baseUrl.replace(/^http/, "ws") + "/api/voice/session?token=" + encodeURIComponent(token)
+    const wsUrl = buildCodeNomadVoiceSessionWsUrl(baseUrl, token)
 
     this.ws = new WebSocket(wsUrl)
 
@@ -237,7 +257,7 @@ export class RealtimeVoiceClient {
       const ws = this.ws!
       const timeout = setTimeout(() => {
         ws.close()
-        reject(new Error("WebSocket connection timed out"))
+        reject(new Error(formatVoiceWsError("timeout")))
       }, 10_000)
 
       ws.onopen = () => {
@@ -253,9 +273,9 @@ export class RealtimeVoiceClient {
         this.cleanupCapture()
         this.voiceReady = false
         this.isRecording = false
-        this.onError("Could not connect to Realtime voice (check tunnel and OPENAI_API_KEY).")
+        this.onError(formatVoiceWsError("failed"))
         this.onStateChange("idle")
-        reject(new Error("WebSocket connection failed"))
+        reject(new Error(formatVoiceWsError("failed")))
       }
     })
 
@@ -319,7 +339,7 @@ export class RealtimeVoiceClient {
       this.voiceReady = false
       this.isRecording = false
       if (wasActive) {
-        this.onError("Realtime voice connection closed.")
+        this.onError(formatVoiceWsError("closed"))
       }
       this.onStateChange("idle")
     }
@@ -362,10 +382,10 @@ export class RealtimeVoiceClient {
         }
       })
       this.onStateChange("recording")
-    } catch {
+    } catch (micErr) {
       this.isRecording = false
       this.voiceReady = false
-      this.onError("Microphone permission denied or unavailable.")
+      this.onError(formatVoiceMicError(micErr))
       this.onStateChange("connected")
     }
   }
