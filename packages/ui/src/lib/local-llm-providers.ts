@@ -73,7 +73,7 @@ export function mergeLocalLlmListedProviders<T extends { id: string; name: strin
   const index = next.findIndex((provider) => provider.id === localProvider.id)
 
   if (index === -1) {
-    return [localProvider as T, ...next]
+    return [localProvider as unknown as T, ...next]
   }
 
   next[index] = {

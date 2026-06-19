@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@git-diff-view/core": "^0.0.35",
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
     "@opencode-ai/sdk": "1.16.0",
