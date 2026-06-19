@@ -163,6 +163,7 @@ const defaultUiSettings: UiSettings = {
 const defaultSpeechSettings: SpeechSettings = {
   provider: "openai-compatible",
   hasApiKey: false,
+  baseUrl: undefined,
   sttModel: "gpt-4o-mini-transcribe",
   ttsModel: "gpt-4o-mini-tts",
   ttsVoice: "marin",

@@ -59,6 +59,7 @@ const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
 const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 const DEFAULT_TTS_VOICE = "marin"
 const DEFAULT_TTS_FORMAT = "mp3"
+const DEFAULT_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
 
 export class SpeechService {
   constructor(
@@ -97,7 +98,7 @@ export class SpeechService {
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
       apiKey: speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-      baseUrl: speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      baseUrl: speech.baseUrl?.trim() || DEFAULT_BASE_URL,
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
