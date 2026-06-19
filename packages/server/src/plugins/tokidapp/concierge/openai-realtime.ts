@@ -1,6 +1,7 @@
 import WebSocket from "ws"
 import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import { getTargetAppWorkspaceRoot } from "../workspace-config"
 import {
   investigateCodebase,
   generateFeature,
@@ -76,7 +77,7 @@ const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
   return Number.isFinite(val) && val > 0 ? val : 500
 })()
 
-const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+const WORKSPACE_ROOT = getTargetAppWorkspaceRoot()
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
 interface RealtimeSession {

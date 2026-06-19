@@ -2,6 +2,9 @@ import type { DAGNode, DAGNodeStatus, DAGDefinition, ExecutionCallbacks, DAGResu
 import { CausalGraphManager } from './causal-graph'
 import { rollbackToPreviousCommit } from './rollback'
 import { apiPost, apiGet, apiPut, STARGUARD_BASE } from './starguard-client'
+import { getTargetAppWorkspaceRoot } from '../workspace-config'
+
+const WORKSPACE_ROOT = getTargetAppWorkspaceRoot()
 
 // ── DAG Execution Engine ────────────────────────────────────────
 
@@ -152,7 +155,6 @@ export async function executeDAG(
                 callbacks.onLog('HEALING_ACTION', 'WARN', `Tests failed after ${node.retryCount} retries — creating diagnostic report`, {})
                 try {
                   const { execSync } = await import('child_process')
-                  const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
                   const testOutput = execSync('bun run test 2>&1', { cwd: WORKSPACE_ROOT, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: 120000 }).split('\n').slice(-10).join('\n')
                   callbacks.onLog('HEALING_ACTION', 'WARN', `Test failure details: ${testOutput.slice(0, 500)}`, {})
                   outputs[`diagnosis-${node.title}`] = testOutput
@@ -455,7 +457,6 @@ function resolveDependents(
 async function routeToTool(toolName: string, input: Record<string, unknown>, nodeTitle: string, ctx: DAGContext): Promise<string> {
   // These mirror the tools from the existing tokidapp.ts routeMessage
   const { execSync } = await import('child_process')
-  const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 
   switch (toolName) {
     case 'investigate_codebase': {

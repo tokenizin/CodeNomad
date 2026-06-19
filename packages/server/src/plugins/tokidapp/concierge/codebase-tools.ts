@@ -3,6 +3,7 @@ import * as fs from "fs"
 import * as path from "path"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback"
 import { apiGet } from "../orchestrator/starguard-client"
+import { resolveSpawnWorkspacePath } from "../workspace-config"
 
 // ── Knowledge Base ─────────────────────────────────────────────
 
@@ -420,8 +421,8 @@ export async function spawnAgent(
         ? "BUILDMATE"
         : "OPENCODE"
 
-  const match = prompt.match(/in\s+([\w/-]+)/i)
-  const workspacePath = match ? path.join(workspaceRoot, match[1]) : workspaceRoot
+  const match = prompt.match(/in\s+([\w/.-]+)/i)
+  const workspacePath = resolveSpawnWorkspacePath(workspaceRoot, match?.[1])
 
   try {
     const res = await fetch(`${starguardBase}/api/tokidapp/agents/spawn`, {

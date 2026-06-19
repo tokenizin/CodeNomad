@@ -1,4 +1,6 @@
-const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+import { getTargetAppWorkspaceRoot } from "../workspace-config"
+
+const WORKSPACE_ROOT = getTargetAppWorkspaceRoot()
 
 export interface RollbackResult {
   success: boolean

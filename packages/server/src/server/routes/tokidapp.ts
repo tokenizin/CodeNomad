@@ -68,8 +68,9 @@ import {
 } from "../../plugins/tokidapp/concierge/security-tools"
 import { bridge } from "./nomadworks-bridge"
 import { processExecution } from "../../plugins/tokidapp/workflow-executor"
+import { getTargetAppWorkspaceRoot } from "../../plugins/tokidapp/workspace-config"
 
-const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+const WORKSPACE_ROOT = getTargetAppWorkspaceRoot()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
@@ -839,6 +840,8 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       status: "ok",
       activeSockets: 0, // computed by StarGuard // TODO: restore active socket count via registry
       workspaceRoot: WORKSPACE_ROOT,
+      monorepoRoot: process.env.CLI_WORKSPACE_ROOT || process.cwd(),
+      targetAppDir: process.env.CLI_TARGET_APP_DIR || "",
       vercelCliAvailable: true,
       realtimeEnabled: REALTIME_ENABLED,
       openaiApiStatus: openaiStatus,
