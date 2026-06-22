@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "重新加载消息",
   "messageSection.scroll.toFirstAriaLabel": "滚动到第一条消息",
   "messageSection.scroll.toLatestAriaLabel": "滚动到最新消息",
+  "messageSection.scroll.showControlsAriaLabel": "显示滚动控件",
   "messageSection.scroll.enableHoldAriaLabel": "启用长助手回复保持",
   "messageSection.scroll.disableHoldAriaLabel": "禁用长助手回复保持",
   "messageSection.quote.addAsQuote": "作为引用添加",
@@ -117,6 +118,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "无法删除消息",
 
   "messageItem.selection.checkboxAriaLabel": "选择要删除的消息",
+  "messageItem.selection.selectForDeletion": "选择要删除的消息",
+  "messageItem.selection.deselectForDeletion": "取消选择要删除的消息",
+  "messageItem.duration.workedFor.seconds.one": "工作了 {count} 秒",
+  "messageItem.duration.workedFor.seconds.other": "工作了 {count} 秒",
+  "messageItem.duration.workedFor.minutes.one": "工作了 {count} 分钟",
+  "messageItem.duration.workedFor.minutes.other": "工作了 {count} 分钟",
+  "messageItem.duration.workedFor.hours.one": "工作了 {count} 小时",
+  "messageItem.duration.workedFor.hours.other": "工作了 {count} 小时",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "已选择的项目（{count}）",
   "messageSection.bulkDelete.deleteSelectedTitle": "删除已选择的项目",

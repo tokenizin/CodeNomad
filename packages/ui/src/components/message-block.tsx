@@ -32,7 +32,7 @@ function DeleteUpToIcon() {
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
-const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+const NO_STEP_BORDER = "none"
 const REASONING_SCROLL_SENTINEL_MARGIN_PX = 48
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -391,6 +391,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           parts={visibleParts()}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          contentStartPartId={props.startPartId}
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
           showDeleteMessage={props.showDeleteMessage}
@@ -504,10 +505,13 @@ function ToolCallItem(props: ToolCallItemProps) {
     if (props.showDeleteMessage) {
       items.push({
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       })
     }
@@ -799,7 +803,7 @@ export default function MessageBlock(props: MessageBlockProps) {
         }
         items.push(toolItem)
         blockToolKeys.push(key)
-        lastAccentColor = TOOL_BORDER_COLOR
+        lastAccentColor = NO_STEP_BORDER
         return
       }
 
@@ -1107,10 +1111,13 @@ function CompactionCard(props: CompactionCardProps) {
     return [
       {
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       },
       {
@@ -1213,7 +1220,14 @@ function StepCard(props: StepCardProps) {
     }
   }
 
-  const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
+  const finishStyle = () => {
+    if (props.borderColor === NO_STEP_BORDER) {
+      return {
+        "border-inline-start": "none",
+      }
+    }
+    return props.borderColor ? { "border-left-color": props.borderColor } : undefined
+  }
   let didReportUsageStats = false
 
   createEffect(() => {
@@ -1260,10 +1274,13 @@ function StepCard(props: StepCardProps) {
     return [
       {
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId!, !isSelectedForDeletion()),
       },
       {
@@ -1608,10 +1625,13 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (props.showDeleteMessage) {
       items.push({
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       })
     }

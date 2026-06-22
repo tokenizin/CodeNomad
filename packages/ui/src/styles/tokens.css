@@ -38,7 +38,7 @@
   --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #d97706;
 
-  --message-tool-bg: #f7f9fc;
+  --message-tool-bg: #f8f8f8;
   --message-tool-border: #64748b;
   --message-part-header-type: #64748b;
   --message-part-header-title: var(--text-primary);
@@ -47,7 +47,7 @@
   --message-part-header-type-font-size: var(--font-size-sm);
   --message-part-header-type-font-weight: var(--font-weight-medium);
   --message-part-header-title-font-size: var(--font-size-sm);
-  --message-part-header-title-font-weight: var(--font-weight-normal);
+  --message-part-header-title-font-weight: var(--font-weight-regular);
   --message-part-header-title-line-height: var(--line-height-normal);
 
   /* Session list selection tints */
