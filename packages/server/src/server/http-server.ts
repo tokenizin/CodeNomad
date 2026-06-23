@@ -39,6 +39,7 @@ import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
+import { getTokidappDb } from "../lib/db"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import { PluginChannelManager } from "../plugins/channel"
 import { VoiceModeManager } from "../plugins/voice-mode"
@@ -397,6 +398,19 @@ export function createHttpServer(deps: HttpServerDeps) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
   } else {
     setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger)
+  }
+
+  // Initialize DB connection pool on server start
+  if (process.env.DATABASE_URL) {
+    try {
+      getTokidappDb()
+      console.log('[http-server] DB connection pool initialized')
+    } catch (err) {
+      console.warn('[http-server] Failed to initialize DB pool:', err)
+      console.warn('[http-server] TokiDAPP persistence will be degraded')
+    }
+  } else {
+    console.log('[http-server] No DATABASE_URL — TokiDAPP persistence via proxy')
   }
 
   return {

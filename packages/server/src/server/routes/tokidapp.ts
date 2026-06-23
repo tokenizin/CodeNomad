@@ -28,7 +28,15 @@ import {
   fetchPendingApprovals,
   getPendingApprovals,
 } from "../../plugins/tokidapp/orchestrator/approval-queue"
-import { apiPost, apiGet, apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
+import {
+  createOrchestratorSession,
+  findOrchestratorBySessionId,
+  findOrchestratorById,
+  findRecordingsBySession,
+  createRecording,
+  findApprovalsByOrchestrator,
+  createEvent,
+} from "../../lib/tokidapp-queries"
 import { addLocalRecording, getLocalRecordings } from "./local-recordings"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 import {
@@ -86,10 +94,8 @@ function resolveStarworldSessionId(boundDbSessionId: string | null): string | nu
 
 async function lookupOrchestratorIdForDbSession(dbSessionId: string): Promise<string | null> {
   try {
-    const res = await apiGet(`/api/tokidapp/orchestrator?sessionId=${encodeURIComponent(dbSessionId)}`)
-    if (!res.ok) return null
-    const sessions = await res.json()
-    return Array.isArray(sessions) && sessions.length > 0 ? (sessions[0] as { id: string }).id : null
+    const session = await findOrchestratorBySessionId(dbSessionId)
+    return session?.id ?? null
   } catch {
     return null
   }
@@ -111,9 +117,8 @@ async function sendOrchestratorStateForSession(
   }
   if (!orchestratorId) return
   try {
-    const res = await apiGet(`/api/tokidapp/orchestrator/${orchestratorId}`)
-    if (res.ok) {
-      const data = await res.json()
+    const data = await findOrchestratorById(orchestratorId)
+    if (data) {
       socketRef.send(JSON.stringify({ type: "orchestrator_state", ...data }))
     }
   } catch { /* ignore */ }
@@ -961,44 +966,43 @@ export function registerTokidappRoutes(app: FastifyInstance) {
 
   app.post("/api/tokidapp/recordings", async (request, reply) => {
     try {
-      const { blobUrl, sessionId, duration } = (request.body ?? {}) as Record<string, unknown>
-      if (!blobUrl || typeof blobUrl !== "string") {
+      const { blobUrl: rawBlobUrl, sessionId, duration } = (request.body ?? {}) as Record<string, unknown>
+      if (!rawBlobUrl || typeof rawBlobUrl !== "string") {
         reply.code(400)
         return { error: "blobUrl is required" }
       }
 
-      // Proxy recording metadata to StarGuard for persistence
-      // Non-fatal: if StarGuard is unreachable, we persist locally instead.
-      let recording: Record<string, unknown>
+      const safeSessionId: string = typeof sessionId === "string" ? sessionId : "unknown"
+      const safeDuration: number = typeof duration === "number" ? duration : typeof duration === "string" ? Number(duration) || 0 : 0
+
+      // Build recording object
+      const recording = {
+        id: crypto.randomUUID(),
+        blobUrl: rawBlobUrl as string,
+        sessionId: safeSessionId,
+        duration: safeDuration,
+      }
+
+      // Persist to DB (non-fatal if unreachable)
       try {
-        const res = await apiPost("/api/tokidapp/recordings", {
-          blobUrl,
-          sessionId: sessionId ?? "unknown",
-          duration: Number(duration) || 0,
+        await createRecording({
+          id: recording.id,
+          sessionId: recording.sessionId,
+          blobUrl: recording.blobUrl,
+          duration: recording.duration,
+          format: 'webm',
+          status: 'completed',
         })
-        recording = res.ok ? await res.json() : {
-          id: crypto.randomUUID(),
-          blobUrl,
-          sessionId: sessionId ?? "unknown",
-          duration: Number(duration) || 0,
-        }
-      } catch (proxyErr) {
-        request.log.warn({ err: proxyErr }, "StarGuard proxy unavailable, persisting recording locally")
-        recording = {
-          id: crypto.randomUUID(),
-          blobUrl,
-          sessionId: sessionId ?? "unknown",
-          duration: Number(duration) || 0,
-        }
+      } catch (dbErr) {
+        request.log.warn({ err: dbErr }, 'DB unavailable, recording persisted locally only')
       }
 
       // Persist locally so recordings survive server restarts
-      // even when StarGuard is unreachable.
       addLocalRecording({
-        id: recording.id as string,
-        sessionId: recording.sessionId as string,
-        blobUrl: recording.blobUrl as string,
-        duration: Number(recording.duration) || 0,
+        id: recording.id,
+        sessionId: recording.sessionId,
+        blobUrl: recording.blobUrl,
+        duration: recording.duration,
         createdAt: new Date().toISOString(),
       })
 
@@ -1019,17 +1023,12 @@ export function registerTokidappRoutes(app: FastifyInstance) {
         return { recordings: [] }
       }
 
-      // Try StarGuard first; fall back to local store if unavailable
+      // Try DB first; fall back to local store if unavailable
       try {
-        const res = await apiGet("/api/tokidapp/recordings", { sessionId })
-        if (res.ok) {
-          const contentType = res.headers.get("content-type") || ""
-          if (contentType.includes("application/json")) {
-            return await res.json()
-          }
-        }
+        const dbRecordings = await findRecordingsBySession(sessionId)
+        return { recordings: dbRecordings }
       } catch {
-        request.log.warn("StarGuard proxy unavailable, reading recordings from local store")
+        request.log.warn("DB unavailable, reading recordings from local store")
       }
 
       // Fall back to locally-persisted recordings
@@ -1097,17 +1096,17 @@ export function registerTokidappRoutes(app: FastifyInstance) {
 
   app.post("/api/tokidapp/orchestrator", async (request, reply) => {
     try {
-      const { sessionId, voiceMode = true } = (request.body || {}) as Record<string, unknown>
+      const { sessionId } = (request.body || {}) as Record<string, unknown>
+      const safeSessionId = typeof sessionId === "string" ? sessionId : ""
 
-      const res = await apiPost("/api/tokidapp/orchestrator", { sessionId, voiceMode })
+      const orchId = crypto.randomUUID()
+      await createOrchestratorSession({
+        id: orchId,
+        sessionId: safeSessionId,
+        status: "ACTIVE",
+      })
 
-      if (!res.ok) {
-        reply.code(res.status)
-        return { error: "Failed to create orchestrator session" }
-      }
-
-      const orchestrator = await res.json()
-      return orchestrator
+      return { id: orchId, status: "ACTIVE" }
     } catch (error) {
       reply.code(500)
       return { error: (error as Error).message }
@@ -1117,12 +1116,12 @@ export function registerTokidappRoutes(app: FastifyInstance) {
   app.get("/api/tokidapp/orchestrator/:id", async (request, reply) => {
     try {
       const { id } = request.params as Record<string, string>
-      const res = await apiGet(`/api/tokidapp/orchestrator/${id}`)
-      if (!res.ok) {
-        reply.code(res.status)
+      const result = await findOrchestratorById(id)
+      if (!result) {
+        reply.code(404)
         return { error: "Not found" }
       }
-      return await res.json()
+      return result
     } catch (error) {
       reply.code(500)
       return { error: (error as Error).message }
@@ -1134,14 +1133,11 @@ export function registerTokidappRoutes(app: FastifyInstance) {
   app.get("/api/tokidapp/approvals", async (request, reply) => {
     try {
       const query = request.query as Record<string, string>
-      const params = new URLSearchParams()
-      if (query.status) params.set("status", query.status)
-      if (query.orchestratorId) params.set("orchestratorId", query.orchestratorId)
-      if (query.assignedTo) params.set("assignedTo", query.assignedTo)
-
-      const res = await apiGet("/api/tokidapp/approvals", Object.fromEntries(params))
-      if (!res.ok) return []
-      return await res.json()
+      if (query.orchestratorId) {
+        const approvals = await findApprovalsByOrchestrator(query.orchestratorId)
+        return approvals
+      }
+      return []
     } catch {
       reply.code(500)
       return { error: "Failed to fetch approvals" }
@@ -1746,15 +1742,17 @@ async function handleOrchestrateMessage(
       return
     }
 
-    const orchRes = await apiPost("/api/tokidapp/orchestrator", { sessionId: starworldSessionId, voiceMode: REALTIME_ENABLED })
-
-    if (!orchRes.ok) {
+    const orchestratorId = crypto.randomUUID()
+    try {
+      await createOrchestratorSession({
+        id: orchestratorId,
+        sessionId: starworldSessionId,
+        status: "ACTIVE",
+      })
+    } catch {
       socketRef.send(JSON.stringify({ type: "error", content: "Failed to create orchestrator session" }))
       return
     }
-
-    const orchestrator = await orchRes.json()
-    const orchestratorId = orchestrator.id
     orchestratorSessions.set(wsSessionId, orchestratorId)
 
     socketRef.send(JSON.stringify({ type: "orchestrator_state", orchestratorId, status: "created", voiceMode: REALTIME_ENABLED }))
@@ -1859,14 +1857,15 @@ async function handleOrchestrateMessage(
           timestamp: new Date().toISOString(),
         }))
 
-        // Also persist to StarGuard
-        apiPost("/api/tokidapp/events", {
-          orchestratorId,
-          eventType,
-          severity,
-          title,
-          metadata,
-        }).catch(() => {})
+        // Also persist event to DB (fire-and-forget, non-fatal)
+        createEvent({
+          id: crypto.randomUUID(),
+          sessionId: orchestratorId,
+          eventType: eventType || "orchestrator_event",
+          data: JSON.stringify({ orchestratorId, eventType, severity, title, metadata }),
+        }).catch((e: Error) => {
+          console.error("[tokidapp] Failed to create event:", e.message)
+        })
       },
     }
 
