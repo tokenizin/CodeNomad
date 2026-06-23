@@ -360,11 +360,17 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerLocalLlmRoutes(app)
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
-  registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
+  registerSideCarProxyRoutes(app, {
+    sidecarManager: deps.sidecarManager,
+    authManager: deps.authManager,
+    starGuardJwtHandler: deps.starGuardJwtHandler,
+    logger: proxyLogger,
+  })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
+    starGuardJwtHandler: deps.starGuardJwtHandler,
     logger: proxyLogger,
   })
   setupPreviewWebSocketProxy(app, {
@@ -459,6 +465,8 @@ interface InstanceProxyDeps {
 
 interface SideCarProxyDeps {
   sidecarManager: SideCarManager
+  authManager: AuthManager
+  starGuardJwtHandler?: StarGuardJwtHandler
   logger: Logger
 }
 
@@ -476,10 +484,56 @@ interface PreviewWebSocketProxyDeps extends PreviewProxyDeps {
 }
 
 function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
+  // ── Permission guard: only admin users and internal/loopback agents ──────
+  const sidecarAuthGuard = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+    // 1. Loopback requests (internal agents / processes on the same machine) are always allowed.
+    if (deps.authManager.isLoopbackRequest(request)) {
+      return true
+    }
+
+    // 2. Check StarGuard JWT for admin role.
+    const handler = deps.starGuardJwtHandler
+    if (handler?.isEnabled()) {
+      let token: string | null = null
+      const authHeader = Array.isArray(request.headers.authorization)
+        ? request.headers.authorization[0]
+        : request.headers.authorization
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length).trim()
+      }
+      if (!token) {
+        const query = request.query as { starguard_token?: string; token?: string } | undefined
+        token = query?.starguard_token?.trim() || query?.token?.trim() || null
+      }
+      if (token) {
+        const payload = await handler.verify(token)
+        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN")) {
+          return true
+        }
+      }
+    }
+
+    // 3. Deny.
+    reply.code(403).send({ error: "Forbidden: admin or internal-agent access required for sidecar services" })
+    return false
+  }
+
   const proxyBaseHandler = async (
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) => {
+    // Trailing-slash redirect: /sidecars/:id → /sidecars/:id/
+    // Without this, relative asset paths in proxied apps (Prisma Studio, pgweb, etc.)
+    // resolve to /sidecars/assets/... instead of /sidecars/:id/assets/...
+    const rawPath = request.raw.url ?? request.url ?? ""
+    const pathOnly = rawPath.split("?")[0] ?? ""
+    if (!pathOnly.endsWith("/")) {
+      const search = rawPath.includes("?") ? rawPath.slice(rawPath.indexOf("?")) : ""
+      reply.redirect(301, `${pathOnly}/${search}`)
+      return
+    }
+
+    if (!(await sidecarAuthGuard(request, reply))) return
     await proxySideCarRequest({
       request,
       reply,
@@ -493,6 +547,7 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
     request: FastifyRequest<{ Params: { id: string; "*": string } }>,
     reply: FastifyReply,
   ) => {
+    if (!(await sidecarAuthGuard(request, reply))) return
     await proxySideCarRequest({
       request,
       reply,
@@ -554,6 +609,7 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
       search: parsed.search,
       sidecarManager: deps.sidecarManager,
       authManager: deps.authManager,
+      starGuardJwtHandler: deps.starGuardJwtHandler,
       logger: deps.logger,
     })
   })
@@ -1263,19 +1319,35 @@ async function proxySideCarWebSocketUpgrade(args: {
   search: string
   sidecarManager: SideCarManager
   authManager: AuthManager
+  starGuardJwtHandler?: StarGuardJwtHandler
   logger: Logger
 }) {
-  const { request, socket, head, sidecarId, incomingPath, search, sidecarManager, authManager, logger } = args
+  const { request, socket, head, sidecarId, incomingPath, search, sidecarManager, authManager, starGuardJwtHandler, logger } = args
 
   if (!isWebSocketUpgradeRequest(request)) {
     rejectUpgrade(socket, 400, "Bad Request")
     return
   }
 
-  const session = authManager.getSessionFromHeaders(request.headers)
-  if (!session) {
-    rejectUpgrade(socket, 401, "Unauthorized")
-    return
+  // Permission guard: loopback (internal agents) OR admin StarGuard JWT.
+  if (!authManager.isLoopbackRequest({ socket: { remoteAddress: request.socket.remoteAddress } } as FastifyRequest)) {
+    let adminGranted = false
+    if (starGuardJwtHandler?.isEnabled()) {
+      const authHeader = Array.isArray(request.headers.authorization)
+        ? request.headers.authorization[0]
+        : request.headers.authorization
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : null
+      if (token) {
+        const payload = await starGuardJwtHandler.verify(token)
+        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN")) {
+          adminGranted = true
+        }
+      }
+    }
+    if (!adminGranted) {
+      rejectUpgrade(socket, 403, "Forbidden: admin or internal-agent access required for sidecar services")
+      return
+    }
   }
 
   const sidecar = await sidecarManager.get(sidecarId)
