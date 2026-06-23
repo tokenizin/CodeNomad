@@ -161,6 +161,27 @@ export function createHttpServer(deps: HttpServerDeps) {
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
+  const getStarGuardOrigins = (): Set<string> => {
+    const origins = new Set<string>()
+    const candidates = [
+      process.env.STARGUARD_PUBLIC_URL,
+      process.env.STARGUARD_BASE_URL,
+      process.env.NEXT_PUBLIC_APP_URL,
+      "https://star-worlds.vercel.app",
+    ]
+    for (const candidate of candidates) {
+      if (!candidate?.trim()) continue
+      try {
+        const raw = candidate.trim()
+        const withScheme = raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`
+        origins.add(new URL(withScheme).origin)
+      } catch {
+        // ignore malformed URLs
+      }
+    }
+    return origins
+  }
+
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
     const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
@@ -200,6 +221,12 @@ export function createHttpServer(deps: HttpServerDeps) {
          return
        }
 
+       const starGuardOrigins = getStarGuardOrigins()
+       if (starGuardOrigins.has(origin)) {
+         cb(null, true)
+         return
+       }
+
        // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
        if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
          cb(null, true)
@@ -232,6 +259,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAuthRoutes(app, { authManager: deps.authManager, starGuardJwtHandler: deps.starGuardJwtHandler })
 
   app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "OPTIONS") {
+      return
+    }
+
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 

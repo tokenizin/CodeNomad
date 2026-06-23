@@ -23,6 +23,15 @@ export function registerSideCarRoutes(app: FastifyInstance, deps: RouteDeps) {
     return { sidecars: await deps.sidecarManager.list() }
   })
 
+  app.get<{ Params: { id: string } }>("/api/sidecars/:id", async (request, reply) => {
+    const sidecar = await deps.sidecarManager.get(request.params.id)
+    if (!sidecar) {
+      reply.code(404)
+      return { error: "SideCar not found" }
+    }
+    return sidecar
+  })
+
   app.post("/api/sidecars", async (request, reply) => {
     try {
       const body = SideCarCreateSchema.parse(request.body ?? {})
