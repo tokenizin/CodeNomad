@@ -111,9 +111,10 @@ export async function pwaPlugins(): Promise<PluginOption[]> {
   ]
 }
 
-export function createCodeNomadUiConfig(enablePwa: boolean) {
+export function createCodeNomadUiConfig(enablePwa: boolean, opts?: { base?: string }) {
   return defineConfig(async () => ({
     root: "./src/renderer",
+    base: opts?.base ?? "/",
     plugins: [solid(), monacoPublicAssetsPlugin(), uiVersionPlugin(), ...(enablePwa ? await pwaPlugins() : [])],
     css: {
       postcss: "./postcss.config.js",
