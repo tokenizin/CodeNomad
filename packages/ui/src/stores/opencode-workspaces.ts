@@ -17,6 +17,39 @@ type OpenCodeWorkspace = {
 const workspaceIdByWorktreeSlug = new Map<string, Map<string, string>>()
 const workspaceSyncs = new Map<string, Promise<void>>()
 
+const WORKSPACE_SYNC_LIST_TIMEOUT_MS = 15_000
+const WORKSPACE_LIST_TIMEOUT_MS = 15_000
+
+type WorkspaceSyncOptions = {
+  /** Register adapter-discovered workspaces via OpenCode sync-list (slow; run after worktree changes only). */
+  syncAdapters?: boolean
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function formatWorkspaceApiError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === "string") return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
 async function getInstance(instanceId: string) {
   const { instances } = await import("./instances")
   return instances().get(instanceId)
@@ -31,9 +64,28 @@ function getCachedOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: s
   return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
 }
 
-async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
+function runWorkspaceSyncList(
+  workspaceApi: { syncList: (args: { directory: string }) => Promise<unknown> },
+  directory: string,
+  instanceId: string,
+): void {
+  void withTimeout(
+    workspaceApi.syncList({ directory }),
+    WORKSPACE_SYNC_LIST_TIMEOUT_MS,
+    "workspace.syncList",
+  ).catch((error) => {
+    log.warn("OpenCode workspace sync-list skipped or failed", {
+      instanceId,
+      directory,
+      error: formatWorkspaceApiError(error),
+    })
+  })
+}
+
+async function syncOpenCodeWorkspaces(instanceId: string, options?: WorkspaceSyncOptions): Promise<void> {
   if (!instanceId) return
-  const existing = workspaceSyncs.get(instanceId)
+  const syncKey = `${instanceId}:${options?.syncAdapters ? "adapters" : "list"}`
+  const existing = workspaceSyncs.get(syncKey)
   if (existing) return existing
 
   const task = (async () => {
@@ -42,15 +94,22 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
 
     const rootClient = getRootClient(instanceId) as any
     const workspaceApi = rootClient.experimental?.workspace
-    if (!workspaceApi?.syncList || !workspaceApi?.list) {
+    if (!workspaceApi?.list) {
       log.warn("OpenCode experimental workspace API unavailable", { instanceId })
       workspaceIdByWorktreeSlug.set(instanceId, new Map())
       return
     }
 
-    await workspaceApi.syncList({ directory: instance.folder })
-    const result = await workspaceApi.list({ directory: instance.folder })
-    const workspaces = Array.isArray(result?.data) ? (result.data as OpenCodeWorkspace[]) : []
+    if (options?.syncAdapters && workspaceApi.syncList) {
+      runWorkspaceSyncList(workspaceApi, instance.folder, instanceId)
+    }
+
+    const result = await withTimeout(
+      workspaceApi.list({ directory: instance.folder }),
+      WORKSPACE_LIST_TIMEOUT_MS,
+      "workspace.list",
+    )
+    const workspaces = Array.isArray((result as any)?.data) ? ((result as any).data as OpenCodeWorkspace[]) : []
     const next = mapOpenCodeWorkspacesToWorktreeSlugs(getWorktrees(instanceId), workspaces)
 
     workspaceIdByWorktreeSlug.set(instanceId, next)
@@ -60,16 +119,20 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
       workspaceIdByWorktreeSlug.set(instanceId, new Map())
     })
     .finally(() => {
-      workspaceSyncs.delete(instanceId)
+      workspaceSyncs.delete(syncKey)
     })
 
-  workspaceSyncs.set(instanceId, task)
+  workspaceSyncs.set(syncKey, task)
   return task
 }
 
 async function reloadOpenCodeWorkspaces(instanceId: string): Promise<void> {
-  workspaceSyncs.delete(instanceId)
-  await syncOpenCodeWorkspaces(instanceId)
+  for (const key of Array.from(workspaceSyncs.keys())) {
+    if (key === instanceId || key.startsWith(`${instanceId}:`)) {
+      workspaceSyncs.delete(key)
+    }
+  }
+  await syncOpenCodeWorkspaces(instanceId, { syncAdapters: true })
 }
 
 async function getOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: string): Promise<string | null> {
@@ -86,7 +149,11 @@ async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: s
 }
 
 function clearOpenCodeWorkspaceCache(instanceId: string): void {
-  workspaceSyncs.delete(instanceId)
+  for (const key of Array.from(workspaceSyncs.keys())) {
+    if (key === instanceId || key.startsWith(`${instanceId}:`)) {
+      workspaceSyncs.delete(key)
+    }
+  }
   workspaceIdByWorktreeSlug.delete(instanceId)
 }
 
