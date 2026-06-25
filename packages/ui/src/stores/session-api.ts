@@ -806,8 +806,8 @@ async function syncOpenCodeLocalOllamaProvider(instanceId: string): Promise<void
       }),
       "config.update",
     )
-
-    await (rootClient as any).global.dispose().catch(() => undefined)
+    // Do not call global.dispose() here — it tears down the OpenCode child process
+    // and causes POST /session → 400 / hang on the next UI action.
   } catch (error) {
     log.warn("Failed to sync local Ollama models into OpenCode config", {
       instanceId,

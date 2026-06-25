@@ -363,7 +363,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function refreshAfterAuth(authClient: OpencodeClient) {
-    await (authClient as any).global.dispose().catch(() => undefined)
     await fetchProviders(props.instanceId).catch(() => undefined)
     await loadProviderData(authClient).catch(() => undefined)
   }
