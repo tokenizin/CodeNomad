@@ -859,13 +859,9 @@ export function createRealtimeSession(
 
       switch (parsed.type) {
         case "session.created":
-        case "session.updated":
-          console.log("[openai-realtime] OpenAI session ready event:", parsed.type, "for session:", sessionId)
-          // Keep onReady persistent — fires on every session-ready event (initial + voice change)
+          console.log("[openai-realtime] OpenAI session ready event: session.created for session:", sessionId)
           session.onReady?.()
-
-          // On initial session creation, inject a warm greeting once per chat session.
-          if (parsed.type === "session.created") {
+          {
             const greetKey = (chatSessionId || "").trim() || sessionId
             if (!voiceGreetingPlayedForChatSession.has(greetKey)) {
               voiceGreetingPlayedForChatSession.add(greetKey)
@@ -887,6 +883,10 @@ export function createRealtimeSession(
               session.responseInProgress = true
             }
           }
+          break
+
+        case "session.updated":
+          console.log("[openai-realtime] OpenAI session ready event: session.updated for session:", sessionId)
           break
 
         // Audio deltas (GA event names + legacy fallbacks)
@@ -1011,6 +1011,11 @@ export function createRealtimeSession(
         case "error": {
           const message = parsed.error?.message || "OpenAI Realtime error"
           if (/buffer too small|buffer only has 0/i.test(message)) break
+          if (/cancellation failed|no active response found/i.test(message)) {
+            console.log("[openai-realtime] Benign cancel race for session:", sessionId, "—", message)
+            session.responseInProgress = false
+            break
+          }
           // If there's an "active response in progress" error, reset the tracking state
           // and do NOT propagate to the client — this is a recoverable server-side race.
           if (/active response in progress/i.test(message)) {

@@ -1434,9 +1434,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_interrupt") {
-            // Barge-in: cancel the current assistant response
             const sess = getRealtimeSession(sessionId)
-            if (sess && sess.responseInProgress) {
+            if (sess?.responseInProgress && sess.connected) {
               sess.ws.send(JSON.stringify({ type: "response.cancel" }))
               sess.responseInProgress = false
               const next = sess.pendingResponseQueue.shift()
