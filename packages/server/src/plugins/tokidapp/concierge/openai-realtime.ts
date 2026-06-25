@@ -914,16 +914,45 @@ export function createRealtimeSession(
 
         // User transcription (GA event names + legacy fallbacks)
         case "conversation.item.input_audio_transcription.completed":
-        case "input_audio_transcription.completed": {
-          const transcript =
-            parsed.transcript ||
-            parsed.item?.input_audio_transcription?.transcript ||
-            ""
-          if (transcript && onUserTranscript) {
-            onUserTranscript(sanitizeAsrText(transcript))
+        case "conversation.item.input_audio_transcription.done":
+        case "input_audio_transcription.completed":
+        case "input_audio_buffer.transcription.completed": {
+          const transcript = extractUserTranscript(parsed)
+          if (transcript) {
+            console.log("[openai-realtime] user transcript for session:", sessionId, "→", transcript.slice(0, 120))
+            onUserTranscript?.(sanitizeAsrText(transcript))
           }
           break
         }
+
+        case "conversation.item.input_audio_transcription.delta":
+        case "input_audio_transcription.delta": {
+          const delta = typeof parsed.delta === "string" ? parsed.delta : ""
+          if (delta) {
+            console.log("[openai-realtime] user transcript delta for session:", sessionId, "→", delta.slice(0, 80))
+          }
+          break
+        }
+
+        case "conversation.item.done": {
+          const item = parsed.item as Record<string, unknown> | undefined
+          if (item?.role === "user") {
+            const transcript = extractUserTranscript({ item })
+            if (transcript) {
+              console.log("[openai-realtime] user transcript (item.done) for session:", sessionId, "→", transcript.slice(0, 120))
+              onUserTranscript?.(sanitizeAsrText(transcript))
+            }
+          }
+          break
+        }
+
+        case "input_audio_buffer.speech_started":
+          console.log("[openai-realtime] VAD speech_started for session:", sessionId)
+          break
+
+        case "input_audio_buffer.speech_stopped":
+          console.log("[openai-realtime] VAD speech_stopped for session:", sessionId)
+          break
 
         // Response done (GA event names + legacy fallbacks)
         case "response.done":
@@ -1050,12 +1079,6 @@ export function sendAudioChunk(sessionId: string, base64: string): boolean {
     return true
   }
 
-  // Buffer chunks while a response is generating to avoid "active response in progress" errors
-  if (session.responseInProgress) {
-    session.pendingChunks.push(base64)
-    return true
-  }
-
   session.audioBytes += Math.floor(base64.length * 0.75)
   session.ws.send(
     JSON.stringify({
@@ -1064,6 +1087,27 @@ export function sendAudioChunk(sessionId: string, base64: string): boolean {
     }),
   )
   return true
+}
+
+function extractUserTranscript(parsed: Record<string, unknown>): string {
+  if (typeof parsed.transcript === "string" && parsed.transcript.trim()) {
+    return parsed.transcript.trim()
+  }
+  const item = parsed.item as Record<string, unknown> | undefined
+  if (item) {
+    const inputTx = item.input_audio_transcription as Record<string, unknown> | undefined
+    if (typeof inputTx?.transcript === "string" && inputTx.transcript.trim()) {
+      return inputTx.transcript.trim()
+    }
+    const content = item.content
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        const p = part as Record<string, unknown>
+        if (typeof p.transcript === "string" && p.transcript.trim()) return p.transcript.trim()
+      }
+    }
+  }
+  return ""
 }
 
 export function resetInputAudio(sessionId: string): void {

@@ -1447,6 +1447,11 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             return
           }
 
+          if (msg.type === "voice_reset") {
+            clearAudioBuffer(sessionId)
+            return
+          }
+
           if (msg.type === "voice_stop") {
             if (hasEnoughInputAudio(sessionId)) {
               commitAudioBuffer(sessionId)
