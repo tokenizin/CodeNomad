@@ -578,6 +578,15 @@ async function main() {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
+  const prewarmWorkspace = process.env.CODENOMAD_PREWARM_WORKSPACE
+  if (prewarmWorkspace === "1" || prewarmWorkspace === "true") {
+    void workspaceManager
+      .warmDefaultWorkspace(options.rootDir, path.basename(options.rootDir))
+      .catch((error) => {
+        logger.warn({ err: error, rootDir: options.rootDir }, "Default workspace pre-warm failed (non-fatal)")
+      })
+  }
+
   let shuttingDown = false
 
   const shutdown = async () => {

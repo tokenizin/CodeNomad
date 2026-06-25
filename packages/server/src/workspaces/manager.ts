@@ -53,6 +53,32 @@ export class WorkspaceManager {
     return Array.from(this.workspaces.values())
   }
 
+  findByFolder(folder: string): WorkspaceDescriptor | undefined {
+    const normalizedFolder = path.resolve(folder)
+    return this.list().find((workspace) => path.resolve(workspace.path) === normalizedFolder)
+  }
+
+  /** Start OpenCode for the default repo while the tunnel is idle so SSO landings skip cold boot. */
+  async warmDefaultWorkspace(folder: string, name?: string): Promise<WorkspaceDescriptor | undefined> {
+    const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
+    const existing = this.findByFolder(workspacePath)
+    if (existing) {
+      if (existing.status === "ready" || existing.status === "starting") {
+        this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Default workspace already warm")
+        return existing
+      }
+      this.options.logger.warn(
+        { workspaceId: existing.id, folder: workspacePath, status: existing.status },
+        "Skipping pre-warm; existing workspace is not healthy",
+      )
+      return existing
+    }
+
+    const workspaceName = name?.trim() || path.basename(workspacePath) || "workspace"
+    this.options.logger.info({ folder: workspacePath, name: workspaceName }, "Pre-warming default workspace")
+    return this.create(workspacePath, workspaceName)
+  }
+
   get(id: string): WorkspaceDescriptor | undefined {
     return this.workspaces.get(id)
   }

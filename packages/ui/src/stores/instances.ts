@@ -405,15 +405,32 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
     }
     await syncOpenCodeWorkspaces(instanceId)
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId)
-    await fetchAgents(instanceId)
-    await fetchProviders(instanceId)
-    await ensureInstanceConfigLoaded(instanceId)
+
+    const hydrateResults = await Promise.allSettled([
+      fetchSessions(instanceId),
+      fetchAgents(instanceId),
+      fetchProviders(instanceId),
+      ensureInstanceConfigLoaded(instanceId),
+    ])
+    for (const result of hydrateResults) {
+      if (result.status === "rejected") {
+        log.warn("Instance hydrate step failed", { instanceId, error: result.reason })
+      }
+    }
+
     const instance = instances().get(instanceId)
     if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client)
-    await syncPendingPermissions(instanceId)
-    await syncPendingQuestions(instanceId)
+
+    const secondaryResults = await Promise.allSettled([
+      fetchCommands(instanceId, instance.client),
+      syncPendingPermissions(instanceId),
+      syncPendingQuestions(instanceId),
+    ])
+    for (const result of secondaryResults) {
+      if (result.status === "rejected") {
+        log.warn("Instance hydrate secondary step failed", { instanceId, error: result.reason })
+      }
+    }
   } catch (error) {
     log.error("Failed to fetch initial data", error)
   }
