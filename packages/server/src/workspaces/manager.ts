@@ -69,6 +69,15 @@ export class WorkspaceManager {
         this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Default workspace already warm")
         return existing
       }
+      if (existing.status === "error") {
+        this.options.logger.warn(
+          { workspaceId: existing.id, folder: workspacePath, error: existing.error },
+          "Replacing errored workspace during pre-warm",
+        )
+        await this.delete(existing.id)
+        const workspaceName = name?.trim() || path.basename(workspacePath) || "workspace"
+        return this.create(workspacePath, workspaceName)
+      }
       this.options.logger.warn(
         { workspaceId: existing.id, folder: workspacePath, status: existing.status },
         "Skipping pre-warm; existing workspace is not healthy",
@@ -143,11 +152,27 @@ export class WorkspaceManager {
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
- 
+    const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
+    await this.collapseDuplicateWorkspaces(workspacePath)
+
+    const existing = this.findByFolder(workspacePath)
+    if (existing) {
+      if (existing.status === "ready" || existing.status === "starting") {
+        this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+        return existing
+      }
+      if (existing.status === "error") {
+        this.options.logger.warn(
+          { workspaceId: existing.id, folder: workspacePath, error: existing.error },
+          "Replacing errored workspace",
+        )
+        await this.delete(existing.id)
+      }
+    }
+
     const id = `${Date.now().toString(36)}`
     const binary = this.options.binaryResolver.resolveDefault()
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
-    const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
@@ -499,6 +524,30 @@ export class WorkspaceManager {
       .catch((error) => {
         this.options.logger.warn({ workspaceId, err: error }, "Interactive route warm-up failed")
       })
+  }
+
+  private async collapseDuplicateWorkspaces(folder: string): Promise<void> {
+    const normalizedFolder = path.resolve(folder)
+    const matches = this.list().filter((workspace) => path.resolve(workspace.path) === normalizedFolder)
+    if (matches.length <= 1) {
+      return
+    }
+
+    const rank = (workspace: WorkspaceDescriptor): number => {
+      if (workspace.status === "ready") return 3
+      if (workspace.status === "starting") return 2
+      return 1
+    }
+
+    const sorted = [...matches].sort((left, right) => rank(right) - rank(left))
+    const keep = sorted[0]
+    for (const workspace of sorted.slice(1)) {
+      this.options.logger.warn(
+        { workspaceId: workspace.id, keepId: keep.id, folder: normalizedFolder, status: workspace.status },
+        "Removing duplicate workspace for folder",
+      )
+      await this.delete(workspace.id)
+    }
   }
 
   private buildStartupError(

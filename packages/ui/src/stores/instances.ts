@@ -526,8 +526,29 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
 
   void (async function initializeWorkspaces() {
   try {
-    const workspaces = await serverApi.fetchWorkspaces()
-    workspaces.forEach((workspace) => upsertWorkspace(workspace))
+    let workspaces = await serverApi.fetchWorkspaces()
+
+    for (const workspace of workspaces.filter((entry) => entry.status === "error")) {
+      log.warn("Removing errored workspace on startup", { workspaceId: workspace.id, error: workspace.error })
+      await serverApi.deleteWorkspace(workspace.id).catch((error) => {
+        log.error("Failed to delete errored workspace", { workspaceId: workspace.id, error })
+      })
+    }
+
+    workspaces = workspaces.filter((entry) => entry.status !== "error")
+
+    const byFolder = new Map<string, WorkspaceDescriptor>()
+    for (const workspace of workspaces) {
+      const key = normalizeInstanceFolderPath(workspace.path)
+      const current = byFolder.get(key)
+      if (!current || workspace.status === "ready") {
+        byFolder.set(key, workspace)
+      }
+    }
+
+    for (const workspace of byFolder.values()) {
+      upsertWorkspace(workspace)
+    }
     // After a UI refresh, we may have instances but no active selection.
     ensureActiveInstanceSelected()
   } catch (error) {
@@ -701,6 +722,15 @@ function removeInstance(id: string) {
 
 async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
   try {
+    const existing = getExistingInstanceForFolder(folder)
+    if (existing && (existing.status === "ready" || existing.status === "starting")) {
+      setActiveInstanceId(existing.id)
+      return existing.id
+    }
+    if (existing?.status === "error") {
+      stopInstance(existing.id)
+    }
+
     const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
     upsertWorkspace(workspace, projectName)
     setActiveInstanceId(workspace.id)
