@@ -4,6 +4,7 @@ import type { FastifyRequest } from "fastify"
 
 import {
   instanceProxyAllowsBody,
+  isEffectivelyEmptyProxyBody,
   resolveInstanceProxyBody,
   resolveInstanceProxyContentType,
 } from "../instance-proxy-body"
@@ -26,6 +27,14 @@ describe("instance proxy body helpers", () => {
     )
     assert.equal(resolveInstanceProxyBody(mockRequest({ body: Buffer.alloc(0) })), undefined)
     assert.equal(resolveInstanceProxyBody(mockRequest({ body: { model: "ollama/gemma4:latest" } })), '{"model":"ollama/gemma4:latest"}')
+  })
+
+  it("treats empty JSON bodies as absent (OpenCode session.create safety)", () => {
+    assert.equal(isEffectivelyEmptyProxyBody(Buffer.from("{}", "utf8")), true)
+    assert.equal(isEffectivelyEmptyProxyBody(Buffer.from("[]", "utf8")), true)
+    assert.equal(isEffectivelyEmptyProxyBody({}), true)
+    assert.equal(resolveInstanceProxyBody(mockRequest({ body: Buffer.from("{}", "utf8") })), undefined)
+    assert.equal(resolveInstanceProxyBody(mockRequest({ body: {} })), undefined)
   })
 
   it("reads content-type header", () => {

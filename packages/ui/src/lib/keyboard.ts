@@ -27,8 +27,10 @@ export function setupTabKeyboardShortcuts(
     context: "global",
   })
 
+  const keyLower = (event: KeyboardEvent) => (event.key ? event.key.toLowerCase() : "")
+
   window.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && keyLower(e) === "p") {
       e.preventDefault()
       handleCommandPalette()
       return
@@ -57,17 +59,17 @@ export function setupTabKeyboardShortcuts(
       }
     }
 
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && keyLower(e) === "n") {
       e.preventDefault()
       handleNewInstance()
     }
 
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "w") {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && keyLower(e) === "w") {
       e.preventDefault()
       void handleCloseActiveTab()
     }
 
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "w") {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && keyLower(e) === "w") {
       e.preventDefault()
       const instanceId = activeInstanceId()
       if (!instanceId) return
