@@ -17,6 +17,7 @@ import {
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
 import { fetchLocalLlmListedProvider, LOCAL_LLM_PROVIDER_ID, mergeLocalLlmListedProviders } from "../../lib/local-llm-providers"
+import { getCachedProviderAuth } from "../../lib/instance-preload"
 import { fetchProviders } from "../../stores/sessions"
 
 type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "success" | "error"
@@ -245,7 +246,21 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   })
 
   async function loadProviderData(authClient: OpencodeClient): Promise<void> {
-    setLoading(true)
+    const cached = getCachedProviderAuth(props.instanceId)
+    if (cached) {
+      applyProviderAuthPayload({
+        providerListResponse: { data: { all: cached.availableProviders, connected: cached.connectedProviderIds } },
+        authResponse: { data: cached.methodsByProvider as Record<string, ProviderAuthMethod[]> },
+        configResponse: { data: cached.configData },
+        localLlmListed: null,
+        skipLocalMerge: true,
+        prefilledAvailable: cached.availableProviders,
+        prefilledConfiguredIds: cached.configuredProviderIds,
+        prefilledConnectedIds: new Set(cached.connectedProviderIds),
+      })
+    }
+
+    setLoading(!cached)
     setLoadError(null)
     try {
       const [providerListResponse, authResponse, configResponse, localLlmListed] = await Promise.all([
@@ -254,9 +269,35 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         (authClient as any).config.get(),
         fetchLocalLlmListedProvider(),
       ])
-      const nextConfigData = (configResponse?.data ?? {}) as Record<string, any>
-      const nextConfiguredIds = new Set(Object.keys((nextConfigData.provider ?? {}) as Record<string, unknown>))
-      const listed = ((providerListResponse?.data?.all ?? []) as any[]).map((provider) => ({
+      applyProviderAuthPayload({
+        providerListResponse,
+        authResponse,
+        configResponse,
+        localLlmListed,
+      })
+    } catch (error) {
+      if (!cached) {
+        setLoadError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.loadFailed")))
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function applyProviderAuthPayload(input: {
+    providerListResponse: { data?: { all?: unknown[]; connected?: string[] } }
+    authResponse: { data?: Record<string, ProviderAuthMethod[]> }
+    configResponse: { data?: Record<string, any> }
+    localLlmListed: Awaited<ReturnType<typeof fetchLocalLlmListedProvider>> | null
+    skipLocalMerge?: boolean
+    prefilledAvailable?: Array<{ id: string; name: string; modelCount: number; source: string }>
+    prefilledConfiguredIds?: Set<string>
+    prefilledConnectedIds?: Set<string>
+  }) {
+    const nextConfigData = (input.configResponse?.data ?? {}) as Record<string, any>
+    const nextConfiguredIds = input.prefilledConfiguredIds ?? new Set(Object.keys((nextConfigData.provider ?? {}) as Record<string, unknown>))
+    const listed = (input.prefilledAvailable ??
+      ((input.providerListResponse?.data?.all ?? []) as any[]).map((provider) => ({
         id: String(provider.id ?? ""),
         name: String(provider.name ?? provider.id ?? ""),
         modelCount: modelCountFromProvider(provider),
@@ -264,41 +305,38 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
           provider?.source === "env" || provider?.source === "config" || provider?.source === "custom" || provider?.source === "api"
             ? provider.source
             : "unknown",
-      })).filter((provider) => provider.id.length > 0)
+      })).filter((provider) => provider.id.length > 0))
 
-      const configProviders = Object.entries((nextConfigData.provider ?? {}) as Record<string, unknown>).map(([id, value]) => {
-        const provider = (value ?? {}) as { name?: string; models?: Record<string, unknown> }
-        return {
-          id,
-          name: typeof provider.name === "string" && provider.name.trim() ? provider.name : id,
-          modelCount: provider.models ? Object.keys(provider.models).length : 0,
-          source: "config" as const,
-        }
-      })
-
-      let mergedListed = [...listed]
-      for (const configProvider of configProviders) {
-        if (!mergedListed.some((provider) => provider.id === configProvider.id)) {
-          mergedListed.push(configProvider)
-        }
+    const configProviders = Object.entries((nextConfigData.provider ?? {}) as Record<string, unknown>).map(([id, value]) => {
+      const provider = (value ?? {}) as { name?: string; models?: Record<string, unknown> }
+      return {
+        id,
+        name: typeof provider.name === "string" && provider.name.trim() ? provider.name : id,
+        modelCount: provider.models ? Object.keys(provider.models).length : 0,
+        source: "config" as const,
       }
+    })
 
-      mergedListed = mergeLocalLlmListedProviders(mergedListed, localLlmListed)
-      if (localLlmListed) {
-        nextConfiguredIds.add(localLlmListed.id)
+    let mergedListed = [...listed]
+    for (const configProvider of configProviders) {
+      if (!mergedListed.some((provider) => provider.id === configProvider.id)) {
+        mergedListed.push(configProvider)
       }
-
-      setAvailableProviders(mergedListed)
-      setConnectedProviderIds(new Set((providerListResponse?.data?.connected ?? []) as string[]))
-      setConfiguredProviderIds(nextConfiguredIds)
-      setConfigData(nextConfigData)
-      setMethodsByProvider((authResponse?.data ?? {}) as Record<string, ProviderAuthMethod[]>)
-      setSelectedProviderId((current) => current ?? listed[0]?.id ?? Object.keys(authResponse?.data ?? {})[0] ?? null)
-    } catch (error) {
-      setLoadError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.loadFailed")))
-    } finally {
-      setLoading(false)
     }
+
+    if (!input.skipLocalMerge) {
+      mergedListed = mergeLocalLlmListedProviders(mergedListed, input.localLlmListed)
+      if (input.localLlmListed) {
+        nextConfiguredIds.add(input.localLlmListed.id)
+      }
+    }
+
+    setAvailableProviders(mergedListed)
+    setConnectedProviderIds(input.prefilledConnectedIds ?? new Set((input.providerListResponse?.data?.connected ?? []) as string[]))
+    setConfiguredProviderIds(nextConfiguredIds)
+    setConfigData(nextConfigData)
+    setMethodsByProvider((input.authResponse?.data ?? {}) as Record<string, ProviderAuthMethod[]>)
+    setSelectedProviderId((current) => current ?? mergedListed[0]?.id ?? Object.keys(input.authResponse?.data ?? {})[0] ?? null)
   }
 
   function resetFlow(nextProviderId: string | null = null) {

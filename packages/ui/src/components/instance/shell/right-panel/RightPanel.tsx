@@ -31,6 +31,7 @@ import {
 } from "../../../../stores/worktrees"
 import { getRootClient } from "../../../../stores/opencode-client"
 import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
+import { getCachedFileList, setCachedFileList } from "../../../../lib/instance-preload"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
@@ -366,7 +367,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const browserClient = createMemo(() => getRootClient(props.instanceId))
   const fileWorkspacePayload = async () => {
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(props.instanceId, worktreeSlugForViewer())
+    const slug = worktreeSlugForViewer().trim()
+    if (!slug || slug === "root") return {}
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(props.instanceId, slug)
     return workspace ? { workspace } : {}
   }
 
@@ -428,15 +431,28 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const loadBrowserEntries = async (path: string) => {
     const normalized = normalizeBrowserPath(path)
-    setBrowserLoading(true)
-    setBrowserError(null)
+    const cached = normalized === "." ? getCachedFileList(props.instanceId, normalized) : null
+    if (cached) {
+      setBrowserPath(normalized)
+      setBrowserEntries(cached as unknown as FileNode[])
+      setBrowserError(null)
+    } else {
+      setBrowserLoading(true)
+      setBrowserError(null)
+    }
     try {
       const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
       setBrowserPath(normalized)
-      setBrowserEntries(Array.isArray(nodes) ? nodes : [])
+      const entries = Array.isArray(nodes) ? nodes : []
+      setBrowserEntries(entries)
+      if (normalized === ".") {
+        setCachedFileList(props.instanceId, normalized, entries)
+      }
     } catch (error) {
-      setBrowserError(error instanceof Error ? error.message : "Failed to load files")
-      setBrowserEntries([])
+      if (!cached) {
+        setBrowserError(error instanceof Error ? error.message : "Failed to load files")
+        setBrowserEntries([])
+      }
     } finally {
       setBrowserLoading(false)
     }

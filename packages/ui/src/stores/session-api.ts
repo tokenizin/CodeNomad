@@ -829,10 +829,13 @@ async function fetchProviders(instanceId: string): Promise<void> {
   const rootClient = getRootClient(instanceId)
 
   try {
-    await syncOpenCodeLocalOllamaProvider(instanceId)
-
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    const response = await rootClient.config.providers()
+    const [response] = await Promise.all([
+      rootClient.config.providers(),
+      syncOpenCodeLocalOllamaProvider(instanceId).catch((error) => {
+        log.warn("Background Ollama provider sync failed", { instanceId, error })
+      }),
+    ])
     if (!response.data) return
 
     const providerList = response.data.providers.map((provider) => ({

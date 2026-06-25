@@ -33,6 +33,7 @@ import {
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
 import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
+import { clearInstancePreloadCache, prefetchInteractiveResources } from "../lib/instance-preload"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
@@ -278,6 +279,7 @@ function releaseInstanceResources(instanceId: string) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
   clearOpenCodeWorkspaceCache(instanceId)
+  clearInstancePreloadCache(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -411,6 +413,7 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
       fetchAgents(instanceId),
       fetchProviders(instanceId),
       ensureInstanceConfigLoaded(instanceId),
+      prefetchInteractiveResources(instanceId),
     ])
     for (const result of hydrateResults) {
       if (result.status === "rejected") {

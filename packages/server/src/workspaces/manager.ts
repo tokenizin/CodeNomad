@@ -13,6 +13,8 @@ import { Logger } from "../logger"
 import {
   buildOpencodeConfigContent,
   getCodeNomadPluginUrl,
+  loadTunnelProfileContent,
+  mergeOpencodeConfigLayers,
   resolveExistingOpencodeConfigContent,
 } from "../opencode-plugin.js"
 import {
@@ -175,7 +177,10 @@ export class WorkspaceManager {
     const envVars = (serverConfig as any)?.environmentVariables
     const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
     const opencodeConfigContent = buildOpencodeConfigContent(
-      resolveExistingOpencodeConfigContent(userEnvironment),
+      mergeOpencodeConfigLayers(
+        resolveExistingOpencodeConfigContent(userEnvironment),
+        loadTunnelProfileContent(this.options.rootDir),
+      ),
       this.codeNomadPluginUrl,
     )
     const serverBaseUrl = this.options.getServerBaseUrl()
@@ -226,7 +231,7 @@ export class WorkspaceManager {
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.started", workspace: descriptor })
       this.options.logger.info({ workspaceId: id, port }, "Workspace ready")
-      void this.warmInstanceInteractiveRoutes(id, port)
+      void this.warmInstanceInteractiveRoutes(id, port, workspacePath)
       return descriptor
     } catch (error) {
       descriptor.status = "error"
@@ -452,18 +457,30 @@ export class WorkspaceManager {
     }
   }
 
-  /** Prime slow OpenCode routes (agent/MCP/config) so the UI does not hit them cold through Cloudflare. */
-  private warmInstanceInteractiveRoutes(workspaceId: string, port: number): Promise<void> {
+  /** Prime slow OpenCode routes (agent/MCP/config/providers/files) so the UI does not hit them cold through Cloudflare. */
+  private warmInstanceInteractiveRoutes(workspaceId: string, port: number, directory: string): Promise<void> {
     const authHeader = this.opencodeAuth.get(workspaceId)?.authorization
     const headers: Record<string, string> = authHeader ? { Authorization: authHeader } : {}
     const base = `http://127.0.0.1:${port}`
-    const routes = ["/agent", "/config", "/mcp", "/project/current", "/lsp"]
+    const directoryQuery = `directory=${encodeURIComponent(directory)}`
+    const routes = [
+      "/agent",
+      "/config",
+      "/config/providers",
+      "/mcp",
+      "/project/current",
+      "/lsp",
+      "/provider",
+      "/provider/auth",
+      `/file?path=${encodeURIComponent(".")}&${directoryQuery}`,
+      `/file/status?${directoryQuery}`,
+    ]
     const startedAt = Date.now()
 
     return Promise.allSettled(
       routes.map(async (route) => {
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 120_000)
+        const timeout = setTimeout(() => controller.abort(), 45_000)
         try {
           const response = await fetch(`${base}${route}`, { headers, signal: controller.signal })
           this.options.logger.debug({ workspaceId, route, status: response.status }, "Warm route completed")

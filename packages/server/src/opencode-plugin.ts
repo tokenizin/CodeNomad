@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "fs"
+import { existsSync, readdirSync, readFileSync } from "fs"
 import path from "path"
 import { fileURLToPath, pathToFileURL } from "url"
 import { createLogger } from "./logger"
@@ -41,6 +41,37 @@ export function getCodeNomadPluginUrl(): string {
   }
 
   throw new Error(`CodeNomad OpenCode plugin package missing in ${prodPluginDirs.join(", ")}`)
+}
+
+export function resolveTunnelProfilePath(workspaceRoot?: string): string | undefined {
+  const explicit = process.env.OPENCODE_TUNNEL_PROFILE_PATH?.trim()
+  if (explicit) {
+    return path.isAbsolute(explicit) ? explicit : path.resolve(process.cwd(), explicit)
+  }
+  if (process.env.CODENOMAD_OPENCODE_TUNNEL_PROFILE !== "true") {
+    return undefined
+  }
+  const root = workspaceRoot?.trim() || process.env.CLI_WORKSPACE_ROOT?.trim() || process.cwd()
+  return path.resolve(root, ".opencode/profiles/tunnel.json")
+}
+
+export function loadTunnelProfileContent(workspaceRoot?: string): string | undefined {
+  const profilePath = resolveTunnelProfilePath(workspaceRoot)
+  if (!profilePath || !existsSync(profilePath)) {
+    return undefined
+  }
+  return readFileSync(profilePath, "utf-8")
+}
+
+export function mergeOpencodeConfigLayers(
+  ...layers: Array<string | undefined>
+): string | undefined {
+  const merged: Record<string, unknown> = {}
+  for (const layer of layers) {
+    if (!layer?.trim()) continue
+    deepMergeConfig(merged, parseJsoncObject(layer))
+  }
+  return Object.keys(merged).length > 0 ? JSON.stringify(merged, null, 2) : undefined
 }
 
 export function buildOpencodeConfigContent(existingContent: string | undefined, pluginUrl: string): string {
@@ -111,6 +142,24 @@ function normalizePluginEntries(value: unknown): string[] {
     return [...value]
   }
   throw new Error("OPENCODE_CONFIG_CONTENT plugin field must be a string or string array")
+}
+
+function deepMergeConfig(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(source)) {
+    const existing = target[key]
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      existing &&
+      typeof existing === "object" &&
+      !Array.isArray(existing)
+    ) {
+      deepMergeConfig(existing as Record<string, unknown>, value as Record<string, unknown>)
+      continue
+    }
+    target[key] = value
+  }
 }
 
 function stripJsonc(input: string): string {
