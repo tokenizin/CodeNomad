@@ -226,6 +226,7 @@ export class WorkspaceManager {
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.started", workspace: descriptor })
       this.options.logger.info({ workspaceId: id, port }, "Workspace ready")
+      void this.warmInstanceInteractiveRoutes(id, port)
       return descriptor
     } catch (error) {
       descriptor.status = "error"
@@ -449,6 +450,38 @@ export class WorkspaceManager {
       this.options.logger.debug({ workspaceId, err: error }, "Health probe failed")
       return { ok: false, reason }
     }
+  }
+
+  /** Prime slow OpenCode routes (agent/MCP/config) so the UI does not hit them cold through Cloudflare. */
+  private warmInstanceInteractiveRoutes(workspaceId: string, port: number): Promise<void> {
+    const authHeader = this.opencodeAuth.get(workspaceId)?.authorization
+    const headers: Record<string, string> = authHeader ? { Authorization: authHeader } : {}
+    const base = `http://127.0.0.1:${port}`
+    const routes = ["/agent", "/config", "/mcp", "/project/current", "/lsp"]
+    const startedAt = Date.now()
+
+    return Promise.allSettled(
+      routes.map(async (route) => {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 120_000)
+        try {
+          const response = await fetch(`${base}${route}`, { headers, signal: controller.signal })
+          this.options.logger.debug({ workspaceId, route, status: response.status }, "Warm route completed")
+        } finally {
+          clearTimeout(timeout)
+        }
+      }),
+    )
+      .then((results) => {
+        const failed = results.filter((result) => result.status === "rejected").length
+        this.options.logger.info(
+          { workspaceId, port, durationMs: Date.now() - startedAt, routes: routes.length, failed },
+          "Interactive route warm-up finished",
+        )
+      })
+      .catch((error) => {
+        this.options.logger.warn({ workspaceId, err: error }, "Interactive route warm-up failed")
+      })
   }
 
   private buildStartupError(
