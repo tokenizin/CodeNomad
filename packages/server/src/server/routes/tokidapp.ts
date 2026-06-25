@@ -189,6 +189,7 @@ async function startVoiceRealtimeSession(
   sessionId: string,
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
+  chatSessionId?: string,
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
   const existingVoice = getRealtimeSessionVoice(sessionId)
@@ -234,6 +235,7 @@ async function startVoiceRealtimeSession(
       voice,
       userId,
       digest || undefined,
+      chatSessionId,
     )
   } else {
     console.log("[voice-ws] existing session found, calling notifyReady directly")
@@ -302,7 +304,12 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       if (msg.type === "voice_start") {
         console.log("[voice-ws] voice_start received, REALTIME_ENABLED:", REALTIME_ENABLED)
         if (REALTIME_ENABLED) {
-          startVoiceRealtimeSession(sessionId, msg.voice, socketRef)
+          startVoiceRealtimeSession(
+            sessionId,
+            msg.voice,
+            socketRef,
+            typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+          )
         } else {
           console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
           socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
@@ -1412,7 +1419,14 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
           if (msg.type === "voice_start") {
             if (REALTIME_ENABLED) {
-              startVoiceRealtimeSession(sessionId, msg.voice, socketRef)
+              startVoiceRealtimeSession(
+            sessionId,
+            msg.voice,
+            socketRef,
+            typeof msg.tokidappSessionId === "string"
+              ? msg.tokidappSessionId
+              : dbSessionId ?? undefined,
+          )
             } else {
               socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
             }

@@ -99,6 +99,9 @@ interface RealtimeSession {
 
 const sessions = new Map<string, RealtimeSession>()
 
+/** TokiDAPP chat sessions that already received the opening voice greeting. */
+const voiceGreetingPlayedForChatSession = new Set<string>()
+
 // ── Tool Definitions (registered with OpenAI Realtime) ──────
 
 const tools = [
@@ -731,6 +734,8 @@ export function createRealtimeSession(
   /** Optional enriched instructions appended to VOICE_INSTRUCTIONS.
    *  Used to inject architecture knowledge base digest at session start. */
   enrichedInstructions?: string,
+  /** StarWorld / chat-html DB session — greeting plays once per this id. */
+  chatSessionId?: string,
 ): RealtimeSession {
   console.log("[openai-realtime] createRealtimeSession sessionId:", sessionId, "hasKey:", !!OPENAI_API_KEY, "keyPrefix:", OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 8) + "..." : "none")
   if (!OPENAI_API_KEY) {
@@ -859,25 +864,28 @@ export function createRealtimeSession(
           // Keep onReady persistent — fires on every session-ready event (initial + voice change)
           session.onReady?.()
 
-          // On initial session creation, inject a warm greeting so the assistant
-          // introduces itself before VAD starts listening for user speech.
+          // On initial session creation, inject a warm greeting once per chat session.
           if (parsed.type === "session.created") {
-            const greeting: any = {
-              type: "conversation.item.create",
-              item: {
-                type: "message",
-                role: "system",
-                content: [
-                  {
-                    type: "input_text",
-                    text: "You are Star World Assistant, the intelligent StarWORLD concierge. Your role is to assist with the StarWORLD ecosystem — contracts, tokens (STARX, StarXP), venues, bridges, treasury, membership, and development. Greet the user warmly, introduce yourself as Star World Assistant, and ask what they'd like help with today. Keep it to 2-3 concise sentences. Do NOT call any tools — this is just a greeting. Never read URLs, file paths, wallet addresses, or UUIDs aloud — instead say the destination name and that a link is provided.",
-                  },
-                ],
-              },
+            const greetKey = (chatSessionId || "").trim() || sessionId
+            if (!voiceGreetingPlayedForChatSession.has(greetKey)) {
+              voiceGreetingPlayedForChatSession.add(greetKey)
+              const greeting: any = {
+                type: "conversation.item.create",
+                item: {
+                  type: "message",
+                  role: "system",
+                  content: [
+                    {
+                      type: "input_text",
+                      text: "You are Star World Assistant, the intelligent StarWORLD concierge. Your role is to assist with the StarWORLD ecosystem — contracts, tokens (STARX, StarXP), venues, bridges, treasury, membership, and development. Greet the user warmly, introduce yourself as Star World Assistant, and ask what they'd like help with today. Keep it to 2-3 concise sentences. Do NOT call any tools — this is just a greeting. Never read URLs, file paths, wallet addresses, or UUIDs aloud — instead say the destination name and that a link is provided.",
+                    },
+                  ],
+                },
+              }
+              ws.send(JSON.stringify(greeting))
+              ws.send(JSON.stringify({ type: "response.create" }))
+              session.responseInProgress = true
             }
-            ws.send(JSON.stringify(greeting))
-            ws.send(JSON.stringify({ type: "response.create" }))
-            session.responseInProgress = true
           }
           break
 
@@ -1018,9 +1026,24 @@ export function createRealtimeSession(
 
 // ── Audio Relay ──────────────────────────────────────────────
 
+// Pre-session audio buffer — chunks may arrive before createRealtimeSession finishes.
+const preSessionAudio = new Map<string, string[]>()
+const PRE_SESSION_CAP = 256
+
 export function sendAudioChunk(sessionId: string, base64: string): boolean {
   const session = sessions.get(sessionId)
-  if (!session) return false
+  if (!session) {
+    const q = preSessionAudio.get(sessionId) ?? []
+    if (q.length < PRE_SESSION_CAP) q.push(base64)
+    preSessionAudio.set(sessionId, q)
+    return true
+  }
+
+  const backlog = preSessionAudio.get(sessionId)
+  if (backlog?.length) {
+    preSessionAudio.delete(sessionId)
+    for (const chunk of backlog) sendAudioChunk(sessionId, chunk)
+  }
 
   if (!session.connected) {
     session.pendingChunks.push(base64)
