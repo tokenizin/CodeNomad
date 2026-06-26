@@ -1,0 +1,40 @@
+/* Notify History Panel — Accessibility Styles */
+
+/* ==================== prefers-reduced-motion ==================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .notify-history-panel,
+  .notify-history-panel *,
+  .notify-history-backdrop,
+  .choice-bar,
+  .choice-bar * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ==================== Focus-visible ==================== */
+
+/* Focus-visible ring for keyboard navigation on notification items */
+.notify-history-item:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: -2px;
+}
+
+/* Focus-visible ring for filter buttons */
+.notify-history-filter-btn:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: 2px;
+}
+
+/* Focus-visible ring for action buttons */
+.notify-history-action-btn:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: 2px;
+}
+
+/* Focus-visible ring for close button */
+.notify-history-close-btn:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: 2px;
+}

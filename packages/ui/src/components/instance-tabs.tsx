@@ -139,6 +139,9 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   /** Whether to show the categorized notification history panel */
   const [showNotifyHistory, setShowNotifyHistory] = createSignal(false)
 
+  /** Ref for the notify toggle button, for focus restoration on panel close */
+  let notifyTriggerRef: HTMLButtonElement | undefined
+
   /** Active instance ID from the current tab — used by NotifyHistoryPanel */
   const activeInstanceIdForNotify = createMemo(() => {
     const activeTab = props.tabs.find((tab) => tab.id === props.activeTabId)
@@ -270,6 +273,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <Show when={activeInstanceIdForNotify()}>
                 <div class="relative">
                   <button
+                    ref={notifyTriggerRef}
                     class="new-tab-button"
                     onClick={() => setShowNotifyHistory(true)}
                     title={t("notifyHistory.title")}
@@ -322,6 +326,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
         <NotifyHistoryPanel
           instanceId={activeInstanceIdForNotify()!}
           onClose={() => setShowNotifyHistory(false)}
+          restoreFocusRef={() => notifyTriggerRef}
         />
       </Show>
     </>

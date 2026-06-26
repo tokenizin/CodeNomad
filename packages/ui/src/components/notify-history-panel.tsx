@@ -11,6 +11,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   type Component,
 } from "solid-js"
 import { Bell, X, Check, Trash2, ChevronDown, ChevronUp, AlertTriangle, HelpCircle, ArrowUpRight, ExternalLink } from "lucide-solid"
@@ -32,6 +33,7 @@ import {
   groupNotifyEventsByDate,
 } from "./notify-history-utils"
 import type { NotifyPanelFilter } from "./notify-history-utils"
+import "../styles/components/notify-history.css"
 
 // ==================== Types ====================
 
@@ -42,6 +44,8 @@ interface NotifyHistoryPanelProps {
   onClose: () => void;
   /** Action callback for command/choiceValue actions */
   onAction?: (action: NotifyAction) => void;
+  /** Getter for the trigger element to restore focus on close */
+  restoreFocusRef?: () => HTMLElement | undefined;
 }
 
 // ==================== Constants ====================
@@ -129,10 +133,27 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
   // Unread count from store
   const unreadCount = createMemo(() => getUnreadCount())
 
-  // Close on ESC
+  // Panel ref for focus management
+  let panelRef: HTMLDivElement | undefined
+
+  // Focus panel container on mount
+  onMount(() => {
+    if (panelRef) {
+      panelRef.focus()
+    }
+  })
+
+  // Close on ESC — restore focus to trigger element before closing
   createEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Restore focus to trigger element before closing
+        if (props.restoreFocusRef) {
+          const trigger = props.restoreFocusRef()
+          if (trigger && typeof trigger.focus === "function") {
+            trigger.focus()
+          }
+        }
         props.onClose()
       }
     }
@@ -240,6 +261,7 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
   return (
     <div class="notify-history-backdrop" onClick={handleBackdropClick}>
       <div
+        ref={panelRef}
         class="notify-history-panel flex flex-col overflow-hidden rounded-[var(--radius-xl)] border border-base bg-surface-base"
         style={{
           "width": "min(420px, calc(100vw - var(--space-lg) * 2))",
@@ -248,7 +270,18 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
         role="dialog"
         aria-modal="true"
         aria-label={t("notifyHistory.title")}
+        tabIndex={-1}
       >
+        {/* Screen reader live region for new notification announcements */}
+        <span
+          class="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {hasUnread() ? t("notifyHistory.unread", { count: unreadCount() }) : ""}
+        </span>
+
         {/* Header */}
         <header class="flex items-center justify-between gap-[var(--space-md)] p-[var(--space-md)] border-b border-base bg-surface-secondary">
           <div class="flex items-center gap-[var(--space-sm)] min-w-0">

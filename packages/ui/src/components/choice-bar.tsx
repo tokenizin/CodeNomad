@@ -38,6 +38,8 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
   const [selectedValues, setSelectedValues] = createSignal<Set<string>>(new Set())
   // Countdown seconds remaining (for timeout display)
   const [countdown, setCountdown] = createSignal<number | null>(null)
+  // Ref for the first choice button (auto-focus on appear)
+  let firstButtonRef: HTMLButtonElement | undefined
   // Track the dismiss timer ID for cleanup
   let dismissTimerId: ReturnType<typeof setTimeout> | undefined
 
@@ -93,6 +95,15 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
 
   // Whether we are in multiple-selection mode
   const isMultiple = createMemo(() => props.choice?.multiple === true)
+
+  // Auto-focus first choice button when choice appears
+  createEffect(() => {
+    if (props.choice && props.choice.choices.length > 0) {
+      queueMicrotask(() => {
+        firstButtonRef?.focus()
+      })
+    }
+  })
 
   // Handle option click
   const handleOptionClick = (value: string) => {
@@ -198,6 +209,7 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
                 return (
                   <button
                     type="button"
+                    ref={index() === 0 ? (el) => { firstButtonRef = el } : undefined}
                     class="choice-bar-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] border border-base bg-surface-secondary text-[var(--font-size-sm)] font-medium cursor-pointer whitespace-nowrap select-none transition-colors"
                     classList={{
                       "choice-bar-btn-active": isMultiple() && isSelected(),
