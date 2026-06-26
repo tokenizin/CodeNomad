@@ -42,9 +42,19 @@ export function resolveInstanceProxyContentType(request: FastifyRequest): string
   return undefined
 }
 
+/**
+ * OpenCode 1.17.9+ requires a body for POST /session and returns 400 without one.
+ * Skip the empty-body check for session creation to allow empty JSON through.
+ */
+const SESSION_ENDPOINT_REGEX = /\/session$/i
+
 export function resolveInstanceProxyBody(request: FastifyRequest): string | Buffer | undefined {
   const body = request.body
-  if (isEffectivelyEmptyProxyBody(body)) {
+
+  const urlPath = (request.url ?? "").split("?")[0]
+  const isSessionEndpoint = SESSION_ENDPOINT_REGEX.test(urlPath)
+
+  if (isEffectivelyEmptyProxyBody(body) && !isSessionEndpoint) {
     return undefined
   }
 

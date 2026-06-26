@@ -456,7 +456,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
-    const response = await client.session.create()
+    const response = await client.session.create({ title: "New Session" })
 
     if (!response.data) {
       throw new Error("Failed to create session: No data returned")
