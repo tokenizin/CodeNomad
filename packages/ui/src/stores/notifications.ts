@@ -216,4 +216,5 @@ export {
   getNotifyEventById,
   resetNotifyStoreForTests,
   setNotifyEventsForTests,
+  addEvent,
 }

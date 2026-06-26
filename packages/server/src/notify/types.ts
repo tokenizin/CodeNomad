@@ -28,6 +28,12 @@ export type NotifyCategory =
   | 'broadcast'
   | 'question'
   | 'system'
+  | 'error'
+  | 'success_progress'
+  | 'task_status'
+  | 'session_alert'
+  | 'workaround_suggested'
+  | 'mitigation_applied'
 
 /** Priority — user-attention level */
 export type NotifyPriority = 'low' | 'normal' | 'high' | 'urgent'

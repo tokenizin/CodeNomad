@@ -42,6 +42,9 @@ import type {
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
+import { addEvent } from './notifications'
+import { generateNotifyId } from '../types/notify'
+import type { NotifyEvent } from '../types/notify'
 import {
   instances,
   addPermissionToQueue,
@@ -604,6 +607,23 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
 
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
   log.info(`[SSE] Session idle: ${sessionId}`)
+
+  // Notify event for session idle
+  const idleEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'session',
+    category: 'session_alert',
+    priority: 'normal',
+    severity: 'warning',
+    eventType: 'session.idle',
+    title: 'Session Idle',
+    message: `Session "${sessionId}" is idle`,
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, idleEvent)
 }
 
 function handleSessionStatus(instanceId: string, event: EventSessionStatus): void {
@@ -668,6 +688,44 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
     variant: "info",
     duration: 10000,
   })
+
+  // Notify event for session compacted
+  const compactedEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'session',
+    category: 'system',
+    priority: 'low',
+    severity: 'info',
+    eventType: 'session.compacted',
+    title: 'Session Compacted',
+    message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, compactedEvent)
+
+  // Also add mitigation_applied notification if metadata indicates mitigation
+  const eventAny = event as any
+  const mitigation = eventAny.properties?.mitigation ?? eventAny.properties?.action
+  if (mitigation) {
+    const mitigateEvent: NotifyEvent = {
+      id: generateNotifyId(),
+      instanceId,
+      source: 'session',
+      category: 'mitigation_applied',
+      priority: 'normal',
+      severity: 'info',
+      eventType: 'session.mitigation_applied',
+      title: 'Mitigation Applied',
+      message: String(mitigation),
+      createdAt: Date.now(),
+      read: false,
+      schemaVersion: 1,
+    }
+    addEvent(instanceId, mitigateEvent)
+  }
 }
 
 function handleSessionError(_instanceId: string, event: EventSessionError): void {
@@ -688,6 +746,24 @@ function handleSessionError(_instanceId: string, event: EventSessionError): void
     title: tGlobal("sessionEvents.sessionError.title"),
     variant: "error",
   })
+
+  // Notify event for session error
+  const errorEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId: _instanceId,
+    source: 'session',
+    category: 'error',
+    priority: 'high',
+    severity: 'critical',
+    eventType: 'session.error',
+    title: 'Session Error',
+    message,
+    metadata: error ? { error } : undefined,
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(_instanceId, errorEvent)
 }
 
 function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
@@ -747,6 +823,23 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
     const body = label ? `Session "${label}" needs permission` : "Session needs permission"
     fireOsNotification({ title, body })
   }
+
+  // Notify event for permission asked
+  const permEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'permission',
+    category: 'help_required',
+    priority: 'normal',
+    severity: 'warning',
+    eventType: 'permission.asked',
+    title: 'Permission Required',
+    message: getPermissionKind(permission),
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, permEvent)
 }
 
 function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
@@ -758,6 +851,23 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionV2Rep
   markPermissionReplied(instanceId, requestId)
   removePermissionFromQueue(instanceId, requestId)
   removePermissionV2(instanceId, requestId)
+
+  // Notify event for permission replied
+  const repliedEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'permission',
+    category: 'success_progress',
+    priority: 'normal',
+    severity: 'info',
+    eventType: 'permission.replied',
+    title: 'Permission Resolved',
+    message: `Permission ${requestId} was resolved`,
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, repliedEvent)
 }
 
 function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
@@ -777,6 +887,23 @@ function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | L
     const body = label ? `Session "${label}" needs input` : "Session needs input"
     fireOsNotification({ title, body })
   }
+
+  // Notify event for question asked
+  const questionEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'orchestrator',
+    category: 'help_required',
+    priority: 'normal',
+    severity: 'warning',
+    eventType: 'question.asked',
+    title: 'Question Asked',
+    message: getQuestionId(request),
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, questionEvent)
 }
 
 function handleQuestionAnswered(
@@ -790,6 +917,23 @@ function handleQuestionAnswered(
   log.info(`[SSE] Question answered: ${requestId}`)
   removeQuestionFromQueue(instanceId, requestId)
   removeQuestionV2(instanceId, requestId)
+
+  // Notify event for question answered
+  const answeredEvent: NotifyEvent = {
+    id: generateNotifyId(),
+    instanceId,
+    source: 'orchestrator',
+    category: 'success_progress',
+    priority: 'low',
+    severity: 'info',
+    eventType: 'question.replied',
+    title: 'Question Answered',
+    message: `Question ${requestId} was answered`,
+    createdAt: Date.now(),
+    read: false,
+    schemaVersion: 1,
+  }
+  addEvent(instanceId, answeredEvent)
 }
 
 export {
