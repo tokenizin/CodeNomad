@@ -187,6 +187,12 @@ export const NOTIFY_CATEGORY_LABELS: Record<NotifyCategory, string> = {
   broadcast: 'Broadcast',
   question: 'Question',
   system: 'System',
+  error: 'Error',
+  success_progress: 'Success Progress',
+  task_status: 'Task Status',
+  session_alert: 'Session Alert',
+  workaround_suggested: 'Workaround',
+  mitigation_applied: 'Mitigation',
 }
 
 /** Priority display labels */

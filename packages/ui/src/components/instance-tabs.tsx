@@ -11,13 +11,15 @@ import {
 import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
-import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
+import NotifyHistoryPanel from "./notify-history-panel"
+import { Plus, MonitorUp, Bell, BellOff, Settings, ListFilter } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import StarGuardBackLink from "./starguard-back-link"
 import { getUnreadToastCountSignal } from "../lib/notifications"
+import { getUnreadCount } from "../stores/notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
@@ -133,6 +135,15 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
   /** Whether to show toast history panel */
   const [showToastHistory, setShowToastHistory] = createSignal(false)
+
+  /** Whether to show the categorized notification history panel */
+  const [showNotifyHistory, setShowNotifyHistory] = createSignal(false)
+
+  /** Active instance ID from the current tab — used by NotifyHistoryPanel */
+  const activeInstanceIdForNotify = createMemo(() => {
+    const activeTab = props.tabs.find((tab) => tab.id === props.activeTabId)
+    return activeTab?.kind === "instance" ? activeTab.instance.id : null
+  })
 
   const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
   const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
@@ -255,9 +266,32 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 </Show>
               </div>
 
+              {/* Categorized Notifications Button */}
+              <Show when={activeInstanceIdForNotify()}>
+                <div class="relative">
+                  <button
+                    class="new-tab-button"
+                    onClick={() => setShowNotifyHistory(true)}
+                    title={t("notifyHistory.title")}
+                    aria-label={t("notifyHistory.title")}
+                  >
+                    <ListFilter class="w-4 h-4" />
+                  </button>
+                  {/* Unread badge from categorized notification store */}
+                  <Show when={getUnreadCount() > 0}>
+                    <span
+                      class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-brand text-[10px] font-bold text-white"
+                      aria-label={t("notifyHistory.unread", { count: getUnreadCount() })}
+                    >
+                      {getUnreadCount() > 9 ? "9+" : getUnreadCount()}
+                    </span>
+                  </Show>
+                </div>
+              </Show>
+
               <StarGuardBackLink />
 
-              <Show when={canOpenRemoteWindows()}>
+              <Show when={canOpenRemoteWindows()}>"
                 <button
                   class="new-tab-button tab-remote-button"
                   onClick={() => openSettings("remote")}
@@ -280,6 +314,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             setShowToastHistory(false)
             openSettings("notifications")
           }}
+        />
+      </Show>
+
+      {/* Categorized Notifications History Panel */}
+      <Show when={showNotifyHistory() && activeInstanceIdForNotify()}>
+        <NotifyHistoryPanel
+          instanceId={activeInstanceIdForNotify()!}
+          onClose={() => setShowNotifyHistory(false)}
         />
       </Show>
     </>
