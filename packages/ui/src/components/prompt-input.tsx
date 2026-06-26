@@ -29,6 +29,9 @@ import {
 import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
 import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
 import { voiceConversationStore } from "./voice-conversation/store"
+import ChoiceBar from "./choice-bar"
+import { sseManager } from "../lib/sse-manager"
+import type { ChatChoiceAskedPayload, ChatChoiceRepliedPayload } from "../types/notify"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
@@ -86,6 +89,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [isResizing, setIsResizing] = createSignal(false)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
+  const [activeChoice, setActiveChoice] = createSignal<ChatChoiceAskedPayload | null>(null)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
@@ -324,6 +328,45 @@ export default function PromptInput(props: PromptInputProps) {
       { defer: true },
     ),
   )
+
+  // SSE choice event listeners
+  createEffect(() => {
+    const instanceId = props.instanceId
+
+    const choiceAskedHandler: typeof sseManager.onChoiceAsked = (id, event) => {
+      if (id !== instanceId) return
+      const payload = event.properties?.payload
+      if (payload) {
+        setActiveChoice(payload)
+      }
+    }
+
+    const choiceRepliedHandler: typeof sseManager.onChoiceReplied = (id) => {
+      if (id !== instanceId) return
+      setActiveChoice(null)
+    }
+
+    const choiceExpiredHandler: typeof sseManager.onChoiceExpired = (id) => {
+      if (id !== instanceId) return
+      setActiveChoice(null)
+    }
+
+    sseManager.onChoiceAsked = choiceAskedHandler
+    sseManager.onChoiceReplied = choiceRepliedHandler
+    sseManager.onChoiceExpired = choiceExpiredHandler
+
+    onCleanup(() => {
+      if (sseManager.onChoiceAsked === choiceAskedHandler) {
+        sseManager.onChoiceAsked = undefined
+      }
+      if (sseManager.onChoiceReplied === choiceRepliedHandler) {
+        sseManager.onChoiceReplied = undefined
+      }
+      if (sseManager.onChoiceExpired === choiceExpiredHandler) {
+        sseManager.onChoiceExpired = undefined
+      }
+    })
+  })
 
   const isCoarsePointer = () => {
     if (typeof window === "undefined") return false
@@ -913,6 +956,15 @@ export default function PromptInput(props: PromptInputProps) {
               </Show>
             </div>
           </div>
+          <Show when={activeChoice()}>
+            <ChoiceBar
+              choice={activeChoice()}
+              onSelect={(value) => {
+                setActiveChoice(null)
+              }}
+              onDismiss={() => setActiveChoice(null)}
+            />
+          </Show>
         </div>
 
         <div class="prompt-input-actions">

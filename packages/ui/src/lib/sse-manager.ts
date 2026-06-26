@@ -68,6 +68,27 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+interface ChatChoiceAskedEvent {
+  type: "chat.choice.asked"
+  properties: {
+    payload: import("../types/notify").ChatChoiceAskedPayload
+  }
+}
+
+interface ChatChoiceRepliedEvent {
+  type: "chat.choice.replied"
+  properties: {
+    payload: import("../types/notify").ChatChoiceRepliedPayload
+  }
+}
+
+interface ChatChoiceExpiredEvent {
+  type: "chat.choice.expired"
+  properties: {
+    payload: import("../types/notify").ChatChoiceExpiredPayload
+  }
+}
+
 interface NotifyCreatedEvent {
   type: "notify.create"
   properties: {
@@ -123,6 +144,9 @@ type SSEEvent =
   | NotifyCreatedEvent
   | NotifyUpdatedEvent
   | NotifyRemovedEvent
+  | ChatChoiceAskedEvent
+  | ChatChoiceRepliedEvent
+  | ChatChoiceExpiredEvent
   | { type: string; properties?: Record<string, unknown> }
 
 type ConnectionStatus = InstanceStreamStatus
@@ -247,6 +271,15 @@ class SSEManager {
       case "notify.remove":
         this.onNotifyRemoved?.(instanceId, event as NotifyRemovedEvent)
         break
+      case "chat.choice.asked":
+        this.onChoiceAsked?.(instanceId, event as ChatChoiceAskedEvent)
+        break
+      case "chat.choice.replied":
+        this.onChoiceReplied?.(instanceId, event as ChatChoiceRepliedEvent)
+        break
+      case "chat.choice.expired":
+        this.onChoiceExpired?.(instanceId, event as ChatChoiceExpiredEvent)
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -282,6 +315,9 @@ class SSEManager {
   onNotifyCreated?: (instanceId: string, event: NotifyCreatedEvent) => void
   onNotifyUpdated?: (instanceId: string, event: NotifyUpdatedEvent) => void
   onNotifyRemoved?: (instanceId: string, event: NotifyRemovedEvent) => void
+  onChoiceAsked?: (instanceId: string, event: ChatChoiceAskedEvent) => void
+  onChoiceReplied?: (instanceId: string, event: ChatChoiceRepliedEvent) => void
+  onChoiceExpired?: (instanceId: string, event: ChatChoiceExpiredEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

@@ -134,3 +134,34 @@ export type NotifyWsEnvelope =
   | { type: 'notify.create'; properties: { event: NotifyEvent } }
   | { type: 'notify.update'; properties: { id: string; instanceId: string; patch: Partial<NotifyEvent> } }
   | { type: 'notify.remove'; properties: { id: string; instanceId: string } }
+
+// ==================== Chat Choice Types ====================
+
+/** A single choice option presented to the user */
+export interface ChatChoiceOption {
+  label: string
+  value: string
+}
+
+/** Payload for chat.choice.asked event */
+export interface ChatChoiceAskedPayload {
+  id: string
+  choices: ChatChoiceOption[]
+  /** Allow multiple selections (default false) */
+  multiple?: boolean
+  /** Optional title/context heading */
+  title?: string
+  /** Auto-dismiss timeout in seconds */
+  timeout?: number
+}
+
+/** Payload for chat.choice.replied event */
+export interface ChatChoiceRepliedPayload {
+  id: string
+  value: string | string[]
+}
+
+/** Payload for chat.choice.expired event */
+export interface ChatChoiceExpiredPayload {
+  id: string
+}
