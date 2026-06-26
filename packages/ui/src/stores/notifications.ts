@@ -30,7 +30,7 @@ const SEVERITY_TO_TOAST_VARIANT: Record<string, ToastVariant> = {
 }
 
 /** Determine whether a notify event should trigger a toast notification */
-function shouldShowToast(event: NotifyEvent): boolean {
+export function shouldShowToast(event: NotifyEvent): boolean {
   return event.priority === "high" || event.priority === "urgent" || event.severity === "critical"
 }
 
