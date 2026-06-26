@@ -22,6 +22,7 @@ import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
+import { approximateBinarySizeFromBase64, detectImageMime, isImagePath } from "./fileTypes"
 
 import {
   getDefaultWorktreeSlug,
@@ -112,6 +113,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [browserSelectedDirty, setBrowserSelectedDirty] = createSignal(false)
   const [browserSelectedSaving, setBrowserSelectedSaving] = createSignal(false)
   const [browserSelectedOriginalContent, setBrowserSelectedOriginalContent] = createSignal<string | null>(null)
+  const [browserSelectedBase64, setBrowserSelectedBase64] = createSignal<{
+    base64: string
+    mimeType: string
+    sizeBytes: number
+    path: string
+  } | null>(null)
 
   const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
@@ -383,6 +390,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     gitSelectedError,
     gitSelectedBefore,
     gitSelectedAfter,
+    gitSelectedAfterBase64,
     gitCommitMessage,
     gitCommitSubmitting,
     gitMostChangedItemId,
@@ -412,6 +420,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedError(null)
     setBrowserSelectedLoading(false)
+    setBrowserSelectedBase64(null)
   })
 
   const normalizeBrowserPath = (input: string) => {
@@ -465,6 +474,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedDirty(false)
     setBrowserSelectedOriginalContent(null)
+    setBrowserSelectedBase64(null)
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {
@@ -475,9 +485,35 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
       if (type && type !== "text") {
+        if (isImagePath(path)) {
+          const base64 = String((content as any)?.content || "")
+          if (base64) {
+            const mimeType = (content as any)?.mimeType || detectImageMime(path) || "image/png"
+            setBrowserSelectedBase64({
+              base64,
+              mimeType,
+              sizeBytes: approximateBinarySizeFromBase64(base64),
+              path,
+            })
+            return
+          }
+        }
         throw new Error("Binary file cannot be displayed")
       }
       if (encoding === "base64") {
+        if (isImagePath(path)) {
+          const base64 = String((content as any)?.content || "")
+          if (base64) {
+            const mimeType = (content as any)?.mimeType || detectImageMime(path) || "image/png"
+            setBrowserSelectedBase64({
+              base64,
+              mimeType,
+              sizeBytes: approximateBinarySizeFromBase64(base64),
+              path,
+            })
+            return
+          }
+        }
         throw new Error("Binary file cannot be displayed")
       }
       const text = (content as any)?.content
@@ -595,6 +631,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
     setBrowserSelectedDirty(false)
+    setBrowserSelectedBase64(null)
   })
 
   const toggleFilesList = () => {
@@ -643,11 +680,38 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         const type = (content as any)?.type
         const encoding = (content as any)?.encoding
         if (type && type !== "text") {
+          if (isImagePath(selected)) {
+            const base64 = String((content as any)?.content || "")
+            if (base64) {
+              const mimeType = (content as any)?.mimeType || detectImageMime(selected) || "image/png"
+              setBrowserSelectedBase64({
+                base64,
+                mimeType,
+                sizeBytes: approximateBinarySizeFromBase64(base64),
+                path: selected,
+              })
+              return
+            }
+          }
           throw new Error("Binary file cannot be displayed")
         }
         if (encoding === "base64") {
+          if (isImagePath(selected)) {
+            const base64 = String((content as any)?.content || "")
+            if (base64) {
+              const mimeType = (content as any)?.mimeType || detectImageMime(selected) || "image/png"
+              setBrowserSelectedBase64({
+                base64,
+                mimeType,
+                sizeBytes: approximateBinarySizeFromBase64(base64),
+                path: selected,
+              })
+              return
+            }
+          }
           throw new Error("Binary file cannot be displayed")
         }
+        setBrowserSelectedBase64(null)
         const text = (content as any)?.content
         if (typeof text !== "string") {
           throw new Error("Unsupported file type")
@@ -754,6 +818,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               selectedError={gitSelectedError}
               selectedBefore={gitSelectedBefore}
               selectedAfter={gitSelectedAfter}
+              selectedAfterBase64={gitSelectedAfterBase64}
               mostChangedItemId={gitMostChangedItemId}
               scopeKey={gitScopeKey}
               diffViewMode={diffViewMode}
@@ -808,6 +873,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedError={browserSelectedError}
               browserSelectedDirty={browserSelectedDirty}
               browserSelectedSaving={browserSelectedSaving}
+              browserSelectedBase64={browserSelectedBase64}
               wordWrapMode={filesWordWrapMode}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}

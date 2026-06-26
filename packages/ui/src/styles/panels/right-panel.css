@@ -880,3 +880,31 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 }
+
+/* Inline image preview (SCR-008). Renders PNG/JPEG/WebP/GIF/BMP/ICO inline
+   in the Files + Git Changes panels. Falls back to "too large" copy when the
+   file exceeds the 10 MB cap. */
+.codenomad-image-preview-container {
+  @apply flex flex-col items-center justify-center w-full h-full;
+  padding: 1rem;
+  background-color: var(--surface-base);
+}
+
+.codenomad-image-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 4px;
+  background-color: var(--surface-secondary);
+}
+
+.codenomad-image-preview-too-large {
+  @apply flex flex-col items-center justify-center gap-3 text-center;
+  color: var(--text-muted);
+}
+
+.codenomad-image-preview-too-large-text {
+  @apply text-xs;
+  max-width: 480px;
+}

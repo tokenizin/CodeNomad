@@ -4,6 +4,8 @@ import type { FileNode } from "@opencode-ai/sdk/v2/client"
 import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
+import { ImagePreview } from "../ImagePreview"
+import { isImagePath } from "../fileTypes"
 import { Markdown } from "../../../../markdown"
 import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
@@ -16,6 +18,13 @@ const LazyMonacoFileViewer = lazy(() =>
 function isMarkdownPath(path: string | null | undefined): boolean {
   if (!path) return false
   return /\.(md|markdown|mdown|mkdn)$/i.test(path)
+}
+
+export interface BrowserSelectedBase64 {
+  base64: string
+  mimeType: string
+  sizeBytes: number
+  path: string
 }
 
 interface FilesTabProps {
@@ -32,6 +41,7 @@ interface FilesTabProps {
   browserSelectedError: Accessor<string | null>
   browserSelectedDirty: Accessor<boolean>
   browserSelectedSaving: Accessor<boolean>
+  browserSelectedBase64: Accessor<BrowserSelectedBase64 | null>
   wordWrapMode: Accessor<"on" | "off">
 
   parentPath: Accessor<string | null>
@@ -56,6 +66,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
   const { isDark } = useTheme()
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
+  const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
   let markdownPreviewRef: HTMLDivElement | undefined
 
   createEffect(() => {
@@ -92,6 +103,11 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
   const selectedMarkdownFile = createMemo(() => isMarkdownPath(props.browserSelectedPath()))
   const showingMarkdownPreview = createMemo(() => selectedMarkdownFile() && markdownPreviewEnabled())
+
+  const selectedImageFile = createMemo(() => isImagePath(props.browserSelectedPath()))
+  const showingImagePreview = createMemo(
+    () => selectedImageFile() && imagePreviewEnabled() && props.browserSelectedBase64() !== null,
+  )
 
   createEffect(() => {
     if (!selectedMarkdownFile()) {
@@ -224,7 +240,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
-        <div class={showingMarkdownPreview() ? "file-viewer-content" : "file-viewer-content file-viewer-content--monaco"}>
+        <div class={showingMarkdownPreview() || showingImagePreview() ? "file-viewer-content" : "file-viewer-content file-viewer-content--monaco"}>
           <Show
             when={props.browserSelectedLoading()}
             fallback={
@@ -232,48 +248,70 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 when={props.browserSelectedError()}
                 fallback={
                   <Show
-                    when={
-                      props.browserSelectedPath() && props.browserSelectedContent() !== null
-                        ? { path: props.browserSelectedPath() as string, content: props.browserSelectedContent() as string }
-                        : null
-                    }
+                    when={props.browserSelectedBase64() !== null}
                     fallback={
-                      <div class="file-viewer-empty">
-                        <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
-                      </div>
-                    }
-                  >
-                    {(payload) => (
                       <Show
-                        when={showingMarkdownPreview()}
+                        when={
+                          props.browserSelectedPath() && props.browserSelectedContent() !== null
+                            ? { path: props.browserSelectedPath() as string, content: props.browserSelectedContent() as string }
+                            : null
+                        }
                         fallback={
-                          <Suspense
-                            fallback={
-                              <div class="file-viewer-empty">
-                                <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
-                              </div>
-                            }
-                          >
-                            <LazyMonacoFileViewer
-                              scopeKey={props.scopeKey()}
-                              path={payload().path}
-                              content={payload().content}
-                              wordWrap={props.wordWrapMode()}
-                              onSave={props.onSave}
-                              onContentChange={props.onContentChange}
-                            />
-                          </Suspense>
+                          <div class="file-viewer-empty">
+                            <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
+                          </div>
                         }
                       >
-                        <div
-                          ref={markdownPreviewRef}
-                          class="h-full outline-none"
-                          tabIndex={0}
-                          onKeyDown={handleMarkdownPreviewKeyDown}
-                          onMouseDown={() => markdownPreviewRef?.focus()}
-                        >
-                          <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} escapeRawHtml />
+                        {(payload) => (
+                          <Show
+                            when={showingMarkdownPreview()}
+                            fallback={
+                              <Suspense
+                                fallback={
+                                  <div class="file-viewer-empty">
+                                    <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                                  </div>
+                                }
+                              >
+                                <LazyMonacoFileViewer
+                                  scopeKey={props.scopeKey()}
+                                  path={payload().path}
+                                  content={payload().content}
+                                  wordWrap={props.wordWrapMode()}
+                                  onSave={props.onSave}
+                                  onContentChange={props.onContentChange}
+                                />
+                              </Suspense>
+                            }
+                          >
+                            <div
+                              ref={markdownPreviewRef}
+                              class="h-full outline-none"
+                              tabIndex={0}
+                              onKeyDown={handleMarkdownPreviewKeyDown}
+                              onMouseDown={() => markdownPreviewRef?.focus()}
+                            >
+                              <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} escapeRawHtml />
+                            </div>
+                          </Show>
+                        )}
+                      </Show>
+                    }
+                  >
+                    {(_) => (
+                      <Show when={showingImagePreview() && props.browserSelectedBase64()} fallback={
+                        <div class="file-viewer-empty">
+                          <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
                         </div>
+                      }>
+                        {(imgPayload) => (
+                          <ImagePreview
+                            base64={imgPayload().base64}
+                            mimeType={imgPayload().mimeType}
+                            sizeBytes={imgPayload().sizeBytes}
+                            path={imgPayload().path}
+                          />
+                        )}
                       </Show>
                     )}
                   </Show>
@@ -320,6 +358,21 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               {showingMarkdownPreview()
                 ? props.t("instanceShell.filesShell.showSource")
                 : props.t("instanceShell.filesShell.previewMarkdown")}
+            </button>
+            <button
+              type="button"
+              class={`file-viewer-toolbar-button${showingImagePreview() ? " active" : ""}`}
+              disabled={!selectedImageFile()}
+              title={props.t("instanceShell.filesShell.imagePreview.toggle")}
+              aria-label={props.t("instanceShell.filesShell.imagePreview.toggle")}
+              onClick={() => {
+                if (!selectedImageFile()) return
+                setImagePreviewEnabled((prev) => !prev)
+              }}
+            >
+              {showingImagePreview()
+                ? props.t("instanceShell.filesShell.showSource")
+                : props.t("instanceShell.filesShell.imagePreview.toggle")}
             </button>
             <button
               type="button"

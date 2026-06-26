@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
-import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
+import type { File as GitFileStatus, FileContent } from "@opencode-ai/sdk/v2/client"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
@@ -10,6 +10,7 @@ import { serverApi } from "../../../../lib/api-client"
 import { serverEvents } from "../../../../lib/server-events"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { approximateBinarySizeFromBase64, detectImageMime, isImagePath } from "./fileTypes"
 
 type UseGitChangesOptions = {
   t: (key: string, vars?: Record<string, any>) => string
@@ -32,6 +33,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
   const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
   const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
+  const [gitSelectedAfterBase64, setGitSelectedAfterBase64] = createSignal<{
+    base64: string
+    mimeType: string
+    sizeBytes: number
+    path: string
+  } | null>(null)
   const [gitCommitMessage, setGitCommitMessage] = createSignal("")
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
   let gitStatusRequestVersion = 0
@@ -133,6 +140,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitSelectedError(null)
     setGitSelectedBefore(null)
     setGitSelectedAfter(null)
+    setGitSelectedAfterBase64(null)
   }
 
   const clearSelectedGitDiffAndSelection = () => {
@@ -222,6 +230,34 @@ export function useGitChanges(options: UseGitChangesOptions) {
       })
       if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
+        // For image binary diffs, fetch the working-copy file via the same
+        // SDK file.read API the Files panel uses (it already returns base64).
+        // Non-image binaries fall through to the existing binaryViewer error.
+        if (isImagePath(item.path)) {
+          try {
+            const client = getRootClient(options.instanceId)
+            const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, options.worktreeSlug())
+            const fileContent = await requestData<FileContent>(
+              client.file.read({ path: item.path, ...(workspace ? { workspace } : {}) }),
+              "file.read",
+            )
+            if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
+            const base64 = String((fileContent as any)?.content || "")
+            if (base64) {
+              const mimeType = (fileContent as any)?.mimeType || detectImageMime(item.path) || "image/png"
+              setGitSelectedAfterBase64({
+                base64,
+                mimeType,
+                sizeBytes: approximateBinarySizeFromBase64(base64),
+                path: item.path,
+              })
+              return
+            }
+          } catch {
+            // Fall through to binaryViewer if the on-disk read fails (e.g.,
+            // deleted file or a sub-resource that's only in the diff).
+          }
+        }
         setGitSelectedError(options.t("instanceShell.gitChanges.binaryViewer"))
         return
       }
@@ -444,6 +480,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (options.rightPanelTab() === "git-changes") return
     setGitSelectedBefore(null)
     setGitSelectedAfter(null)
+    setGitSelectedAfterBase64(null)
     setGitSelectedLoading(false)
     setGitSelectedError(null)
   })
@@ -458,6 +495,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     gitSelectedError,
     gitSelectedBefore,
     gitSelectedAfter,
+    gitSelectedAfterBase64,
     gitCommitMessage,
     gitCommitSubmitting,
     gitMostChangedItemId,

@@ -3,6 +3,7 @@ import {
   Show,
   Suspense,
   createMemo,
+  createSignal,
   lazy,
   type Accessor,
   type Component,
@@ -13,6 +14,8 @@ import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
+import { ImagePreview } from "../ImagePreview"
+import { isImagePath } from "../fileTypes"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, GitChangeListItem } from "../types"
 import { buildGitChangeListItems } from "../git-changes-model"
 
@@ -35,6 +38,12 @@ interface GitChangesTabProps {
   selectedError: Accessor<string | null>
   selectedBefore: Accessor<string | null>
   selectedAfter: Accessor<string | null>
+  selectedAfterBase64: Accessor<{
+    base64: string
+    mimeType: string
+    sizeBytes: number
+    path: string
+  } | null>
   mostChangedItemId: Accessor<string | null>
 
   scopeKey: Accessor<string>
@@ -74,6 +83,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const sessionId = createMemo(() => props.activeSessionId())
   const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
   const entries = createMemo(() => (hasSession() ? props.entries() : null))
+  const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
 
   const sorted = createMemo<GitChangeEntry[]>(() => {
     const list = entries()
@@ -117,6 +127,14 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
   const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
 
+  const selectedImagePath = createMemo(() => {
+    const sel = selectedEntry()
+    return sel ? isImagePath(sel.path) : false
+  })
+  const showingImagePreview = createMemo(
+    () => selectedImagePath() && imagePreviewEnabled() && props.selectedAfterBase64() !== null && !props.selectedError(),
+  )
+
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
     const selected = selectedEntry()
@@ -126,66 +144,80 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
-        <div class="file-viewer-content file-viewer-content--monaco">
+        <div class={showingImagePreview() ? "file-viewer-content" : "file-viewer-content file-viewer-content--monaco"}>
           <Show
             when={props.selectedLoading()}
             fallback={
               <Show
-                when={props.selectedError()}
+                when={showingImagePreview() && props.selectedAfterBase64()}
                 fallback={
                   <Show
-                    when={
-                      selected &&
-                      props.selectedBefore() !== null &&
-                      props.selectedAfter() !== null &&
-                      true
-                        ? {
-                            path: selected.path,
-                            before: props.selectedBefore() as string,
-                            after: props.selectedAfter() as string,
-                          }
-                        : null
-                    }
+                    when={props.selectedError()}
                     fallback={
-                      <div class="file-viewer-empty">
-                        <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
-                      </div>
-                    }
-                  >
-                    {(file) => (
-                      <Suspense
+                      <Show
+                        when={
+                          selected &&
+                          props.selectedBefore() !== null &&
+                          props.selectedAfter() !== null &&
+                          true
+                            ? {
+                                path: selected.path,
+                                before: props.selectedBefore() as string,
+                                after: props.selectedAfter() as string,
+                              }
+                            : null
+                        }
                         fallback={
                           <div class="file-viewer-empty">
-                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                            <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
                           </div>
                         }
                       >
-                        <LazyMonacoDiffViewer
-                          scopeKey={props.scopeKey()}
-                          path={String(file().path || "")}
-                          before={String((file() as any).before || "")}
-                          after={String((file() as any).after || "")}
-                          viewMode={props.diffViewMode()}
-                          contextMode={props.diffContextMode()}
-                          wordWrap={props.diffWordWrapMode()}
-                          insertContextLabel={props.t("instanceShell.gitChanges.actions.insertContext")}
-                          onRequestInsertContext={binaryViewerActive() ? undefined : (selection) => {
-                            const selectedId = props.selectedItemId()
-                            if (!selectedId) return
-                            const item = listItems().find((entry) => entry.id === selectedId)
-                            if (!item) return
-                            props.onInsertContext(item, selection)
-                          }}
-                        />
-                      </Suspense>
+                        {(file) => (
+                          <Suspense
+                            fallback={
+                              <div class="file-viewer-empty">
+                                <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                              </div>
+                            }
+                          >
+                            <LazyMonacoDiffViewer
+                              scopeKey={props.scopeKey()}
+                              path={String(file().path || "")}
+                              before={String((file() as any).before || "")}
+                              after={String((file() as any).after || "")}
+                              viewMode={props.diffViewMode()}
+                              contextMode={props.diffContextMode()}
+                              wordWrap={props.diffWordWrapMode()}
+                              insertContextLabel={props.t("instanceShell.gitChanges.actions.insertContext")}
+                              onRequestInsertContext={binaryViewerActive() ? undefined : (selection) => {
+                                const selectedId = props.selectedItemId()
+                                if (!selectedId) return
+                                const item = listItems().find((entry) => entry.id === selectedId)
+                                if (!item) return
+                                props.onInsertContext(item, selection)
+                              }}
+                            />
+                          </Suspense>
+                        )}
+                      </Show>
+                    }
+                  >
+                    {(err) => (
+                      <div class="file-viewer-empty">
+                        <span class="file-viewer-empty-text">{err()}</span>
+                      </div>
                     )}
                   </Show>
                 }
               >
-                {(err) => (
-                  <div class="file-viewer-empty">
-                    <span class="file-viewer-empty-text">{err()}</span>
-                  </div>
+                {(imgPayload) => (
+                  <ImagePreview
+                    base64={imgPayload().base64}
+                    mimeType={imgPayload().mimeType}
+                    sizeBytes={imgPayload().sizeBytes}
+                    path={imgPayload().path}
+                  />
                 )}
               </Show>
             }
@@ -374,6 +406,22 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               onClick={() => props.onRefresh()}
             >
               <RefreshCw class={`h-4 w-4${props.statusLoading() ? " animate-spin" : ""}`} />
+            </button>
+
+            <button
+              type="button"
+              class={`file-viewer-toolbar-button${showingImagePreview() ? " active" : ""}`}
+              disabled={!selectedImagePath() || !props.selectedAfterBase64()}
+              title={props.t("instanceShell.filesShell.imagePreview.toggle")}
+              aria-label={props.t("instanceShell.filesShell.imagePreview.toggle")}
+              onClick={() => {
+                if (!selectedImagePath() || !props.selectedAfterBase64()) return
+                setImagePreviewEnabled((prev) => !prev)
+              }}
+            >
+              {showingImagePreview()
+                ? props.t("instanceShell.filesShell.showSource")
+                : props.t("instanceShell.filesShell.imagePreview.toggle")}
             </button>
 
               <DiffToolbar
