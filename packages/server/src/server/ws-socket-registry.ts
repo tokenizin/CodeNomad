@@ -40,3 +40,11 @@ export function getUserIdFromSessionId(sessionId: string): string | null {
 export function tokidappSessionId(userId: string): string {
   return `tokidapp_${userId}`
 }
+
+/**
+ * Iterate all registered tokidapp sockets.
+ * Returns an array of [sessionId, socket] pairs.
+ */
+export function getAllTokidappSockets(): Array<[string, { send: (msg: string) => void }]> {
+  return Array.from(tokidappSockets.entries())
+}

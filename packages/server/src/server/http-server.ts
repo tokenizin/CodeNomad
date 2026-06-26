@@ -37,6 +37,9 @@ import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
 import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
 import { registerAuthRoutes } from "./routes/auth"
+import { registerNotificationRoutes } from "./routes/notifications"
+import { NotifyRegistry } from "../notify/registry"
+import { getAllTokidappSockets } from "./ws-socket-registry"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { getTokidappDb } from "../lib/db"
@@ -257,6 +260,18 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: deps.logger.child({ component: "background-processes" }),
   })
 
+  const notifyRegistry = new NotifyRegistry()
+  notifyRegistry.setBroadcast((envelope) => {
+    // Broadcast to all connected tokidapp WS sockets
+    for (const [, socket] of getAllTokidappSockets()) {
+      try {
+        socket.send(JSON.stringify(envelope))
+      } catch {
+        // Socket may have disconnected; unregister will clean up
+      }
+    }
+  })
+
   registerAuthRoutes(app, { authManager: deps.authManager, starGuardJwtHandler: deps.starGuardJwtHandler })
 
   app.addHook("preHandler", async (request, reply) => {
@@ -389,6 +404,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
+  registerNotificationRoutes(app, { notifyRegistry })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
   registerTokidappRoutes(app)
   registerRecordingRoutes(app)

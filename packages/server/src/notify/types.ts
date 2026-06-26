@@ -102,6 +102,25 @@ export interface NotifyEvent {
   schemaVersion: 1
 }
 
+// ==================== Filter Type ====================
+
+/** Filter options for querying notifications */
+export interface NotifyFilter {
+  category?: NotifyCategory | NotifyCategory[]
+  priority?: NotifyPriority | NotifyPriority[]
+  severity?: NotifySeverity | NotifySeverity[]
+  eventType?: string
+  eventTypePattern?: string
+  source?: NotifySource | NotifySource[]
+  helpRequired?: boolean
+  escalationOnly?: boolean
+  since?: number
+  until?: number
+  unreadOnly?: boolean
+  limit?: number
+  offset?: number
+}
+
 // ==================== WS Envelope Types ====================
 
 /** Server → client WS event envelopes for notification changes */
