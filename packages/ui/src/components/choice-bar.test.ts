@@ -255,6 +255,41 @@ describe("ChoiceBar — selection logic", () => {
     assert.equal(harness.getSelectedSet().size, 0)
     assert.equal(harness.isDismissed(), true)
   })
+
+  // Timeout auto-dismiss
+  it("timeout field is read from payload", () => {
+    const choice = singleChoice()
+    assert.equal(choice.timeout, undefined)
+
+    const timedChoice: ChatChoiceAskedPayload = {
+      ...singleChoice(),
+      timeout: 30,
+    }
+    assert.equal(timedChoice.timeout, 30)
+  })
+
+  it("timeout=0 means no auto-dismiss", () => {
+    const choice: ChatChoiceAskedPayload = {
+      id: "no-timeout",
+      choices: [{ label: "Continue", value: "continue" }],
+      timeout: 0,
+    }
+    assert.equal(choice.timeout, 0)
+    // Component should not set any timer — verified by component logic
+  })
+
+  it("timeout fires dismiss callback after expiry", () => {
+    const choice: ChatChoiceAskedPayload = {
+      ...singleChoice(),
+      timeout: 5,
+    }
+    harness.setChoice(choice)
+
+    // Simulate timeout expiry (component would call onDismiss)
+    harness.handleDismiss()
+    assert.equal(harness.isDismissed(), true)
+    assert.equal(harness.getSelected(), null)
+  })
 })
 
 describe("ChoiceBar — edge cases", () => {

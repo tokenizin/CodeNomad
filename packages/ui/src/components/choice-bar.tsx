@@ -17,7 +17,7 @@ import {
   onCleanup,
   type Component,
 } from "solid-js"
-import { Check, X } from "lucide-solid"
+import { Check, X, Timer } from "lucide-solid"
 import type { ChatChoiceAskedPayload } from "../types/notify"
 
 // ==================== Types ====================
@@ -36,6 +36,10 @@ interface ChoiceBarProps {
 const ChoiceBar: Component<ChoiceBarProps> = (props) => {
   // Track selected values for multiple mode
   const [selectedValues, setSelectedValues] = createSignal<Set<string>>(new Set())
+  // Countdown seconds remaining (for timeout display)
+  const [countdown, setCountdown] = createSignal<number | null>(null)
+  // Track the dismiss timer ID for cleanup
+  let dismissTimerId: ReturnType<typeof setTimeout> | undefined
 
   // Reset selections when choice changes
   createEffect(() => {
@@ -43,6 +47,48 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
     if (props.choice) {
       setSelectedValues(new Set())
     }
+  })
+
+  // Timeout auto-dismiss
+  createEffect(() => {
+    // Clear any previous timer
+    if (dismissTimerId !== undefined) {
+      clearTimeout(dismissTimerId)
+      dismissTimerId = undefined
+    }
+    setCountdown(null)
+
+    const currentChoice = props.choice
+    if (!currentChoice || typeof currentChoice.timeout !== "number" || currentChoice.timeout <= 0) {
+      return
+    }
+
+    // Start countdown
+    const totalSeconds = currentChoice.timeout
+    setCountdown(totalSeconds)
+
+    // Decrement countdown every second
+    const intervalId = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) return null
+        return prev - 1
+      })
+    }, 1000)
+
+    // Auto-dismiss after timeout
+    dismissTimerId = setTimeout(() => {
+      setCountdown(null)
+      setSelectedValues(new Set())
+      props.onDismiss()
+    }, totalSeconds * 1000)
+
+    onCleanup(() => {
+      clearInterval(intervalId)
+      if (dismissTimerId !== undefined) {
+        clearTimeout(dismissTimerId)
+        dismissTimerId = undefined
+      }
+    })
   })
 
   // Whether we are in multiple-selection mode
@@ -128,6 +174,19 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
                   (select one or more)
                 </span>
               </Show>
+              {/* Countdown timer for auto-dismiss */}
+              <Show when={countdown() !== null}>
+                <span class="choice-bar-countdown inline-flex items-center gap-1 ml-auto text-[var(--font-size-xs)] text-muted" aria-live="polite" role="timer">
+                  <Timer class="w-3 h-3" aria-hidden="true" />
+                  {countdown()}s
+                </span>
+              </Show>
+            </div>
+          </Show>
+          <Show when={!choice().title && countdown() !== null}>
+            <div class="choice-bar-countdown flex items-center gap-1 px-[var(--space-xs)] text-[var(--font-size-xs)] text-muted" aria-live="polite" role="timer">
+              <Timer class="w-3 h-3" aria-hidden="true" />
+              Auto-dismisses in {countdown()}s
             </div>
           </Show>
 
