@@ -68,6 +68,30 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+interface NotifyCreatedEvent {
+  type: "notify.create"
+  properties: {
+    event: import("../types/notify").NotifyEvent
+  }
+}
+
+interface NotifyUpdatedEvent {
+  type: "notify.update"
+  properties: {
+    id: string
+    instanceId: string
+    patch: Record<string, unknown>
+  }
+}
+
+interface NotifyRemovedEvent {
+  type: "notify.remove"
+  properties: {
+    id: string
+    instanceId: string
+  }
+}
+
 type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
 
 type SSEEvent =
@@ -96,6 +120,9 @@ type SSEEvent =
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
   | ServerInstanceDisposedEvent
+  | NotifyCreatedEvent
+  | NotifyUpdatedEvent
+  | NotifyRemovedEvent
   | { type: string; properties?: Record<string, unknown> }
 
 type ConnectionStatus = InstanceStreamStatus
@@ -211,6 +238,15 @@ class SSEManager {
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
+      case "notify.create":
+        this.onNotifyCreated?.(instanceId, event as NotifyCreatedEvent)
+        break
+      case "notify.update":
+        this.onNotifyUpdated?.(instanceId, event as NotifyUpdatedEvent)
+        break
+      case "notify.remove":
+        this.onNotifyRemoved?.(instanceId, event as NotifyRemovedEvent)
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -243,6 +279,9 @@ class SSEManager {
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
+  onNotifyCreated?: (instanceId: string, event: NotifyCreatedEvent) => void
+  onNotifyUpdated?: (instanceId: string, event: NotifyUpdatedEvent) => void
+  onNotifyRemoved?: (instanceId: string, event: NotifyRemovedEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

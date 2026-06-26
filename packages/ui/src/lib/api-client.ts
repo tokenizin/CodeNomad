@@ -575,6 +575,38 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
+  listNotifications(instanceId: string, filter?: Record<string, string>): Promise<import("../types/notify").NotifyEvent[]> {
+    const params = new URLSearchParams({ instanceId })
+    if (filter) {
+      for (const [key, value] of Object.entries(filter)) {
+        if (value !== undefined && value !== null) {
+          params.set(key, value)
+        }
+      }
+    }
+    return request<import("../types/notify").NotifyEvent[]>(`/api/notifications?${params.toString()}`)
+  },
+
+  getNotification(instanceId: string, id: string): Promise<import("../types/notify").NotifyEvent | null> {
+    return request<import("../types/notify").NotifyEvent | null>(
+      `/api/notifications/${encodeURIComponent(id)}?instanceId=${encodeURIComponent(instanceId)}`,
+    )
+  },
+
+  acknowledgeNotification(instanceId: string, id: string): Promise<import("../types/notify").NotifyEvent> {
+    return request<import("../types/notify").NotifyEvent>(
+      `/api/notifications/${encodeURIComponent(id)}?instanceId=${encodeURIComponent(instanceId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ read: true, ackedAt: Date.now() }),
+      },
+    )
+  },
+
+  clearNotifications(instanceId: string): Promise<void> {
+    return request(`/api/notifications?instanceId=${encodeURIComponent(instanceId)}`, { method: "DELETE" })
+  },
+
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,
