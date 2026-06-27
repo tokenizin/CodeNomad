@@ -150,8 +150,19 @@ async function loadNotifyEvents(instanceId: string, filter?: NotifyFilter): Prom
 }
 
 async function acknowledgeNotifyEvent(instanceId: string, id: string): Promise<void> {
-  await serverApi.acknowledgeNotification(instanceId, id)
-  updateEvent(instanceId, id, { read: true, ackedAt: Date.now() })
+  try {
+    await serverApi.acknowledgeNotification(instanceId, id)
+    updateEvent(instanceId, id, { read: true, ackedAt: Date.now() })
+  } catch (err) {
+    const message = (err as Error).message || ''
+    // If the server returns 404, the notification was already cleaned up
+    // (e.g. server restart flushed the in-memory registry). Remove from local state.
+    if (message.includes('404') || message.includes('not found')) {
+      removeEvent(instanceId, id)
+      return
+    }
+    throw err
+  }
 }
 
 async function clearNotifyEvents(instanceId: string): Promise<void> {

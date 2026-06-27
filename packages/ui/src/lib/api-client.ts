@@ -607,6 +607,10 @@ export const serverApi = {
     return request(`/api/notifications?instanceId=${encodeURIComponent(instanceId)}`, { method: "DELETE" })
   },
 
+  lintWiki(): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/wiki-lint")
+  },
+
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,

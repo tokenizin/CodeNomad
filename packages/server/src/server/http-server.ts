@@ -39,6 +39,7 @@ import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
 import { registerAuthRoutes } from "./routes/auth"
 import { registerNotificationRoutes } from "./routes/notifications"
 import { registerChoiceRoutes } from "./routes/choices"
+import { registerWikiLintRoutes } from "./routes/wiki-lint"
 import { NotifyRegistry } from "../notify/registry"
 import { getAllTokidappSockets } from "./ws-socket-registry"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -407,6 +408,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerNotificationRoutes(app, { notifyRegistry })
   registerChoiceRoutes(app, { eventBus: deps.eventBus })
+  registerWikiLintRoutes(app)
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
   registerTokidappRoutes(app)
   registerRecordingRoutes(app)

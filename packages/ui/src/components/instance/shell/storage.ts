@@ -1,3 +1,5 @@
+import type { RightPanelTab } from "./right-panel/types"
+
 export const DEFAULT_SESSION_SIDEBAR_WIDTH = 340
 export const MIN_SESSION_SIDEBAR_WIDTH = 220
 export const MAX_SESSION_SIDEBAR_WIDTH = 400
@@ -52,8 +54,8 @@ export function persistPinState(side: "left" | "right", value: boolean) {
 }
 
 export function readStoredRightPanelTab(
-  defaultValue: "git-changes" | "files" | "status",
-): "git-changes" | "files" | "status" {
+  defaultValue: RightPanelTab,
+): RightPanelTab {
   if (typeof window === "undefined") return defaultValue
 
   const stored = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
@@ -61,6 +63,7 @@ export function readStoredRightPanelTab(
   if (stored === "changes") return "git-changes"
   if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
+  if (stored === "wiki-lint") return "wiki-lint"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
   const legacy = window.localStorage.getItem(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)

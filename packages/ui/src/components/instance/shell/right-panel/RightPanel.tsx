@@ -64,6 +64,7 @@ import {
 const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
+const LazyWikiLintTab = lazy(() => import("./tabs/WikiLintTab"))
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -795,6 +796,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                 >
                   <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.status")}</span>
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class={tabClass("wiki-lint")}
+                  aria-selected={rightPanelTab() === "wiki-lint"}
+                  onClick={() => setRightPanelTab("wiki-lint")}
+                >
+                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.wikiLint")}</span>
+                </button>
               </div>
 
               <div class="tab-strip-spacer" />
@@ -908,6 +918,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
               expandedItems={rightPanelExpandedItems}
               onExpandedItemsChange={handleAccordionChange}
+            />
+          </Suspense>
+        </Show>
+
+        <Show when={rightPanelTab() === "wiki-lint"}>
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyWikiLintTab
+              t={props.t}
+              instanceId={props.instanceId}
             />
           </Suspense>
         </Show>
