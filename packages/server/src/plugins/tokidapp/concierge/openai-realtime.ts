@@ -27,6 +27,11 @@ import {
   getSepoliaDeployments,
   visionAnalyze,
   generateMermaidDiagram,
+  readWikiPage,
+  searchWiki,
+  getEntityConnections,
+  writeWiki,
+  lintWiki,
 } from "./codebase-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
@@ -405,6 +410,65 @@ const tools = [
       required: ["description"],
     },
   },
+  {
+    type: "function",
+    name: "read_wiki_page",
+    description: "Read a wiki entity page from the StarCARD architecture wiki. Returns full markdown content including frontmatter and wikilinks. Use when you need detailed info about a specific entity.",
+    parameters: {
+      type: "object",
+      properties: {
+        pageName: { type: "string", description: "Entity page name (e.g. 'RevenuePool', 'DynamicSplitter', 'StarCHAIN')" },
+      },
+      required: ["pageName"],
+    },
+  },
+  {
+    type: "function",
+    name: "search_wiki",
+    description: "Search the StarCARD architecture wiki by keyword. Returns matching pages with context. Use for broad queries or when unsure which page to read.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms (e.g. 'bridge', 'revenue pool', 'membership')" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "get_entity_connections",
+    description: "Get all connections (wikilinks) for a wiki entity — what it connects to and what connects to it. Use after read_wiki_page to trace dependencies.",
+    parameters: {
+      type: "object",
+      properties: {
+        pageName: { type: "string", description: "Entity page name (e.g. 'DynamicSplitter')" },
+      },
+      required: ["pageName"],
+    },
+  },
+  {
+    type: "function",
+    name: "write_to_wiki",
+    description: "Update a wiki entity page. Use when the user shares new information or corrections about an entity. Supports full page write or section-targeted update.",
+    parameters: {
+      type: "object",
+      properties: {
+        pageName: { type: "string", description: "Entity page name to update" },
+        content: { type: "string", description: "New content to write (full page or section replacement)" },
+        section: { type: "string", description: "Optional: specific section heading to update (e.g. 'Connected To'). If omitted, replaces entire page." },
+      },
+      required: ["pageName", "content"],
+    },
+  },
+  {
+    type: "function",
+    name: "lint_wiki",
+    description: "Run a health check on the StarCARD architecture wiki. Reports orphan pages, broken wikilinks, stale pages, and index gaps. Use periodically or when the user asks about wiki health or quality.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -519,6 +583,30 @@ async function executeTool(
       case "generate_diagram": {
         const { description, diagramType } = JSON.parse(argsStr)
         return await generateMermaidDiagram(description, diagramType)
+      }
+
+      case "read_wiki_page": {
+        const { pageName } = JSON.parse(argsStr)
+        return await readWikiPage(pageName)
+      }
+
+      case "search_wiki": {
+        const { query } = JSON.parse(argsStr)
+        return await searchWiki(query)
+      }
+
+      case "get_entity_connections": {
+        const { pageName } = JSON.parse(argsStr)
+        return await getEntityConnections(pageName)
+      }
+
+      case "write_to_wiki": {
+        const { pageName, content, section } = JSON.parse(argsStr)
+        return await writeWiki(pageName, content, section)
+      }
+
+      case "lint_wiki": {
+        return await lintWiki()
       }
 
       case "run_lint": {

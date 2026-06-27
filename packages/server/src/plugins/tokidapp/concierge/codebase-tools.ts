@@ -1040,6 +1040,282 @@ export async function generateMermaidDiagram(
   }
 }
 
+// ── Wiki Tools ──────────────────────────────────────────────
+
+const WIKI_ROOT = path.resolve(process.cwd(), "docs/starworld")
+const WIKI_ENTITIES = path.join(WIKI_ROOT, "entities")
+
+/** Read a wiki entity page by name. Returns full markdown content. */
+export async function readWikiPage(pageName: string): Promise<string> {
+  // Try exact match first, then case-insensitive
+  const sanitizedName = pageName.replace(/[^\w\s-]/g, "").trim()
+  const candidates = [
+    path.join(WIKI_ENTITIES, `${sanitizedName}.md`),
+    path.join(WIKI_ROOT, `${sanitizedName}.md`),
+  ]
+
+  // Also try case-insensitive match
+  try {
+    const files = fs.readdirSync(WIKI_ENTITIES)
+    const match = files.find(f => f.replace(/\.md$/, "").toLowerCase() === sanitizedName.toLowerCase())
+    if (match) candidates.unshift(path.join(WIKI_ENTITIES, match))
+  } catch { /* directory may not exist */ }
+
+  for (const candidate of candidates) {
+    try {
+      const content = fs.readFileSync(candidate, "utf-8")
+      return `# ${sanitizedName}\n\n${content}`
+    } catch { /* try next */ }
+  }
+
+  return `Wiki page "${pageName}" not found. Available pages can be found via search_wiki.`
+}
+
+/** Full-text search across all wiki pages. Returns matching pages with context. */
+export async function searchWiki(query: string): Promise<string> {
+  if (!query?.trim()) return "Please provide a search term."
+
+  const terms = query.trim().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return "Please provide a search term."
+
+  try {
+    const pattern = terms.join("|")
+    let results: string
+    try {
+      results = execSync(
+        `rg -l -i "${pattern}" "${WIKI_ROOT}" --glob '*.md' -m 10 2>/dev/null || true`,
+        { encoding: "utf-8", maxBuffer: 1024 * 1024 },
+      )
+    } catch { results = "" }
+
+    const files = results.trim().split("\n").filter(Boolean).slice(0, 10)
+    if (files.length === 0) return `No wiki pages found matching: ${query}`
+
+    const previews: string[] = []
+    for (const file of files.slice(0, 5)) {
+      try {
+        const content = fs.readFileSync(file, "utf-8")
+        const relPath = path.relative(WIKI_ROOT, file)
+        const name = relPath.replace(/\.md$/, "").replace("entities/", "")
+
+        // Extract frontmatter stableId if present
+        const stableMatch = content.match(/stableId:\s*(.+)/)
+        const stableId = stableMatch ? stableMatch[1].trim() : ""
+
+        // Get first 3 lines of content after frontmatter
+        const bodyLines = content.split("\n").filter(l => l.trim() && !l.startsWith("---")).slice(0, 3)
+        const preview = bodyLines.join(" ").slice(0, 200)
+
+        previews.push(`• ${name}${stableId ? ` (${stableId})` : ""}: ${preview}`)
+      } catch { /* skip unreadable */ }
+    }
+
+    return [
+      `Found ${files.length} wiki page(s) matching "${query}":`,
+      "",
+      ...previews,
+      "",
+      `Use read_wiki_page("pageName") to read a specific page.`,
+    ].join("\n")
+  } catch (err) {
+    return `Wiki search failed: ${(err as Error).message}`
+  }
+}
+
+/** Get entity connections from wiki page wikilinks. */
+export async function getEntityConnections(pageName: string): Promise<string> {
+  const content = await readWikiPage(pageName)
+  if (content.startsWith(`Wiki page "${pageName}" not found`)) return content
+
+  const lines = content.split("\n")
+  const sections: { heading: string; links: string[] }[] = []
+  let currentSection: { heading: string; links: string[] } | null = null
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^##\s+(.+)/)
+    if (headingMatch) {
+      if (currentSection) sections.push(currentSection)
+      currentSection = { heading: headingMatch[1].trim(), links: [] }
+      continue
+    }
+
+    if (currentSection) {
+      const wikiLinks = [...line.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)]
+      for (const match of wikiLinks) {
+        currentSection.links.push(match[1].trim())
+      }
+    }
+  }
+  if (currentSection) sections.push(currentSection)
+
+  const connectionSections = sections.filter(s =>
+    s.heading.toLowerCase().includes("connected") ||
+    s.heading.toLowerCase().includes("appears in") ||
+    s.links.length > 0
+  )
+
+  if (connectionSections.length === 0) {
+    return `No connections found for "${pageName}". This page may not have wikilinks.`
+  }
+
+  const output: string[] = [`Connections for "${pageName}":`]
+  for (const section of connectionSections) {
+    output.push(`\n## ${section.heading}`)
+    for (const link of section.links) {
+      output.push(`  → ${link}`)
+    }
+  }
+
+  return output.join("\n")
+}
+
+/** Write or update a wiki page. Supports full overwrite or section-targeted update. */
+export async function writeWiki(
+  pageName: string,
+  content: string,
+  section?: string,
+): Promise<string> {
+  const sanitizedName = pageName.replace(/[^\w\s-]/g, "").trim()
+
+  // Determine file path
+  let filePath = path.join(WIKI_ENTITIES, `${sanitizedName}.md`)
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(WIKI_ROOT, `${sanitizedName}.md`)
+  }
+
+  if (section) {
+    // Section-targeted update
+    try {
+      const existing = fs.readFileSync(filePath, "utf-8")
+      const sectionRegex = new RegExp(
+        `(## ${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n)([\\s\\S]*?)(?=\\n## |$)`,
+        "i",
+      )
+      const match = existing.match(sectionRegex)
+      if (!match) {
+        return `Section "${section}" not found in page "${pageName}". The page exists but does not have a "## ${section}" heading.`
+      }
+      const updated = existing.replace(sectionRegex, `$1${content}\n`)
+      fs.writeFileSync(filePath, updated, "utf-8")
+      return `Updated section "${section}" in wiki page "${pageName}".`
+    } catch {
+      return `Could not update section "${section}" in "${pageName}". Page may not exist.`
+    }
+  } else {
+    // Full page write
+    try {
+      const dir = path.dirname(filePath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(filePath, content, "utf-8")
+      return `Wiki page "${pageName}" ${fs.existsSync(filePath) ? "updated" : "created"} successfully.`
+    } catch (err) {
+      return `Failed to write wiki page "${pageName}": ${(err as Error).message}`
+    }
+  }
+}
+
+// ── Wiki Health Lint ───────────────────────────────────────────
+
+interface LintWikiResult {
+  orphanPages: string[]
+  brokenLinks: Array<{ from: string; link: string }>
+  stalePages: Array<{ page: string; lastModified: string }>
+  indexGaps: string[]
+  summary: string
+}
+
+/** Scan the Obsidian wiki for orphans, broken links, and stale pages. */
+export async function lintWiki(): Promise<string> {
+  try {
+    const entityDir = WIKI_ENTITIES
+    if (!fs.existsSync(entityDir)) {
+      return JSON.stringify({ orphanPages: [], brokenLinks: [], stalePages: [], indexGaps: [], summary: "Entity directory not found." })
+    }
+
+    const files = fs.readdirSync(entityDir).filter(f => f.endsWith(".md"))
+    const existingPages = new Set(files.map(f => f.replace(/\.md$/, "")))
+
+    const inboundLinks = new Map<string, string[]>()  // page → sources
+    const outboundLinks = new Map<string, string[]>()  // page → targets
+    const pageDates = new Map<string, string>()  // page → last modified
+
+    // Parse each entity file
+    for (const file of files) {
+      const pageName = file.replace(/\.md$/, "")
+      const content = fs.readFileSync(path.join(entityDir, file), "utf-8")
+
+      // Collect outbound wikilinks
+      const links = [...content.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1])
+      outboundLinks.set(pageName, links)
+
+      // Register inbound links
+      for (const target of links) {
+        if (!inboundLinks.has(target)) inboundLinks.set(target, [])
+        inboundLinks.get(target)!.push(pageName)
+      }
+
+      // Stale detection via git mtime
+      try {
+        const stat = fs.statSync(path.join(entityDir, file))
+        pageDates.set(pageName, stat.mtime.toISOString().split("T")[0])
+      } catch { /* skip */ }
+    }
+
+    // Orphan pages: no inbound links from other pages
+    const orphanPages = files
+      .map(f => f.replace(/\.md$/, ""))
+      .filter(name => !inboundLinks.has(name) || inboundLinks.get(name)!.length === 0)
+
+    // Broken links: outbound links not resolving to any existing page
+    const brokenLinks: Array<{ from: string; link: string }> = []
+    for (const [page, links] of outboundLinks) {
+      for (const link of links) {
+        if (!existingPages.has(link)) {
+          brokenLinks.push({ from: page, link })
+        }
+      }
+    }
+
+    // Stale pages: not modified in 90 days
+    const staleDays = 90
+    const cutoff = Date.now() - staleDays * 86_400_000
+    const stalePages: Array<{ page: string; lastModified: string }> = []
+    for (const [page, dateStr] of pageDates) {
+      if (new Date(dateStr).getTime() < cutoff) {
+        stalePages.push({ page, lastModified: dateStr })
+      }
+    }
+
+    // Index gaps: entities in Index.md without page files
+    const indexGaps: string[] = []
+    const indexPath = path.join(WIKI_ROOT, "Index.md")
+    if (fs.existsSync(indexPath)) {
+      const indexContent = fs.readFileSync(indexPath, "utf-8")
+      const indexLinks = [...indexContent.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1])
+      for (const link of indexLinks) {
+        if (!existingPages.has(link)) indexGaps.push(link)
+      }
+    }
+
+    const result: LintWikiResult = {
+      orphanPages,
+      brokenLinks,
+      stalePages,
+      indexGaps,
+      summary: [
+        orphanPages.length ? `${orphanPages.length} orphan(s)` : null,
+        brokenLinks.length ? `${brokenLinks.length} broken link(s)` : null,
+        stalePages.length ? `${stalePages.length} stale page(s)` : null,
+        indexGaps.length ? `${indexGaps.length} index gap(s)` : null,
+      ].filter(Boolean).join(", ") || "All clear",
+    }
+
+    return JSON.stringify(result)
+  } catch (err) {
+    return JSON.stringify({ error: `Lint failed: ${(err as Error).message}` })
+  }
+}
+
 // ── Sepolia Deployments ──────────────────────────────────────────
 
 /** Return known Sepolia testnet contract addresses for the StarCARD ecosystem. */

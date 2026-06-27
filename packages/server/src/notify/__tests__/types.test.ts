@@ -9,7 +9,7 @@ import type {
   NotifySeverity,
   NotifySource,
   NotifyWsEnvelope,
-} from './types'
+} from '../types'
 
 // ==================== Fixture Helpers ====================
 

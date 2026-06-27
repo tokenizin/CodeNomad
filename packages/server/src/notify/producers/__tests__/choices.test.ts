@@ -15,6 +15,11 @@ class MockEventBus extends EventEmitter {
   }
 }
 
+/** Access MockEventBus.published without TS errors (bus is cast to EventBus elsewhere). */
+function getPublished(bus: unknown): any[] {
+  return (bus as MockEventBus).published
+}
+
 // ==================== Fixtures ====================
 
 const INSTANCE_ID = "test-instance"
@@ -38,9 +43,9 @@ describe("publishChoiceAsked", () => {
 
     assert.equal(typeof id, "string")
     assert.ok(id.length > 0)
-    assert.equal(bus.published.length, 1)
+    assert.equal(getPublished(bus).length, 1)
 
-    const event = bus.published[0]
+    const event = getPublished(bus)[0]
     assert.equal(event.type, "instance.event")
     assert.equal(event.instanceId, INSTANCE_ID)
     assert.equal(event.event.type, "chat.choice.asked")
@@ -56,7 +61,7 @@ describe("publishChoiceAsked", () => {
     const id = publishChoiceAsked(INSTANCE_ID, choices, bus, { id: "custom-id" })
 
     assert.equal(id, "custom-id")
-    assert.equal(bus.published[0].event.properties.payload.id, "custom-id")
+    assert.equal(getPublished(bus)[0].event.properties.payload.id, "custom-id")
   })
 
   it("publishes with title, multiple, and timeout", () => {
@@ -69,7 +74,7 @@ describe("publishChoiceAsked", () => {
       timeout: 30,
     })
 
-    const payload = bus.published[0].event.properties.payload
+    const payload = getPublished(bus)[0].event.properties.payload
     assert.equal(payload.title, "What would you like to do?")
     assert.equal(payload.multiple, true)
     assert.equal(payload.timeout, 30)
@@ -103,7 +108,7 @@ describe("publishChoiceAsked", () => {
     }))
     const id = publishChoiceAsked(INSTANCE_ID, choices, bus)
     assert.equal(typeof id, "string")
-    assert.equal(bus.published[0].event.properties.payload.choices.length, 9)
+    assert.equal(getPublished(bus)[0].event.properties.payload.choices.length, 9)
   })
 
   it("omits optional fields when not provided", () => {
@@ -112,7 +117,7 @@ describe("publishChoiceAsked", () => {
 
     publishChoiceAsked(INSTANCE_ID, choices, bus)
 
-    const payload = bus.published[0].event.properties.payload
+    const payload = getPublished(bus)[0].event.properties.payload
     assert.equal(payload.multiple, undefined)
     assert.equal(payload.title, undefined)
     assert.equal(payload.timeout, undefined)
@@ -125,8 +130,8 @@ describe("publishChoiceReplied", () => {
 
     publishChoiceReplied(INSTANCE_ID, "choice-1", "balance", bus)
 
-    assert.equal(bus.published.length, 1)
-    const event = bus.published[0]
+    assert.equal(getPublished(bus).length, 1)
+    const event = getPublished(bus)[0]
     assert.equal(event.type, "instance.event")
     assert.equal(event.event.type, "chat.choice.replied")
     assert.equal(event.event.properties.payload.id, "choice-1")
@@ -138,7 +143,7 @@ describe("publishChoiceReplied", () => {
 
     publishChoiceReplied(INSTANCE_ID, "choice-2", ["email", "sms"], bus)
 
-    const payload = bus.published[0].event.properties.payload
+    const payload = getPublished(bus)[0].event.properties.payload
     assert.deepEqual(payload.value, ["email", "sms"])
   })
 })
@@ -149,8 +154,8 @@ describe("publishChoiceExpired", () => {
 
     publishChoiceExpired(INSTANCE_ID, "choice-1", bus)
 
-    assert.equal(bus.published.length, 1)
-    const event = bus.published[0]
+    assert.equal(getPublished(bus).length, 1)
+    const event = getPublished(bus)[0]
     assert.equal(event.type, "instance.event")
     assert.equal(event.event.type, "chat.choice.expired")
     assert.equal(event.event.properties.payload.id, "choice-1")

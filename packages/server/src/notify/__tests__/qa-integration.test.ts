@@ -41,6 +41,11 @@ class MockEventBus extends EventEmitter {
   }
 }
 
+/** Access MockEventBus.published without TS errors (bus is cast to EventBus elsewhere). */
+function getPublished(bus: unknown): any[] {
+  return (bus as MockEventBus).published
+}
+
 // ==================== Fixture Helpers ====================
 
 function makeProcess(overrides: Partial<BackgroundProcess> = {}): BackgroundProcess {
@@ -383,8 +388,8 @@ describe('AC-7: ChoiceBar lifecycle — asked → replied', () => {
       { label: 'No', value: 'no' },
     ], bus)
 
-    assert.equal((bus.published as any[]).length, 1)
-    const askedEvent = (bus.published as any[])[0]
+    assert.equal(getPublished(bus).length, 1)
+    const askedEvent = getPublished(bus)[0]
     assert.equal(askedEvent.event.type, 'chat.choice.asked')
     assert.equal(askedEvent.event.properties.payload.id, choiceId)
 
@@ -399,8 +404,8 @@ describe('AC-7: ChoiceBar lifecycle — asked → replied', () => {
     assert.deepEqual(res.json(), { ok: true })
 
     // Verify the EventBus received the replied event
-    assert.equal((bus.published as any[]).length, 2)
-    const repliedEvent = (bus.published as any[])[1]
+    assert.equal(getPublished(bus).length, 2)
+    const repliedEvent = getPublished(bus)[1]
     assert.equal(repliedEvent.type, 'instance.event')
     assert.equal(repliedEvent.instanceId, 'inst-1')
     assert.equal(repliedEvent.event.type, 'chat.choice.replied')
@@ -422,8 +427,8 @@ describe('AC-7: ChoiceBar lifecycle — asked → replied', () => {
     })
 
     assert.equal(res.statusCode, 200)
-    assert.equal((bus.published as any[]).length, 1)
-    const repliedEvent = (bus.published as any[])[0]
+    assert.equal(getPublished(bus).length, 1)
+    const repliedEvent = getPublished(bus)[0]
     assert.equal(repliedEvent.event.properties.payload.id, 'multi-choice')
     assert.deepEqual(repliedEvent.event.properties.payload.value, ['email', 'sms'])
 
@@ -441,7 +446,7 @@ describe('AC-7: ChoiceBar lifecycle — asked → replied', () => {
       payload: { instanceId: 'inst-1', id: 'shape-test', value: 'yes' },
     })
 
-    const payload = (bus.published as any[])[0].event.properties.payload
+    const payload = getPublished(bus)[0].event.properties.payload
     assert.equal(typeof payload.id, 'string')
     assert.equal(typeof payload.value, 'string')
     assert.ok('id' in payload)
@@ -459,8 +464,8 @@ describe('AC-8: ChoiceBar lifecycle — asked → expired', () => {
 
     publishChoiceExpired('inst-1', 'choice-exp-1', bus)
 
-    assert.equal((bus.published as any[]).length, 1)
-    const event = (bus.published as any[])[0]
+    assert.equal(getPublished(bus).length, 1)
+    const event = getPublished(bus)[0]
     assert.equal(event.type, 'instance.event')
     assert.equal(event.instanceId, 'inst-1')
     assert.equal(event.event.type, 'chat.choice.expired')
@@ -472,7 +477,7 @@ describe('AC-8: ChoiceBar lifecycle — asked → expired', () => {
 
     publishChoiceExpired('inst-1', 'shape-check', bus)
 
-    const payload = (bus.published as any[])[0].event.properties.payload
+    const payload = getPublished(bus)[0].event.properties.payload
     assert.equal(typeof payload.id, 'string')
     assert.ok('id' in payload)
     assert.ok(!('value' in payload)) // expired has no value field
@@ -540,8 +545,8 @@ describe('AC-9: Orchestrator producer mapping', () => {
     const bus = new MockEventBus() as unknown as EventBus
     createNotifyFromOrchestratorLog('NODE_COMPLETED', 'SUCCESS', 'All good', undefined, 'inst-1', bus)
 
-    assert.equal((bus.published as any[]).length, 1)
-    const envelope = (bus.published as any[])[0]
+    assert.equal(getPublished(bus).length, 1)
+    const envelope = getPublished(bus)[0]
     assert.equal(envelope.type, 'instance.event')
     assert.equal(envelope.instanceId, 'inst-1')
     assert.equal(envelope.event.type, 'notify.create')
@@ -614,7 +619,7 @@ describe('AC-10: Background process producer mapping', () => {
 
     const result = maybeNotifyOnProcessEvent(process, 'inst-1', bus)
     assert.equal(result, undefined)
-    assert.equal((bus.published as any[]).length, 0)
+    assert.equal(getPublished(bus).length, 0)
   })
 
   it('publishes via eventBus with correct envelope structure', () => {
@@ -622,8 +627,8 @@ describe('AC-10: Background process producer mapping', () => {
     const process = makeProcess({ status: 'stopped', terminalReason: 'finished' })
 
     maybeNotifyOnProcessEvent(process, 'inst-1', bus)
-    assert.equal((bus.published as any[]).length, 1)
-    const envelope = (bus.published as any[])[0]
+    assert.equal(getPublished(bus).length, 1)
+    const envelope = getPublished(bus)[0]
     assert.equal(envelope.type, 'instance.event')
     assert.equal(envelope.instanceId, 'inst-1')
     assert.equal(envelope.event.type, 'notify.create')
