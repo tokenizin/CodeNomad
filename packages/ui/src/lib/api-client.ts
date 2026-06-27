@@ -593,14 +593,23 @@ export const serverApi = {
     )
   },
 
-  acknowledgeNotification(instanceId: string, id: string): Promise<import("../types/notify").NotifyEvent> {
+  acknowledgeNotification(instanceId: string, id: string): Promise<import("../types/notify").NotifyEvent | null> {
     return request<import("../types/notify").NotifyEvent>(
       `/api/notifications/${encodeURIComponent(id)}?instanceId=${encodeURIComponent(instanceId)}`,
       {
         method: "PATCH",
         body: JSON.stringify({ read: true, ackedAt: Date.now() }),
       },
-    )
+    ).catch((err) => {
+      // Silently handle stale notifications (server restart flushed the in-memory
+      // registry). Return null so callers can drop the event from local state
+      // without surfacing an error to the user.
+      const message = (err as Error)?.message || ""
+      if (message.includes("404") || message.toLowerCase().includes("not found")) {
+        return null
+      }
+      throw err
+    })
   },
 
   clearNotifications(instanceId: string): Promise<void> {

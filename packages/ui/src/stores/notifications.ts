@@ -151,16 +151,17 @@ async function loadNotifyEvents(instanceId: string, filter?: NotifyFilter): Prom
 
 async function acknowledgeNotifyEvent(instanceId: string, id: string): Promise<void> {
   try {
-    await serverApi.acknowledgeNotification(instanceId, id)
-    updateEvent(instanceId, id, { read: true, ackedAt: Date.now() })
-  } catch (err) {
-    const message = (err as Error).message || ''
-    // If the server returns 404, the notification was already cleaned up
-    // (e.g. server restart flushed the in-memory registry). Remove from local state.
-    if (message.includes('404') || message.includes('not found')) {
+    // acknowledgeNotification now returns null on 404 instead of throwing,
+    // so the Monaco viewer's own click handler (which calls this directly)
+    // and the main store wrapper both get the same graceful behavior.
+    const result = await serverApi.acknowledgeNotification(instanceId, id)
+    if (result === null) {
+      // Notification no longer exists on the server — drop it from local state.
       removeEvent(instanceId, id)
       return
     }
+    updateEvent(instanceId, id, { read: true, ackedAt: Date.now() })
+  } catch (err) {
     throw err
   }
 }

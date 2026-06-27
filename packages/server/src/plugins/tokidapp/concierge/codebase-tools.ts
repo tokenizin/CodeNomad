@@ -1225,76 +1225,181 @@ interface LintWikiResult {
   summary: string
 }
 
+/** Recursively collect all .md files under a directory, relative to root. */
+function collectVaultFiles(root: string, dir: string, out: string[] = []): string[] {
+  if (!fs.existsSync(dir)) return out
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === "_archive") continue
+      collectVaultFiles(root, full, out)
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      out.push(path.relative(root, full))
+    }
+  }
+  return out
+}
+
+/** Extract wikilink targets from a markdown string, returning {target, alias} pairs. */
+function extractWikilinks(content: string): Array<{ target: string; alias?: string }> {
+  return [...content.matchAll(/\[\[([^\]]+)\]\]/g)]
+    .map((m) => {
+      const raw = m[1].trim()
+      const [target, ...aliasParts] = raw.split("|")
+      const alias = aliasParts.length > 0 ? aliasParts.join("|").split("#")[0].trim() : undefined
+      const t = target.split("#")[0].trim()
+      return { target: t, alias: alias || undefined }
+    })
+    .filter((w) => w.target.length > 0)
+}
+
+/** Extract `stableId:` value from YAML frontmatter. */
+function extractStableId(content: string): string | null {
+  const fm = content.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (!fm) return null
+  const m = fm[1].match(/^stableId:\s*(.+)$/m)
+  return m ? m[1].trim() : null
+}
+
+/** Normalize a wikilink target to a comparable page name. Strips path prefix and .md suffix. */
+function normalizeTarget(target: string): string {
+  return target.replace(/\.md$/, "").replace(/^.*\//, "")
+}
+
 /** Scan the Obsidian wiki for orphans, broken links, and stale pages. */
 export async function lintWiki(): Promise<string> {
   try {
-    const entityDir = WIKI_ENTITIES
-    if (!fs.existsSync(entityDir)) {
-      return JSON.stringify({ orphanPages: [], brokenLinks: [], stalePages: [], indexGaps: [], summary: "Entity directory not found." })
+    if (!fs.existsSync(WIKI_ROOT)) {
+      return JSON.stringify({ orphanPages: [], brokenLinks: [], stalePages: [], indexGaps: [], summary: "Wiki root not found." })
     }
 
-    const files = fs.readdirSync(entityDir).filter(f => f.endsWith(".md"))
-    const existingPages = new Set(files.map(f => f.replace(/\.md$/, "")))
+    // Collect all .md files in the vault
+    const relFiles = collectVaultFiles(WIKI_ROOT, WIKI_ROOT)
+    if (relFiles.length === 0) {
+      return JSON.stringify({ orphanPages: [], brokenLinks: [], stalePages: [], indexGaps: [], summary: "No markdown files found." })
+    }
 
-    const inboundLinks = new Map<string, string[]>()  // page → sources
-    const outboundLinks = new Map<string, string[]>()  // page → targets
-    const pageDates = new Map<string, string>()  // page → last modified
-
-    // Parse each entity file
-    for (const file of files) {
-      const pageName = file.replace(/\.md$/, "")
-      const content = fs.readFileSync(path.join(entityDir, file), "utf-8")
-
-      // Collect outbound wikilinks
-      const links = [...content.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1])
-      outboundLinks.set(pageName, links)
-
-      // Register inbound links
-      for (const target of links) {
-        if (!inboundLinks.has(target)) inboundLinks.set(target, [])
-        inboundLinks.get(target)!.push(pageName)
-      }
-
-      // Stale detection via git mtime
+    // Build lookup sets:
+    // - existingPages: full relative path without .md (e.g. "entities/RevenuePool")
+    // - existingPageNames: just the trailing name (e.g. "RevenuePool") for display-name matching
+    // - stableIdToPage: stableId (e.g. "SC.contract.RevenuePool") → page name
+    const existingPages = new Set<string>()
+    const existingPageNames = new Set<string>()
+    const stableIdToPage = new Map<string, string>()
+    for (const rel of relFiles) {
+      const noExt = rel.replace(/\.md$/, "")
+      existingPages.add(noExt)
+      const trailing = noExt.split("/").pop()!
+      existingPageNames.add(trailing)
       try {
-        const stat = fs.statSync(path.join(entityDir, file))
+        const content = fs.readFileSync(path.join(WIKI_ROOT, rel), "utf-8")
+        const stableId = extractStableId(content)
+        if (stableId) stableIdToPage.set(stableId, noExt)
+      } catch { /* skip */ }
+    }
+
+    /** True if a wikilink target resolves to an existing page. */
+    const pageExists = (target: string): boolean => {
+      if (existingPages.has(target)) return true
+      if (existingPageNames.has(normalizeTarget(target))) return true
+      return false
+    }
+
+    /** Resolve a wikilink (target + optional alias) to a canonical page-name or null. */
+    const resolveLink = (link: { target: string; alias?: string }): string | null => {
+      // 1. Exact page path match
+      if (existingPages.has(link.target)) return link.target
+      // 2. Trailing-name match
+      if (existingPageNames.has(normalizeTarget(link.target))) {
+        return pageNameByName(normalizeTarget(link.target), relFiles)
+      }
+      // 3. StableId match (the alias often holds the stableId)
+      if (link.alias && stableIdToPage.has(link.alias)) {
+        return stableIdToPage.get(link.alias)!
+      }
+      // 4. The target itself may be a stableId
+      if (stableIdToPage.has(link.target)) {
+        return stableIdToPage.get(link.target)!
+      }
+      return null
+    }
+
+    const inboundLinks = new Map<string, string[]>()  // page-name → sources
+    const outboundLinks = new Map<string, string[]>()  // page-name → targets
+    const pageDates = new Map<string, string>()  // page-name → last modified
+
+    // Parse every vault file
+    for (const rel of relFiles) {
+      const pageName = rel.replace(/\.md$/, "")
+      const abs = path.join(WIKI_ROOT, rel)
+      const content = fs.readFileSync(abs, "utf-8")
+
+      const links = extractWikilinks(content)
+      const resolvedTargets: string[] = []
+      for (const link of links) {
+        const canonical = resolveLink(link)
+        if (canonical) {
+          resolvedTargets.push(canonical)
+          if (!inboundLinks.has(canonical)) inboundLinks.set(canonical, [])
+          if (!inboundLinks.get(canonical)!.includes(pageName)) {
+            inboundLinks.get(canonical)!.push(pageName)
+          }
+        } else {
+          // Unresolved — record raw target for broken-link report
+          resolvedTargets.push(link.target)
+        }
+      }
+      outboundLinks.set(pageName, links.map((l) => l.target))
+
+      // Stale detection via file mtime
+      try {
+        const stat = fs.statSync(abs)
         pageDates.set(pageName, stat.mtime.toISOString().split("T")[0])
       } catch { /* skip */ }
     }
 
-    // Orphan pages: no inbound links from other pages
-    const orphanPages = files
-      .map(f => f.replace(/\.md$/, ""))
-      .filter(name => !inboundLinks.has(name) || inboundLinks.get(name)!.length === 0)
+    // Orphan pages: entity files (entities/*) that have no inbound links
+    const entityFiles = relFiles.filter((f) => f.startsWith("entities/"))
+    const orphanPages = entityFiles
+      .map((f) => f.replace(/\.md$/, ""))
+      .filter((name) => !inboundLinks.has(name) || inboundLinks.get(name)!.length === 0)
 
-    // Broken links: outbound links not resolving to any existing page
+    // Broken links: outbound links that don't resolve via any lookup strategy
     const brokenLinks: Array<{ from: string; link: string }> = []
-    for (const [page, links] of outboundLinks) {
+    for (const rel of relFiles) {
+      const pageName = rel.replace(/\.md$/, "")
+      const content = fs.readFileSync(path.join(WIKI_ROOT, rel), "utf-8")
+      const links = extractWikilinks(content)
       for (const link of links) {
-        if (!existingPages.has(link)) {
-          brokenLinks.push({ from: page, link })
+        if (!resolveLink(link)) {
+          brokenLinks.push({ from: pageName, link: link.target })
         }
       }
     }
 
-    // Stale pages: not modified in 90 days
+    // Stale pages: entity files not modified in 90 days
     const staleDays = 90
     const cutoff = Date.now() - staleDays * 86_400_000
     const stalePages: Array<{ page: string; lastModified: string }> = []
     for (const [page, dateStr] of pageDates) {
+      if (!page.startsWith("entities/")) continue
       if (new Date(dateStr).getTime() < cutoff) {
         stalePages.push({ page, lastModified: dateStr })
       }
     }
 
-    // Index gaps: entities in Index.md without page files
+    // Index gaps: wikilinks in Index.md that don't resolve to any page
     const indexGaps: string[] = []
     const indexPath = path.join(WIKI_ROOT, "Index.md")
     if (fs.existsSync(indexPath)) {
       const indexContent = fs.readFileSync(indexPath, "utf-8")
-      const indexLinks = [...indexContent.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1])
+      const indexLinks = extractWikilinks(indexContent)
+      const seen = new Set<string>()
       for (const link of indexLinks) {
-        if (!existingPages.has(link)) indexGaps.push(link)
+        if (!resolveLink(link) && !seen.has(link.target)) {
+          indexGaps.push(link.target)
+          seen.add(link.target)
+        }
       }
     }
 
@@ -1315,6 +1420,15 @@ export async function lintWiki(): Promise<string> {
   } catch (err) {
     return JSON.stringify({ error: `Lint failed: ${(err as Error).message}` })
   }
+}
+
+/** Helper: given a display name, return the full page path of the first match. */
+function pageNameByName(name: string, relFiles: string[]): string {
+  for (const rel of relFiles) {
+    const noExt = rel.replace(/\.md$/, "")
+    if (noExt.split("/").pop() === name) return noExt
+  }
+  return name
 }
 
 // ── Sepolia Deployments ──────────────────────────────────────────
