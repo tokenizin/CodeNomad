@@ -64,6 +64,7 @@ export function readStoredRightPanelTab(
   if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
   if (stored === "wiki-lint") return "wiki-lint"
+  if (stored === "notify-history") return "notify-history"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
   const legacy = window.localStorage.getItem(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)

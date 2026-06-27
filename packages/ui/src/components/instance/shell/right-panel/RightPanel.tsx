@@ -37,6 +37,7 @@ import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
+import { getUnreadCount } from "../../../../stores/notifications"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import { useGitChanges } from "./useGitChanges"
 import {
@@ -65,6 +66,7 @@ const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 const LazyWikiLintTab = lazy(() => import("./tabs/WikiLintTab"))
+const LazyNotifyHistoryTab = lazy(() => import("./tabs/NotifyHistoryTab"))
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -805,6 +807,23 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                 >
                   <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.wikiLint")}</span>
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class={tabClass("notify-history")}
+                  aria-selected={rightPanelTab() === "notify-history"}
+                  onClick={() => setRightPanelTab("notify-history")}
+                >
+                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.notifyHistory")}</span>
+                  <Show when={getUnreadCount() > 0}>
+                    <span
+                      class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground"
+                      aria-hidden="true"
+                    >
+                      {getUnreadCount() > 9 ? "9+" : getUnreadCount()}
+                    </span>
+                  </Show>
+                </button>
               </div>
 
               <div class="tab-strip-spacer" />
@@ -928,6 +947,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               t={props.t}
               instanceId={props.instanceId}
             />
+          </Suspense>
+        </Show>
+
+        <Show when={rightPanelTab() === "notify-history"}>
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyNotifyHistoryTab instanceId={props.instanceId} />
           </Suspense>
         </Show>
       </div>

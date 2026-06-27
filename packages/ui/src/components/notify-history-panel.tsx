@@ -40,12 +40,14 @@ import "../styles/components/notify-history.css"
 interface NotifyHistoryPanelProps {
   /** Instance ID to load events for */
   instanceId: string;
-  /** Close callback */
-  onClose: () => void;
+  /** Close callback (modal mode only) */
+  onClose?: () => void;
   /** Action callback for command/choiceValue actions */
   onAction?: (action: NotifyAction) => void;
-  /** Getter for the trigger element to restore focus on close */
+  /** Getter for the trigger element to restore focus on close (modal mode only) */
   restoreFocusRef?: () => HTMLElement | undefined;
+  /** Render inside the right drawer instead of a header overlay modal */
+  embedded?: boolean;
 }
 
 // ==================== Constants ====================
@@ -136,25 +138,26 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
   // Panel ref for focus management
   let panelRef: HTMLDivElement | undefined
 
-  // Focus panel container on mount
+  // Focus panel container on mount (modal mode)
   onMount(() => {
-    if (panelRef) {
+    if (!props.embedded && panelRef) {
       panelRef.focus()
     }
   })
 
-  // Close on ESC — restore focus to trigger element before closing
+  // Close on ESC — restore focus to trigger element before closing (modal mode)
   createEffect(() => {
+    if (props.embedded) return
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        // Restore focus to trigger element before closing
         if (props.restoreFocusRef) {
           const trigger = props.restoreFocusRef()
           if (trigger && typeof trigger.focus === "function") {
             trigger.focus()
           }
         }
-        props.onClose()
+        props.onClose?.()
       }
     }
 
@@ -242,14 +245,13 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId))
   }
 
-  // Backdrop click
+  // Backdrop click (modal mode)
   const handleBackdropClick = (event: MouseEvent) => {
     if (event.target === event.currentTarget) {
-      props.onClose()
+      props.onClose?.()
     }
   }
 
-  // Action variant class mapping
   const actionVariantClass = (variant?: string): string => {
     switch (variant) {
       case "danger": return "notify-history-action-danger"
@@ -258,20 +260,23 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
     }
   }
 
-  return (
-    <div class="notify-history-backdrop" onClick={handleBackdropClick}>
-      <div
-        ref={panelRef}
-        class="notify-history-panel flex flex-col overflow-hidden rounded-[var(--radius-xl)] border border-base bg-surface-base"
-        style={{
-          "width": "min(420px, calc(100vw - var(--space-lg) * 2))",
-          "max-height": "calc(100vh - var(--space-lg) * 2)",
-        }}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("notifyHistory.title")}
-        tabIndex={-1}
-      >
+  const panelBody = (
+    <div
+      ref={panelRef}
+      class="notify-history-panel flex flex-col overflow-hidden bg-surface-base"
+      classList={{
+        "notify-history-panel-embedded h-full min-h-0 rounded-none border-0": Boolean(props.embedded),
+        "rounded-[var(--radius-xl)] border border-base": !props.embedded,
+      }}
+      style={props.embedded ? undefined : {
+        "width": "min(420px, calc(100vw - var(--space-lg) * 2))",
+        "max-height": "calc(100vh - var(--space-lg) * 2)",
+      }}
+      role={props.embedded ? undefined : "dialog"}
+      aria-modal={props.embedded ? undefined : "true"}
+      aria-label={props.embedded ? undefined : t("notifyHistory.title")}
+      tabIndex={props.embedded ? undefined : -1}
+    >
         {/* Screen reader live region for new notification announcements */}
         <span
           class="sr-only"
@@ -285,8 +290,10 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
         {/* Header */}
         <header class="flex items-center justify-between gap-[var(--space-md)] p-[var(--space-md)] border-b border-base bg-surface-secondary">
           <div class="flex items-center gap-[var(--space-sm)] min-w-0">
-            <Bell class="w-5 h-5 text-primary flex-shrink-0" aria-hidden="true" />
-            <h2 class="text-[var(--font-size-base)] font-semibold text-primary m-0 truncate">{t("notifyHistory.title")}</h2>
+            <Show when={!props.embedded}>
+              <Bell class="w-5 h-5 text-primary flex-shrink-0" aria-hidden="true" />
+              <h2 class="text-[var(--font-size-base)] font-semibold text-primary m-0 truncate">{t("notifyHistory.title")}</h2>
+            </Show>
             <Show when={hasUnread()}>
               <span
                 class="inline-flex items-center justify-center min-w-[1.25rem] h-[1.25rem] px-[0.35rem] rounded-full bg-[var(--color-primary)] text-[var(--color-on-primary)] text-[var(--font-size-xs)] font-semibold flex-shrink-0"
@@ -316,14 +323,16 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
                 {t("notifyHistory.clearAll")}
               </button>
             </Show>
-            <button
-              type="button"
-              class="notify-history-close-btn inline-flex items-center justify-center w-8 h-8 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-primary cursor-pointer"
-              onClick={props.onClose}
-              aria-label={t("notifyHistory.close")}
-            >
-              <X class="w-4 h-4" aria-hidden="true" />
-            </button>
+            <Show when={!props.embedded}>
+              <button
+                type="button"
+                class="notify-history-close-btn inline-flex items-center justify-center w-8 h-8 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-primary cursor-pointer"
+                onClick={() => props.onClose?.()}
+                aria-label={t("notifyHistory.close")}
+              >
+                <X class="w-4 h-4" aria-hidden="true" />
+              </button>
+            </Show>
           </div>
         </header>
 
@@ -629,7 +638,16 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
             </Show>
           </Show>
         </div>
-      </div>
+    </div>
+  )
+
+  if (props.embedded) {
+    return panelBody
+  }
+
+  return (
+    <div class="notify-history-backdrop" onClick={handleBackdropClick}>
+      {panelBody}
     </div>
   )
 }

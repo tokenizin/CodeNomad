@@ -95,6 +95,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.files": "Files",
   "instanceShell.rightPanel.tabs.status": "Status",
   "instanceShell.rightPanel.tabs.wikiLint": "WikiLint",
+  "instanceShell.rightPanel.tabs.notifyHistory": "Categorized History",
   "instanceShell.rightPanel.tabs.ariaLabel": "Right panel tabs",
   "instanceShell.rightPanel.actions.refresh": "Refresh",
   "instanceShell.rightPanel.actions.save": "Save (Ctrl+S)",
