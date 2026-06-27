@@ -32,6 +32,10 @@ import {
   getEntityConnections,
   writeWiki,
   lintWiki,
+  updateWikiFromSession,
+  compileToWiki,
+  getWikiHealth,
+  suggestRepairLinks,
 } from "./codebase-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
@@ -100,6 +104,8 @@ interface RealtimeSession {
   responseInProgress: boolean
   /** Queue of response.create requests to send after current response completes */
   pendingResponseQueue: Array<() => void>
+  /** Collected user+assistant transcript lines for post-session wiki update */
+  transcript: string[]
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -469,6 +475,43 @@ const tools = [
       properties: {},
     },
   },
+  {
+    type: "function",
+    name: "session_summary",
+    description: "Summarize the current voice session and update the wiki with new insights. Use at the end of a conversation to capture key architecture facts discussed during the session.",
+    parameters: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "The current session ID" },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    type: "function",
+    name: "compile_wiki",
+    description: "Compile a raw source document into wiki updates. Processes meeting notes, transcripts, or design docs and extracts entity information into the architecture wiki.",
+    parameters: {
+      type: "object",
+      properties: {
+        sourcePath: { type: "string", description: "Path to raw source file relative to docs/starworld/raw/ (e.g. 'meetings/2026-06-27.md')" },
+        dryRun: { type: "boolean", description: "If true, preview what would be updated without writing. Default false." },
+      },
+      required: ["sourcePath"],
+    },
+  },
+  {
+    type: "function",
+    name: "wiki_health",
+    description: "Get a health dashboard for the architecture wiki. Shows entity count, orphan pages, broken links, stale pages, and an overall health score. Use when the user asks about wiki quality or health.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
+    name: "suggest_repairs",
+    description: "Analyze broken wikilinks in the wiki and suggest likely fixes. Returns a list of broken links with suggested corrections based on fuzzy name matching.",
+    parameters: { type: "object", properties: {} },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -607,6 +650,26 @@ async function executeTool(
 
       case "lint_wiki": {
         return await lintWiki()
+      }
+
+      case "session_summary": {
+        const { sessionId: sid } = JSON.parse(argsStr)
+        const session = sessions.get(sid)
+        const transcriptText = session?.transcript?.join("\n") || ""
+        return await updateWikiFromSession(sid, transcriptText)
+      }
+
+      case "compile_wiki": {
+        const { sourcePath, dryRun = false } = JSON.parse(argsStr)
+        return await compileToWiki(sourcePath, dryRun)
+      }
+
+      case "wiki_health": {
+        return await getWikiHealth()
+      }
+
+      case "suggest_repairs": {
+        return await suggestRepairLinks()
       }
 
       case "run_lint": {
@@ -844,6 +907,7 @@ export function createRealtimeSession(
       onReady,
       responseInProgress: false,
       pendingResponseQueue: [],
+      transcript: [],
     }
   }
 
@@ -870,6 +934,7 @@ export function createRealtimeSession(
     onReady,
     responseInProgress: false,
     pendingResponseQueue: [],
+    transcript: [],
   }
 
   /** Send response.create, guarding against concurrent responses */
@@ -1009,6 +1074,7 @@ export function createRealtimeSession(
           if (transcript) {
             console.log("[openai-realtime] user transcript for session:", sessionId, "→", transcript.slice(0, 120))
             onUserTranscript?.(sanitizeAsrText(transcript))
+            session.transcript.push(`[user] ${sanitizeAsrText(transcript)}`)
           }
           break
         }
@@ -1029,6 +1095,7 @@ export function createRealtimeSession(
             if (transcript) {
               console.log("[openai-realtime] user transcript (item.done) for session:", sessionId, "→", transcript.slice(0, 120))
               onUserTranscript?.(sanitizeAsrText(transcript))
+              session.transcript.push(`[user] ${sanitizeAsrText(transcript)}`)
             }
           }
           break
@@ -1270,6 +1337,12 @@ export function startVoiceSession(sessionId: string): boolean {
 export function endVoiceSession(sessionId: string) {
   const session = sessions.get(sessionId)
   if (session) {
+    // Fire-and-forget: update wiki with session transcript before closing
+    const transcriptText = session.transcript?.join("\n") || ""
+    if (transcriptText.trim()) {
+      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
+    }
+
     // Remove listeners before closing so the old session's async close handler
     // doesn't accidentally delete a newly-created session with the same ID.
     session.ws.onclose = null

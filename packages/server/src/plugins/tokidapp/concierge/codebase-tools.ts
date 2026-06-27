@@ -1338,3 +1338,746 @@ export async function getSepoliaDeployments(): Promise<string> {
     return `Error reading deployments: ${(err as Error).message}`
   }
 }
+
+// ── Voice Session → Wiki Update Pipeline ───────────────────
+
+export interface SessionInsights {
+  entities: string[]
+  facts: Array<{
+    entity: string
+    content: string
+    confidence: "high" | "medium" | "low"
+  }>
+  connections: Array<{
+    from: string
+    to: string
+    relationship: string
+  }>
+}
+
+/** Parse a voice session transcript and extract architecture insights. */
+export async function extractSessionInsights(transcript: string): Promise<SessionInsights> {
+  const entities: string[] = []
+  const facts: SessionInsights["facts"] = []
+  const connections: SessionInsights["connections"] = []
+
+  if (!transcript?.trim()) return { entities, facts, connections }
+
+  // List available entity names from the wiki directory
+  let availableEntities: string[] = []
+  try {
+    if (fs.existsSync(WIKI_ENTITIES)) {
+      availableEntities = fs.readdirSync(WIKI_ENTITIES)
+        .filter(f => f.endsWith(".md"))
+        .map(f => f.replace(/\.md$/, ""))
+    }
+  } catch { /* directory may not exist */ }
+
+  // Split into sentences for analysis
+  const sentences = transcript
+    .split(/[.!?\n]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 5)
+
+  // Relationship patterns to detect connections
+  const relPatterns: Array<{ regex: RegExp; relationship: string }> = [
+    { regex: /(\w+)\s+(?:sends?|transfers?|flows?\s+(?:to|into))\s+(\w+)/i, relationship: "sends to" },
+    { regex: /(\w+)\s+(?:connects?|links?)\s+(?:to|with)\s+(\w+)/i, relationship: "connects to" },
+    { regex: /(\w+)\s+(?:depends?\s+on|relies?\s+on)\s+(\w+)/i, relationship: "depends on" },
+    { regex: /(\w+)\s+(?:distributes?\s+to|pays?|pays?\s+out\s+to)\s+(\w+)/i, relationship: "distributes to" },
+    { regex: /(\w+)\s+(?:monitors?|watches?|observes?)\s+(\w+)/i, relationship: "monitors" },
+    { regex: /(\w+)\s+(?:calls?|invokes?|interacts?\s+with)\s+(\w+)/i, relationship: "interacts with" },
+    { regex: /(\w+)\s+(?:receives?\s+(?:from|tokens?\s+from))\s+(\w+)/i, relationship: "receives from" },
+  ]
+
+  for (const sentence of sentences) {
+    const lowerSentence = sentence.toLowerCase()
+
+    // Find which entities are mentioned in this sentence
+    const mentionedEntities = availableEntities.filter(entity =>
+      lowerSentence.includes(entity.toLowerCase())
+    )
+
+    // Deduplicate and add to entities list
+    for (const entity of mentionedEntities) {
+      if (!entities.includes(entity)) {
+        entities.push(entity)
+      }
+    }
+
+    // Extract facts for mentioned entities
+    if (mentionedEntities.length > 0) {
+      for (const entity of mentionedEntities) {
+        // Determine confidence based on specificity
+        const confidence: "high" | "medium" | "low" =
+          mentionedEntities.length === 1 ? "high" :
+          sentence.length > 30 ? "medium" : "low"
+
+        facts.push({
+          entity,
+          content: sentence,
+          confidence,
+        })
+      }
+    }
+
+    // Detect relationships between entities
+    for (const pattern of relPatterns) {
+      const match = sentence.match(pattern.regex)
+      if (match) {
+        const [, fromRaw, toRaw] = match
+        const fromEntity = availableEntities.find(e => e.toLowerCase() === fromRaw.toLowerCase())
+        const toEntity = availableEntities.find(e => e.toLowerCase() === toRaw.toLowerCase())
+        if (fromEntity && toEntity) {
+          connections.push({
+            from: fromEntity,
+            to: toEntity,
+            relationship: pattern.relationship,
+          })
+        }
+      }
+    }
+  }
+
+  return { entities, facts, connections }
+}
+
+/** Map extracted entity names to existing wiki page filenames using fuzzy matching. */
+export async function mapInsightsToEntities(insights: SessionInsights): Promise<Map<string, string>> {
+  const mapping = new Map<string, string>()
+
+  let availableFiles: string[] = []
+  try {
+    if (fs.existsSync(WIKI_ENTITIES)) {
+      availableFiles = fs.readdirSync(WIKI_ENTITIES)
+        .filter(f => f.endsWith(".md"))
+        .map(f => f.replace(/\.md$/, ""))
+    }
+  } catch { /* directory may not exist */ }
+
+  for (const entity of insights.entities) {
+    // 1. Exact match
+    const exact = availableFiles.find(f => f === entity)
+    if (exact) {
+      mapping.set(entity, exact)
+      continue
+    }
+
+    // 2. Case-insensitive match
+    const ciMatch = availableFiles.find(f => f.toLowerCase() === entity.toLowerCase())
+    if (ciMatch) {
+      mapping.set(entity, ciMatch)
+      continue
+    }
+
+    // 3. Partial match (entity is substring of filename or vice versa)
+    const partialMatch = availableFiles.find(f =>
+      f.toLowerCase().includes(entity.toLowerCase()) ||
+      entity.toLowerCase().includes(f.toLowerCase())
+    )
+    if (partialMatch) {
+      mapping.set(entity, partialMatch)
+      continue
+    }
+
+    // 4. Word overlap — check if significant words overlap
+    const entityWords = entity.toLowerCase().split(/\W+/).filter(w => w.length > 2)
+    const bestMatch = availableFiles
+      .map(f => ({
+        name: f,
+        score: entityWords.filter(w => f.toLowerCase().includes(w)).length,
+      }))
+      .filter(m => m.score > 0)
+      .sort((a, b) => b.score - a.score)[0]
+
+    if (bestMatch) {
+      mapping.set(entity, bestMatch.name)
+    }
+  }
+
+  return mapping
+}
+
+/** Orchestrate voice session transcript → wiki update pipeline. */
+export async function updateWikiFromSession(sessionId: string, transcript: string): Promise<string> {
+  try {
+    if (!transcript?.trim()) {
+      return "No transcript content to process."
+    }
+
+    // Step 1: Extract insights from transcript
+    const insights = await extractSessionInsights(transcript)
+    if (insights.entities.length === 0) {
+      return "No architecture entities detected in session transcript."
+    }
+
+    // Step 2: Map entity names to wiki pages
+    const entityMap = await mapInsightsToEntities(insights)
+    if (entityMap.size === 0) {
+      return `Detected entities (${insights.entities.join(", ")}) could not be matched to existing wiki pages.`
+    }
+
+    const results: string[] = []
+    const now = new Date().toISOString()
+
+    // Step 3: For each mapped entity, append new facts
+    for (const [entityName, wikiPageName] of entityMap) {
+      const entityFacts = insights.facts.filter(f => f.entity === entityName)
+      if (entityFacts.length === 0) continue
+
+      // Read existing page content
+      const existingContent = await readWikiPage(wikiPageName)
+
+      // Normalize for dedup
+      const normalizeForDedup = (s: string) =>
+        s.toLowerCase().replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim()
+
+      const normalizedExisting = normalizeForDedup(existingContent)
+
+      // Filter out duplicates
+      const newFacts = entityFacts.filter(fact => {
+        const normalizedFact = normalizeForDedup(fact.content)
+        return !normalizedExisting.includes(normalizedFact) &&
+               normalizedFact.length > 10 // skip very short facts
+      })
+
+      if (newFacts.length === 0) {
+        results.push(`${wikiPageName}: all facts already present (deduped).`)
+        continue
+      }
+
+      // Build the new Session Insights section content
+      const insightLines = newFacts.map(fact =>
+        `- ${fact.content} _(confidence: ${fact.confidence})_`
+      )
+      const provenance = `<!-- Source: voice session ${sessionId} ${now} -->`
+      const sectionContent = `${provenance}\n${insightLines.join("\n")}\n`
+
+      // Check if Session Insights section already exists
+      const sectionExists = existingContent.includes("## Session Insights")
+
+      let writeResult: string
+      if (sectionExists) {
+        // Append to existing section — read and manually append
+        const insertPoint = existingContent.indexOf("## Session Insights")
+        // Find next section or end of file
+        const afterSection = existingContent.slice(insertPoint)
+        const nextSectionMatch = afterSection.match(/\n## (?!Session Insights)/)
+        const insertAt = nextSectionMatch
+          ? insertPoint + afterSection.indexOf(nextSectionMatch[0])
+          : existingContent.length
+
+        const updatedContent =
+          existingContent.slice(0, insertAt) +
+          sectionContent + "\n" +
+          existingContent.slice(insertAt)
+
+        const filePath = path.join(WIKI_ENTITIES, `${wikiPageName}.md`)
+        if (fs.existsSync(filePath)) {
+          fs.writeFileSync(filePath, updatedContent, "utf-8")
+          writeResult = `Appended ${newFacts.length} fact(s) to existing "## Session Insights" in ${wikiPageName}.`
+        } else {
+          writeResult = `Could not find file for ${wikiPageName} to append insights.`
+        }
+      } else {
+        // Create new section at end of file
+        writeResult = await writeWiki(
+          wikiPageName,
+          `\n## Session Insights\n${sectionContent}`,
+        )
+      }
+
+      results.push(writeResult)
+    }
+
+    // Step 4: Log connections if any
+    if (insights.connections.length > 0) {
+      const connSummary = insights.connections
+        .map(c => `${c.from} → ${c.to} (${c.relationship})`)
+        .join("; ")
+      results.push(`Connections noted: ${connSummary}`)
+    }
+
+    return `Wiki update complete for session ${sessionId}:\n${results.join("\n")}`
+  } catch (err) {
+    return `Wiki update failed: ${(err as Error).message}`
+  }
+}
+
+// ── Raw Source Compilation Pipeline ───────────────────────────
+
+/** Directory for unprocessed source material (meeting notes, transcripts, design docs). */
+const WIKI_RAW = path.join(WIKI_ROOT, "raw")
+
+export interface ExtractedConcepts {
+  entityMentions: Array<{
+    name: string
+    confidence: "high" | "medium" | "low"
+    context: string
+  }>
+  facts: Array<{
+    content: string
+    relatedEntities: string[]
+  }>
+  relationships: Array<{
+    from: string
+    to: string
+    description: string
+  }>
+}
+
+/** Scan content for wiki entity name mentions, extract facts and relationships. */
+export function extractConcepts(content: string): ExtractedConcepts {
+  const entityMentions: ExtractedConcepts["entityMentions"] = []
+  const facts: ExtractedConcepts["facts"] = []
+  const relationships: ExtractedConcepts["relationships"] = []
+
+  if (!content?.trim()) return { entityMentions, facts, relationships }
+
+  // Load entity names from wiki directory
+  let availableEntities: string[] = []
+  try {
+    if (fs.existsSync(WIKI_ENTITIES)) {
+      availableEntities = fs.readdirSync(WIKI_ENTITIES)
+        .filter(f => f.endsWith(".md"))
+        .map(f => f.replace(/\.md$/, ""))
+    }
+  } catch { /* directory may not exist */ }
+
+  // Split into paragraphs for context-aware extraction
+  const paragraphs = content
+    .split(/\n{2,}/)
+    .map(p => p.trim())
+    .filter(p => p.length > 10)
+
+  // Relationship patterns to detect connections
+  const relPatterns: Array<{ regex: RegExp; description: string }> = [
+    { regex: /(\w[\w\s]*\w)\s+(?:sends?|transfers?|flows?\s+(?:to|into))\s+(\w[\w\s]*\w)/i, description: "sends to" },
+    { regex: /(\w[\w\s]*\w)\s+(?:connects?|links?)\s+(?:to|with)\s+(\w[\w\s]*\w)/i, description: "connects to" },
+    { regex: /(\w[\w\s]*\w)\s+(?:depends?\s+on|relies?\s+on)\s+(\w[\w\s]*\w)/i, description: "depends on" },
+    { regex: /(\w[\w\s]*\w)\s+(?:distributes?\s+to|pays?|pays?\s+out\s+to)\s+(\w[\w\s]*\w)/i, description: "distributes to" },
+    { regex: /(\w[\w\s]*\w)\s+(?:monitors?|watches?|observes?)\s+(\w[\w\s]*\w)/i, description: "monitors" },
+    { regex: /(\w[\w\s]*\w)\s+(?:calls?|invokes?|interacts?\s+with)\s+(\w[\w\s]*\w)/i, description: "interacts with" },
+    { regex: /(\w[\w\s]*\w)\s+(?:receives?\s+(?:from|tokens?\s+from))\s+(\w[\w\s]*\w)/i, description: "receives from" },
+    { regex: /(\w[\w\s]*\w)\s+(?:→|->)\s+(\w[\w\s]*\w)/i, description: "leads to" },
+  ]
+
+  for (const paragraph of paragraphs) {
+    const sentences = paragraph
+      .split(/[.!?\n]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 5)
+
+    for (const sentence of sentences) {
+      const lowerSentence = sentence.toLowerCase()
+
+      // Find which entities are mentioned in this sentence
+      const mentionedEntities = availableEntities.filter(entity =>
+        lowerSentence.includes(entity.toLowerCase())
+      )
+
+      if (mentionedEntities.length > 0) {
+        // Record entity mentions
+        for (const entity of mentionedEntities) {
+          const existing = entityMentions.find(m => m.name === entity && m.context === sentence)
+          if (!existing) {
+            const confidence: "high" | "medium" | "low" =
+              mentionedEntities.length === 1 ? "high" :
+              sentence.length > 40 ? "medium" : "low"
+            entityMentions.push({ name: entity, confidence, context: sentence })
+          }
+        }
+
+        // Extract a fact for this sentence
+        const relatedEntities = mentionedEntities
+        const normalizedFact = sentence.toLowerCase().replace(/\s+/g, " ").trim()
+        const isDuplicate = facts.some(f =>
+          f.content.toLowerCase().replace(/\s+/g, " ").trim() === normalizedFact
+        )
+        if (!isDuplicate && sentence.length > 15) {
+          facts.push({ content: sentence, relatedEntities })
+        }
+      }
+
+      // Detect relationships between entities
+      for (const pattern of relPatterns) {
+        const match = sentence.match(pattern.regex)
+        if (match) {
+          const [, fromRaw, toRaw] = match
+          const fromEntity = availableEntities.find(e =>
+            e.toLowerCase() === fromRaw.trim().toLowerCase()
+          )
+          const toEntity = availableEntities.find(e =>
+            e.toLowerCase() === toRaw.trim().toLowerCase()
+          )
+          if (fromEntity && toEntity && fromEntity !== toEntity) {
+            const exists = relationships.some(r =>
+              r.from === fromEntity && r.to === toEntity
+            )
+            if (!exists) {
+              relationships.push({
+                from: fromEntity,
+                to: toEntity,
+                description: pattern.description,
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { entityMentions, facts, relationships }
+}
+
+export interface CompilationReport {
+  source: string
+  entitiesFound: string[]
+  factsExtracted: number
+  pagesUpdated: string[]
+  duplicatesSkipped: number
+  newSectionsCreated: string[]
+}
+
+/** Compile a raw source file into wiki updates.
+ *  Reads a markdown file from the raw directory, extracts concepts,
+ *  maps them to wiki entities, and updates pages (or previews in dry-run). */
+export async function compileToWiki(
+  sourcePath: string,
+  dryRun: boolean = false,
+): Promise<string> {
+  try {
+    // Resolve and validate source path
+    const fullSourcePath = path.isAbsolute(sourcePath)
+      ? sourcePath
+      : path.join(WIKI_RAW, sourcePath)
+
+    if (!fs.existsSync(fullSourcePath)) {
+      return `Source file not found: ${sourcePath}. Place files in docs/starworld/raw/ subdirectories.`
+    }
+
+    const content = fs.readFileSync(fullSourcePath, "utf-8")
+    if (!content?.trim()) {
+      return "Source file is empty — nothing to compile."
+    }
+
+    // Step 1: Extract concepts from raw content
+    const concepts = extractConcepts(content)
+
+    if (concepts.entityMentions.length === 0) {
+      return "No architecture entities detected in source material. Entities must match filenames in docs/starworld/entities/."
+    }
+
+    // Step 2: Map entity mentions to wiki pages (fuzzy match)
+    const uniqueEntityNames = [...new Set(concepts.entityMentions.map(m => m.name))]
+
+    // Normalize for dedup (reuse pattern from updateWikiFromSession)
+    const normalizeForDedup = (s: string) =>
+      s.toLowerCase().replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim()
+
+    const now = new Date().toISOString()
+    const shortSource = sourcePath.split("/").pop() || sourcePath
+
+    const report: CompilationReport = {
+      source: sourcePath,
+      entitiesFound: uniqueEntityNames,
+      factsExtracted: concepts.facts.length,
+      pagesUpdated: [],
+      duplicatesSkipped: 0,
+      newSectionsCreated: [],
+    }
+
+    // Step 3: For each entity, update the wiki page
+    for (const entityName of uniqueEntityNames) {
+      // Find matching wiki page (exact or case-insensitive)
+      let wikiPageName = entityName
+      try {
+        if (fs.existsSync(WIKI_ENTITIES)) {
+          const files = fs.readdirSync(WIKI_ENTITIES)
+          const match = files
+            .filter(f => f.endsWith(".md"))
+            .find(f => f.replace(/\.md$/, "").toLowerCase() === entityName.toLowerCase())
+          if (match) wikiPageName = match.replace(/\.md$/, "")
+        }
+      } catch { /* fall back to entityName */ }
+
+      // Get facts for this entity
+      const entityFacts = concepts.facts.filter(f => f.relatedEntities.includes(entityName))
+      if (entityFacts.length === 0) continue
+
+      // Read existing page content
+      const existingContent = await readWikiPage(wikiPageName)
+      const normalizedExisting = normalizeForDedup(existingContent)
+
+      // Filter out duplicates
+      const newFacts = entityFacts.filter(fact => {
+        const normalizedFact = normalizeForDedup(fact.content)
+        return !normalizedExisting.includes(normalizedFact) &&
+               normalizedFact.length > 10
+      })
+
+      report.duplicatesSkipped += entityFacts.length - newFacts.length
+
+      if (newFacts.length === 0) continue
+
+      // Build the new Compiled Insights section content
+      const factLines = newFacts.map(fact =>
+        `- ${fact.content}`
+      )
+      const provenance = `<!-- Compiled from: ${shortSource} ${now} -->`
+      const sectionContent = `${provenance}\n${factLines.join("\n")}\n`
+
+      if (dryRun) {
+        report.pagesUpdated.push(`${wikiPageName} (dry-run: would add ${newFacts.length} fact(s))`)
+        continue
+      }
+
+      // Check if Compiled Insights section already exists
+      const sectionHeading = "## Compiled Insights"
+      const sectionExists = existingContent.includes(sectionHeading)
+
+      const filePath = path.join(WIKI_ENTITIES, `${wikiPageName}.md`)
+      if (!fs.existsSync(filePath)) {
+        // Try wiki root
+        const altPath = path.join(WIKI_ROOT, `${wikiPageName}.md`)
+        if (!fs.existsSync(altPath)) continue
+      }
+
+      const targetPath = fs.existsSync(filePath)
+        ? filePath
+        : path.join(WIKI_ROOT, `${wikiPageName}.md`)
+
+      try {
+        if (sectionExists) {
+          // Append to existing Compiled Insights section
+          const existing = fs.readFileSync(targetPath, "utf-8")
+          const insertPoint = existing.indexOf(sectionHeading)
+          const afterSection = existing.slice(insertPoint)
+          const nextSectionMatch = afterSection.match(/\n## (?!Compiled Insights)/)
+          const insertAt = nextSectionMatch
+            ? insertPoint + afterSection.indexOf(nextSectionMatch[0])
+            : existing.length
+
+          const updatedContent =
+            existing.slice(0, insertAt) +
+            sectionContent + "\n" +
+            existing.slice(insertAt)
+
+          fs.writeFileSync(targetPath, updatedContent, "utf-8")
+          report.pagesUpdated.push(`${wikiPageName} (+${newFacts.length} facts appended)`)
+        } else {
+          // Create new section at end of file
+          const writeResult = await writeWiki(
+            wikiPageName,
+            `\n${sectionHeading}\n${sectionContent}`,
+          )
+          if (writeResult.includes("successfully")) {
+            report.pagesUpdated.push(`${wikiPageName} (new section created)`)
+            report.newSectionsCreated.push(wikiPageName)
+          } else {
+            report.pagesUpdated.push(`${wikiPageName} (write: ${writeResult})`)
+          }
+        }
+      } catch (err) {
+        report.pagesUpdated.push(`${wikiPageName} (error: ${(err as Error).message})`)
+      }
+    }
+
+    // Step 4: Log relationships if any
+    const relSummary = concepts.relationships.length > 0
+      ? `\nRelationships detected: ${concepts.relationships.map(r => `${r.from} ${r.description} ${r.to}`).join("; ")}`
+      : ""
+
+    const mode = dryRun ? " (dry-run)" : ""
+    return `Compilation report${mode} for ${sourcePath}:\n` +
+      `• Entities found: ${report.entitiesFound.length} (${report.entitiesFound.join(", ")})\n` +
+      `• Facts extracted: ${report.factsExtracted}\n` +
+      `• Pages updated: ${report.pagesUpdated.length}${report.pagesUpdated.length > 0 ? "\n  " + report.pagesUpdated.join("\n  ") : ""}\n` +
+      `• Duplicates skipped: ${report.duplicatesSkipped}\n` +
+      `• New sections created: ${report.newSectionsCreated.length}${report.newSectionsCreated.length > 0 ? " (" + report.newSectionsCreated.join(", ") + ")" : ""}` +
+      relSummary
+  } catch (err) {
+    return `Compilation failed: ${(err as Error).message}`
+  }
+}
+
+// ── Wiki Health Dashboard ─────────────────────────────────────
+
+interface WikiHealthDashboard {
+  totalEntities: number
+  orphanCount: number
+  brokenLinkCount: number
+  staleCount: number
+  lastUpdate: string
+  healthScore: number
+  topIssues: string[]
+  summary: string
+}
+
+/** Return a health dashboard for the architecture wiki.
+ *  Reuses lintWiki() internally and computes a 0-100 health score. */
+export async function getWikiHealth(): Promise<string> {
+  try {
+    const raw = await lintWiki()
+    const parsed = JSON.parse(raw)
+    if (parsed.error) return raw
+
+    const entityDir = WIKI_ENTITIES
+    let totalEntities = 0
+    let lastUpdate = "unknown"
+
+    if (fs.existsSync(entityDir)) {
+      const files = fs.readdirSync(entityDir).filter(f => f.endsWith(".md"))
+      totalEntities = files.length
+
+      let latest = 0
+      for (const file of files) {
+        try {
+          const stat = fs.statSync(path.join(entityDir, file))
+          if (stat.mtimeMs > latest) {
+            latest = stat.mtimeMs
+            lastUpdate = stat.mtime.toISOString().split("T")[0]
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    const orphanCount: number = parsed.orphanPages?.length ?? 0
+    const brokenLinkCount: number = parsed.brokenLinks?.length ?? 0
+    const staleCount: number = parsed.stalePages?.length ?? 0
+
+    const orphanPenalty = Math.min(orphanCount, 30)
+    const brokenPenalty = Math.min(brokenLinkCount * 2, 40)
+    const stalePenalty = Math.min(staleCount, 20)
+    const healthScore = Math.max(0, 100 - orphanPenalty - brokenPenalty - stalePenalty)
+
+    const topIssues: string[] = []
+    if (parsed.orphanPages?.length) topIssues.push(`${orphanCount} orphan page(s): ${parsed.orphanPages.slice(0, 3).join(", ")}${orphanCount > 3 ? "..." : ""}`)
+    if (parsed.brokenLinks?.length) topIssues.push(`${brokenLinkCount} broken link(s): ${parsed.brokenLinks.slice(0, 3).map((l: { from: string; link: string }) => `${l.link} (from ${l.from})`).join(", ")}${brokenLinkCount > 3 ? "..." : ""}`)
+    if (parsed.stalePages?.length) topIssues.push(`${staleCount} stale page(s): ${parsed.stalePages.slice(0, 3).map((p: { page: string; lastModified: string }) => `${p.page} (${p.lastModified})`).join(", ")}${staleCount > 3 ? "..." : ""}`)
+
+    const dashboard: WikiHealthDashboard = {
+      totalEntities,
+      orphanCount,
+      brokenLinkCount,
+      staleCount,
+      lastUpdate,
+      healthScore,
+      topIssues,
+      summary: healthScore >= 90
+        ? `Healthy (${healthScore}/100) — ${totalEntities} entities, ${parsed.summary}`
+        : healthScore >= 70
+          ? `Needs attention (${healthScore}/100) — ${parsed.summary}`
+          : `Poor health (${healthScore}/100) — ${parsed.summary}`,
+    }
+
+    return JSON.stringify(dashboard)
+  } catch (err) {
+    return JSON.stringify({ error: `Health check failed: ${(err as Error).message}` })
+  }
+}
+
+/** Compute Levenshtein distance between two strings. */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0) as number[])
+  for (let i = 0; i <= m; i++) dp[i][0] = i
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[m][n]
+}
+
+/** Analyze broken wikilinks and suggest likely fixes via fuzzy name matching. */
+export async function suggestRepairLinks(): Promise<string> {
+  try {
+    const raw = await lintWiki()
+    const parsed = JSON.parse(raw)
+    if (parsed.error) return raw
+
+    const brokenLinks: Array<{ from: string; link: string }> = parsed.brokenLinks ?? []
+    if (brokenLinks.length === 0) {
+      return JSON.stringify({ suggestions: [], summary: "No broken links found." })
+    }
+
+    // Collect existing entity names for fuzzy matching
+    const entityDir = WIKI_ENTITIES
+    const existingNames: string[] = []
+    if (fs.existsSync(entityDir)) {
+      existingNames.push(
+        ...fs.readdirSync(entityDir)
+          .filter(f => f.endsWith(".md"))
+          .map(f => f.replace(/\.md$/, "")),
+      )
+    }
+
+    const suggestions: Array<{ broken: string; from: string; suggestion: string; confidence: "high" | "medium" }> = []
+
+    for (const { from, link } of brokenLinks) {
+      let bestMatch = ""
+      let bestDistance = Infinity
+
+      for (const name of existingNames) {
+        const dist = levenshtein(link.toLowerCase(), name.toLowerCase())
+        if (dist < bestDistance) {
+          bestDistance = dist
+          bestMatch = name
+        }
+      }
+
+      if (bestDistance <= 3) {
+        suggestions.push({
+          broken: link,
+          from,
+          suggestion: bestMatch,
+          confidence: bestDistance <= 1 ? "high" : "medium",
+        })
+      }
+    }
+
+    return JSON.stringify({
+      suggestions,
+      summary: suggestions.length > 0
+        ? `Found ${suggestions.length} likely fix(es) for ${brokenLinks.length} broken link(s).`
+        : `No close matches found for ${brokenLinks.length} broken link(s). Manual review needed.`,
+    })
+  } catch (err) {
+    return JSON.stringify({ error: `Repair suggestions failed: ${(err as Error).message}` })
+  }
+}
+
+/** Check if a specific wiki page is stale (older than N days, default 90). */
+export async function isStale(pageName: string, days: number = 90): Promise<string> {
+  try {
+    // Try entities dir first, then wiki root
+    let filePath = path.join(WIKI_ENTITIES, `${pageName}.md`)
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(WIKI_ROOT, `${pageName}.md`)
+    }
+    if (!fs.existsSync(filePath)) {
+      return JSON.stringify({ page: pageName, error: "Page not found." })
+    }
+
+    const stat = fs.statSync(filePath)
+    const lastModified = stat.mtime.toISOString().split("T")[0]
+    const ageDays = Math.floor((Date.now() - stat.mtimeMs) / 86_400_000)
+    const isStaleResult = ageDays > days
+
+    return JSON.stringify({
+      page: pageName,
+      lastModified,
+      isStale: isStaleResult,
+      ageDays,
+      message: isStaleResult
+        ? `${pageName} was last modified ${ageDays} days ago (${lastModified}) — may be outdated.`
+        : `${pageName} is current (${ageDays} days old, modified ${lastModified}).`,
+    })
+  } catch (err) {
+    return JSON.stringify({ page: pageName, error: `Staleness check failed: ${(err as Error).message}` })
+  }
+}
