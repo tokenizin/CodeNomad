@@ -170,6 +170,20 @@
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/workflow_runner.md}"
     },
+    "infra_sme": {
+      "model": "ollama/qwen2.5:14b",
+      "description": "Infrastructure SME — platform topology, CI/CD design, schema migration strategy, release architecture, automation patterns, incident triage, multi-regional scalability, multi-software lifecycle, performance optimization, and FinOps cost efficiency advisory",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/infra_sme.md}",
+      "mcp": ["chrome-devtools"]
+    },
+    "dev_ops": {
+      "model": "ollama/qwen2.5:14b",
+      "description": "DevOps — CI/CD, Vercel deploys, schema push and seeds, release versioning, code revision & quality gates, testing pipeline (vitest/hardhat/playwright), packaging (next build/solidity/CodeNomad/Docker), hosting & deploying (Vercel multi-region/CodeNomad tunnel/contract deploy), publishing, schema ops, multi-software automation, performance optimization, and FinOps cost efficiency",
+      "mode": "subagent",
+      "prompt": "{file:../../.nomadworks/agents/dev_ops.md}",
+      "mcp": ["chrome-devtools"]
+    },
     "cloudflare-tunnel-setup": {
       "description": "Cloudflare Tunnel Setup Wizard — interactive Q&A-guided bidirectional tunnel configuration for CodeNomad, matching the verified production tunnel setup",
       "mode": "subagent",
