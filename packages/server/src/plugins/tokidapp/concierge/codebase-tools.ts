@@ -1042,7 +1042,8 @@ export async function generateMermaidDiagram(
 
 // ── Wiki Tools ──────────────────────────────────────────────
 
-const WIKI_ROOT = path.resolve(process.cwd(), "docs/starworld")
+// Server cwd is CodeNomad/; wiki lives in parent contracts/docs/starworld/
+const WIKI_ROOT = path.resolve(process.cwd(), "../docs/starworld")
 const WIKI_ENTITIES = path.join(WIKI_ROOT, "entities")
 
 /** Read a wiki entity page by name. Returns full markdown content. */
