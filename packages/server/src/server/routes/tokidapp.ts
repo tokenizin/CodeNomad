@@ -1683,9 +1683,23 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
                 if (mcpUrl) {
                   // Proxy to MCP HTTP endpoint
+                  const mcpHeaders: Record<string, string> = {
+                    "Content-Type": "application/json",
+                  }
+
+                  // Inject Authorization header for OAuth-authenticated MCP servers
+                  // HyperAgent requires a Bearer token obtained via browser OAuth flow.
+                  // Set HYPERAGENT_MCP_TOKEN env var on the Mac mini host.
+                  if (
+                    mcpServer === "HyperAgent" &&
+                    process.env.HYPERAGENT_MCP_TOKEN
+                  ) {
+                    mcpHeaders["Authorization"] = `Bearer ${process.env.HYPERAGENT_MCP_TOKEN}`
+                  }
+
                   const response = await fetch(mcpUrl, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: mcpHeaders,
                     body: JSON.stringify({
                       name: toolName,
                       params,
