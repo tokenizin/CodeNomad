@@ -46,31 +46,83 @@ export async function queryKnowledgeBase(
   }
 }
 
-/** Get a compact summary of key architecture entities for prompt enrichment.
- *  Returns a plain-text digest of the most important entities. */
+/** Get a compact digest of key knowledge sources for prompt enrichment.
+ *  Includes architecture entities + pointers to project-intelligence docs,
+ *  ecosystem architecture references, and domain policies.
+ *  Returns a plain-text digest (target: ≤2000 chars). */
 export async function getArchitectureDigest(): Promise<string> {
+  const parts: string[] = []
+  const KB = path.resolve(process.cwd(), "..")
+
   try {
+    // 1. Architecture entities from StarGuard API
     const res = await apiGet("/api/architecture/entities", { limit: "20" })
-    if (!res.ok) return ""
-    const data = await res.json()
-    const entities = data.entities || data || []
-    if (!Array.isArray(entities)) return ""
-
-    const byDomain = new Map<string, string[]>()
-    for (const e of entities) {
-      const domain = e.domain || "GENERAL"
-      if (!byDomain.has(domain)) byDomain.set(domain, [])
-      byDomain.get(domain)!.push(e.name || e.stableId || "(unnamed)")
+    if (res.ok) {
+      const data = await res.json()
+      const entities = data.entities || data || []
+      if (Array.isArray(entities) && entities.length > 0) {
+        const byDomain = new Map<string, string[]>()
+        for (const e of entities) {
+          const domain = e.domain || "GENERAL"
+          if (!byDomain.has(domain)) byDomain.set(domain, [])
+          byDomain.get(domain)!.push(e.name || e.stableId || "(unnamed)")
+        }
+        parts.push("Key StarCARD ecosystem entities:")
+        for (const [domain, names] of byDomain) {
+          parts.push(`  ${domain}: ${names.slice(0, 5).join(", ")}`)
+        }
+      }
     }
+  } catch { /* skip — API unavailable */ }
 
-    const parts: string[] = ["Key StarCARD ecosystem entities:"]
-    for (const [domain, names] of byDomain) {
-      parts.push(`  ${domain}: ${names.slice(0, 5).join(", ")}`)
+  // 2. Project-intelligence files (prioritize critical/high)
+  const piDir = path.resolve(KB, ".opencode/context/project-intelligence")
+  if (fs.existsSync(piDir)) {
+    const piFiles = fs.readdirSync(piDir).filter(f => f.endsWith(".md"))
+    const critical: string[] = []
+    const high: string[] = []
+    for (const file of piFiles) {
+      try {
+        const content = fs.readFileSync(path.join(piDir, file), "utf-8")
+        const prio = content.match(/Priority:\s*(\w+)/i)
+        const prioVal = prio ? prio[1].toLowerCase() : "normal"
+        const name = file.replace(/\.md$/, "")
+        if (prioVal === "critical") critical.push(name)
+        else if (prioVal === "high") high.push(name)
+      } catch { /* skip */ }
     }
-    return parts.join("\n")
-  } catch {
-    return ""
+    if (critical.length > 0) {
+      parts.push("Project Intelligence (critical):")
+      parts.push(`  ${critical.join(", ")}`)
+    }
+    if (high.length > 0) {
+      parts.push("Project Intelligence (high):")
+      parts.push(`  ${high.slice(0, 5).join(", ")}`)
+    }
   }
+
+  // 3. Ecosystem architecture deep-dives
+  const ecoDir = path.resolve(KB, "docs/architecture/ecosystem")
+  if (fs.existsSync(ecoDir)) {
+    const ecoFiles = fs.readdirSync(ecoDir).filter(f => f.endsWith(".md"))
+    if (ecoFiles.length > 0) {
+      parts.push("Ecosystem architecture:")
+      parts.push(`  ${ecoFiles.map(f => f.replace(/\.md$/, "")).join(", ")}`)
+    }
+  }
+
+  // 4. NomadWorks domain policies
+  const polDir = path.resolve(KB, ".nomadworks/policies")
+  if (fs.existsSync(polDir)) {
+    const polFiles = fs.readdirSync(polDir).filter(f => f.endsWith(".md"))
+    if (polFiles.length > 0) {
+      const polNames = polFiles.map(f => f.replace(/\.md$/, "")).filter(n => n !== "README")
+      parts.push("Domain policies:")
+      parts.push(`  ${polNames.join(", ")}`)
+    }
+  }
+
+  return parts.length > 0 ? parts.join("\n") : ""
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -1046,25 +1098,67 @@ export async function generateMermaidDiagram(
 const WIKI_ROOT = path.resolve(process.cwd(), "../docs/starworld")
 const WIKI_ENTITIES = path.join(WIKI_ROOT, "entities")
 
-/** Read a wiki entity page by name. Returns full markdown content. */
+// Additional knowledge roots for expanded Realtime KB.
+// Search/read flows iterate ALL roots (primary first, then fall through).
+// Write/lint/health flows use ONLY WIKI_ROOT (primary vault).
+const WIKI_ROOTS = [
+  WIKI_ROOT,
+  path.resolve(process.cwd(), "../.opencode/context/project-intelligence"),
+  path.resolve(process.cwd(), "../docs/architecture/ecosystem"),
+]
+
+/** Read a wiki entity page by name. Returns full markdown content.
+ *  Searches primary root (vault) first, then falls through to additional
+ *  knowledge roots (project-intelligence, ecosystem architecture). */
 export async function readWikiPage(pageName: string): Promise<string> {
-  // Try exact match first, then case-insensitive
   const sanitizedName = pageName.replace(/[^\w\s-]/g, "").trim()
-  const candidates = [
-    path.join(WIKI_ENTITIES, `${sanitizedName}.md`),
-    path.join(WIKI_ROOT, `${sanitizedName}.md`),
-  ]
 
-  // Also try case-insensitive match
-  try {
-    const files = fs.readdirSync(WIKI_ENTITIES)
-    const match = files.find(f => f.replace(/\.md$/, "").toLowerCase() === sanitizedName.toLowerCase())
-    if (match) candidates.unshift(path.join(WIKI_ENTITIES, match))
-  } catch { /* directory may not exist */ }
+  // Build search candidates across all roots
+  const candidates: string[] = []
 
-  for (const candidate of candidates) {
+  for (const root of WIKI_ROOTS) {
+    // Direct match
+    candidates.push(path.join(root, `${sanitizedName}.md`))
+
+    // Sub-directory match (e.g. entities/{pageName}.md in vault)
     try {
-      const content = fs.readFileSync(candidate, "utf-8")
+      const entries = fs.readdirSync(root, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          candidates.push(path.join(root, entry.name, `${sanitizedName}.md`))
+        }
+      }
+    } catch { /* skip unreadable */ }
+
+    // Case-insensitive match in the root dir
+    try {
+      const files = fs.readdirSync(root)
+      const match = files.find(f => f.replace(/\.md$/, "").toLowerCase() === sanitizedName.toLowerCase())
+      if (match) candidates.push(path.join(root, match))
+    } catch { /* skip */ }
+
+    // Case-insensitive match in sub-directories
+    try {
+      const entries = fs.readdirSync(root, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        try {
+          const subFiles = fs.readdirSync(path.join(root, entry.name))
+          const subMatch = subFiles.find(f => f.replace(/\.md$/, "").toLowerCase() === sanitizedName.toLowerCase())
+          if (subMatch) candidates.push(path.join(root, entry.name, subMatch))
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+  }
+
+  // Try all candidates (dedup by resolved path)
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate)
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    try {
+      const content = fs.readFileSync(resolved, "utf-8")
       return `# ${sanitizedName}\n\n${content}`
     } catch { /* try next */ }
   }
@@ -1072,7 +1166,9 @@ export async function readWikiPage(pageName: string): Promise<string> {
   return `Wiki page "${pageName}" not found. Available pages can be found via search_wiki.`
 }
 
-/** Full-text search across all wiki pages. Returns matching pages with context. */
+/** Full-text search across all wiki knowledge roots.
+ *  Returns matching pages with context, deduplicated by file basename.
+ *  Primary root (vault) results appear first. */
 export async function searchWiki(query: string): Promise<string> {
   if (!query?.trim()) return "Please provide a search term."
 
@@ -1081,38 +1177,64 @@ export async function searchWiki(query: string): Promise<string> {
 
   try {
     const pattern = terms.join("|")
-    let results: string
-    try {
-      results = execSync(
-        `rg -l -i "${pattern}" "${WIKI_ROOT}" --glob '*.md' -m 10 2>/dev/null || true`,
-        { encoding: "utf-8", maxBuffer: 1024 * 1024 },
-      )
-    } catch { results = "" }
+    const allFiles: string[] = []
+    const seenBasenames = new Set<string>()
 
-    const files = results.trim().split("\n").filter(Boolean).slice(0, 10)
-    if (files.length === 0) return `No wiki pages found matching: ${query}`
+    // Search each root — primary first
+    for (const root of WIKI_ROOTS) {
+      try {
+        const result = execSync(
+          `rg -l -i "${pattern}" "${root}" --glob '*.md' -m 10 2>/dev/null || true`,
+          { encoding: "utf-8", maxBuffer: 1024 * 1024 },
+        )
+        const files = result.trim().split("\n").filter(Boolean)
+        for (const file of files) {
+          const basename = path.basename(file).toLowerCase()
+          // Deduplicate by basename; prefer earlier root (primary first)
+          if (!seenBasenames.has(basename)) {
+            seenBasenames.add(basename)
+            allFiles.push(file)
+          }
+        }
+      } catch { /* skip unsearchable root */ }
+    }
+
+    if (allFiles.length === 0) return `No wiki pages found matching: ${query}`
 
     const previews: string[] = []
-    for (const file of files.slice(0, 5)) {
+    for (const file of allFiles.slice(0, 8)) {
       try {
         const content = fs.readFileSync(file, "utf-8")
-        const relPath = path.relative(WIKI_ROOT, file)
-        const name = relPath.replace(/\.md$/, "").replace("entities/", "")
+        // Determine the best display name: relative to any known root, else basename
+        let name = path.basename(file).replace(/\.md$/, "")
+        for (const root of WIKI_ROOTS) {
+          if (file.startsWith(root)) {
+            const rel = path.relative(root, file)
+            name = rel.replace(/\.md$/, "").replace(/^.*[/\\]/, "")
+            break
+          }
+        }
 
         // Extract frontmatter stableId if present
         const stableMatch = content.match(/stableId:\s*(.+)/)
         const stableId = stableMatch ? stableMatch[1].trim() : ""
 
+        // Extract priority from HTML comment (project-intelligence style)
+        const priorityMatch = content.match(/Priority:\s*(\w+)/i)
+        const priority = priorityMatch ? priorityMatch[1].trim() : ""
+
         // Get first 3 lines of content after frontmatter
         const bodyLines = content.split("\n").filter(l => l.trim() && !l.startsWith("---")).slice(0, 3)
         const preview = bodyLines.join(" ").slice(0, 200)
 
-        previews.push(`• ${name}${stableId ? ` (${stableId})` : ""}: ${preview}`)
+        const tags = [stableId, priority].filter(Boolean).join(" · ")
+        previews.push(`• ${name}${tags ? ` (${tags})` : ""}: ${preview}`)
       } catch { /* skip unreadable */ }
     }
 
+    const sourceNote = " (vault · project-intelligence · ecosystem)"
     return [
-      `Found ${files.length} wiki page(s) matching "${query}":`,
+      `Found ${allFiles.length} page(s) matching "${query}"${sourceNote}:`,
       "",
       ...previews,
       "",
@@ -1748,15 +1870,33 @@ export function extractConcepts(content: string): ExtractedConcepts {
 
   if (!content?.trim()) return { entityMentions, facts, relationships }
 
-  // Load entity names from wiki directory
-  let availableEntities: string[] = []
-  try {
-    if (fs.existsSync(WIKI_ENTITIES)) {
-      availableEntities = fs.readdirSync(WIKI_ENTITIES)
-        .filter(f => f.endsWith(".md"))
-        .map(f => f.replace(/\.md$/, ""))
-    }
-  } catch { /* directory may not exist */ }
+  // Load entity names from all wiki roots
+  const availableEntities: string[] = []
+  const seenEntities = new Set<string>()
+  for (const root of WIKI_ROOTS) {
+    try {
+      if (!fs.existsSync(root)) continue
+      const entries = fs.readdirSync(root, { withFileTypes: true })
+      const files = entries.filter(e => e.isFile() && e.name.endsWith(".md")).map(e => e.name.replace(/\.md$/, ""))
+      const subdirFiles: string[] = []
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        try {
+          const subEntries = fs.readdirSync(path.join(root, entry.name))
+          subdirFiles.push(
+            ...subEntries.filter(f => f.endsWith(".md")).map(f => f.replace(/\.md$/, ""))
+          )
+        } catch { /* skip */ }
+      }
+      for (const name of [...files, ...subdirFiles]) {
+        const lower = name.toLowerCase()
+        if (!seenEntities.has(lower)) {
+          seenEntities.add(lower)
+          availableEntities.push(name)
+        }
+      }
+    } catch { /* skip unreadable */ }
+  }
 
   // Split into paragraphs for context-aware extraction
   const paragraphs = content
