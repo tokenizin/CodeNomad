@@ -347,7 +347,9 @@ async function proxyRequest(args: {
     }
 
     reply.hijack()
-    reply.raw.writeHead(reply.statusCode, toOutgoingHeaders(reply.getHeaders()))
+    if (!reply.raw.headersSent) {
+      reply.raw.writeHead(reply.statusCode, toOutgoingHeaders(reply.getHeaders()))
+    }
     await pipeline(Readable.fromWeb(response.body as any), reply.raw)
   } catch (error) {
     logger.error({ err: error, upstreamUrl }, "Failed to proxy remote session request")
