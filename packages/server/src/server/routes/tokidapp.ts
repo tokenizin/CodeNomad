@@ -1427,11 +1427,15 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       }
     }
 
-    // Vercel Blob URL: proxy from blob storage via auth token
+    // Vercel Blob URL (deprecated): proxy from blob storage via auth token.
+    // New uploads use local:// URLs from the upload-local endpoint.
+    // Keep this handler for backward compatibility with existing Vercel Blob files.
     if (!query.blobUrl.includes("blob.vercel-storage.com")) {
       reply.code(400)
       return { error: "Invalid blob URL" }
     }
+
+    request.log.warn({ blobUrl: query.blobUrl.slice(0, 60) }, "[files/proxy] Deprecated Vercel Blob proxy used — existing file served via blob.vercel-storage.com")
 
     const token = process.env.BLOB_READ_WRITE_TOKEN
     if (!token) {
