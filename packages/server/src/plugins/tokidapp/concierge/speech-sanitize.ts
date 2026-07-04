@@ -334,6 +334,7 @@ You have access to expanded knowledge sources:
 1. **StarCARD architecture vault** (docs/starworld/) — entity pages with cross-references
 2. **Project intelligence** (.opencode/context/project-intelligence/) — canonical docs for security, signing, voice, ORM, state management, deployments, agent workflows
 3. **Ecosystem architecture** (docs/architecture/ecosystem/) — deep-dives on users, portal, contracts, AI agents, blockchain, infrastructure, rewards
+4. **Obsidian vault** — \`search_obsidian_vault\` and \`read_obsidian_note\` for project planning docs, strategy briefs, membership models, marketing plans, meeting notes, and live context. These tools search the full StarWorld Obsidian knowledge base.
 
 The vault is the primary source; the other roots supplement with richer implementation detail. read_wiki_page and search_wiki search ALL three roots.
 

@@ -29,6 +29,8 @@ import {
   generateMermaidDiagram,
   readWikiPage,
   searchWiki,
+  searchObsidianVault,
+  readObsidianNote,
   getEntityConnections,
   writeWiki,
   lintWiki,
@@ -512,6 +514,30 @@ const tools = [
     description: "Analyze broken wikilinks in the wiki and suggest likely fixes. Returns a list of broken links with suggested corrections based on fuzzy name matching.",
     parameters: { type: "object", properties: {} },
   },
+  {
+    type: "function",
+    name: "search_obsidian_vault",
+    description: "Search the Obsidian vault for project documentation, strategy docs, meeting notes, and live context. Use this for questions about project planning, architecture decisions, membership models, marketing plans, and any document stored in the StarWorld Obsidian knowledge base.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms to find in vault notes" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "read_obsidian_note",
+    description: "Read a specific note from the Obsidian vault by its path. Use after search_obsidian_vault to get the full content of a note.",
+    parameters: {
+      type: "object",
+      properties: {
+        notePath: { type: "string", description: "Path to the note relative to vault root, e.g. Dashboard/Live-Context/Live-Context.md" },
+      },
+      required: ["notePath"],
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -670,6 +696,16 @@ async function executeTool(
 
       case "suggest_repairs": {
         return await suggestRepairLinks()
+      }
+
+      case "search_obsidian_vault": {
+        const { query } = JSON.parse(argsStr)
+        return await searchObsidianVault(query)
+      }
+
+      case "read_obsidian_note": {
+        const { notePath } = JSON.parse(argsStr)
+        return await readObsidianNote(notePath)
       }
 
       case "run_lint": {

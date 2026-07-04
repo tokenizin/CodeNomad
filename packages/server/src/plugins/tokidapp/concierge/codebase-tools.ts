@@ -1105,6 +1105,7 @@ const WIKI_ROOTS = [
   WIKI_ROOT,
   path.resolve(process.cwd(), "../.opencode/context/project-intelligence"),
   path.resolve(process.cwd(), "../docs/architecture/ecosystem"),
+  "/Users/alexshapiro/Documents/Obsidian Vault",
 ]
 
 /** Read a wiki entity page by name. Returns full markdown content.
@@ -1242,6 +1243,54 @@ export async function searchWiki(query: string): Promise<string> {
     ].join("\n")
   } catch (err) {
     return `Wiki search failed: ${(err as Error).message}`
+  }
+}
+
+/** Search the Obsidian vault via the local MCP server (http://127.0.0.1:5100).
+ *  Falls back gracefully if the MCP server is not running. */
+export async function searchObsidianVault(query: string): Promise<string> {
+  if (!query?.trim()) return "Please provide a search term."
+
+  try {
+    const res = await fetch(`http://127.0.0.1:5100/vault/search/${encodeURIComponent(query.trim())}`)
+    if (!res.ok) {
+      if (res.status === 404) return `No Obsidian vault pages found matching: ${query}`
+      return `Obsidian vault search unavailable (MCP server returned ${res.status}).`
+    }
+    const results: Array<{path: string; size: number}> = await res.json()
+    if (!Array.isArray(results) || results.length === 0) {
+      return `No Obsidian vault pages found matching: ${query}`
+    }
+    return [
+      `Found ${results.length} page(s) in Obsidian vault matching "${query}":`,
+      "",
+      ...results.map(r => `• ${r.path} (${(r.size / 1024).toFixed(1)}KB)`),
+      "",
+      `Use read_obsidian_note("path/to/note.md") to read a specific note.`,
+    ].join("\n")
+  } catch {
+    return "Obsidian vault search unavailable (MCP server not running). Start it with: .opencode/run_obsidian_mcp.sh"
+  }
+}
+
+/** Read a specific note from the Obsidian vault via the MCP server. */
+export async function readObsidianNote(notePath: string): Promise<string> {
+  if (!notePath?.trim()) return "Please provide a note path (e.g. Dashboard/Live-Context/Live-Context.md)."
+
+  try {
+    const res = await fetch(`http://127.0.0.1:5100/vault/${encodeURIComponent(notePath.trim())}`)
+    if (!res.ok) {
+      if (res.status === 404) return `Obsidian note not found: ${notePath}`
+      return `Could not read Obsidian note (MCP server returned ${res.status}).`
+    }
+    const data = await res.json()
+    const fm = data.frontmatter || {}
+    const fmSummary = Object.keys(fm).length > 0
+      ? `\n\n**Frontmatter:** ${Object.entries(fm).map(([k,v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' | ')}`
+      : ''
+    return `# ${notePath}${fmSummary}\n\n${data.content || '(empty)'}`
+  } catch {
+    return "Obsidian vault unavailable (MCP server not running)."
   }
 }
 
