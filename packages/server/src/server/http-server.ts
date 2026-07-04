@@ -563,7 +563,7 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
     const pathOnly = rawPath.split("?")[0] ?? ""
     if (!pathOnly.endsWith("/")) {
       const search = rawPath.includes("?") ? rawPath.slice(rawPath.indexOf("?")) : ""
-      reply.redirect(301, `${pathOnly}/${search}`)
+      reply.redirect(`${pathOnly}/${search}`, 301)
       return
     }
 
