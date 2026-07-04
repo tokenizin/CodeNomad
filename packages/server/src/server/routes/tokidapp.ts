@@ -16,6 +16,8 @@ import {
   getRealtimeSession,
   getRealtimeSessionVoice,
   ensureSingleUserSession,
+  getRealtimeSessionForUser,
+  cancelRealtimeResponse,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getArchitectureDigest } from "../../plugins/tokidapp/concierge/codebase-tools"
@@ -172,6 +174,149 @@ async function enrichAttachmentWithVision(content: string): Promise<string> {
   // Prepend analysis, keep original attachment info for context
   const visionBlock = `Auto-vision analysis of attached image(s):\n${results.join("\n\n")}`
   return `${visionBlock}\n\n${content}`
+}
+
+// ── Voice-Chat Union Injection Helpers ─────────────────────
+
+interface InjectionAttachment {
+  fileName: string
+  mimeType: string
+  blobUrl: string
+}
+
+const injectionDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const pendingInjectionPayloads = new Map<string, { content: string; attachments: InjectionAttachment[] }>()
+
+function isInjectionAttachment(value: unknown): value is InjectionAttachment {
+  if (!value || typeof value !== "object") return false
+  const v = value as Record<string, unknown>
+  return typeof v.fileName === "string" && typeof v.mimeType === "string" && typeof v.blobUrl === "string"
+}
+
+function normalizeInjectionAttachments(raw: unknown): InjectionAttachment[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter(isInjectionAttachment)
+}
+
+/** Extract per-file extracted text blocks from a file-attachment context message.
+ *  Content format: `[fileName (mimeType)]:\n<extracted text>` */
+export function extractFileTexts(content: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  const sectionMatch = content.match(/Extracted file contents:\n?([\s\S]*)/i)
+  if (!sectionMatch) return result
+  const section = sectionMatch[1]
+  const blockRegex = /\[(.+?)\s*\(([^)]+)\)\]:\n([\s\S]*?)(?=\n\[|$)/g
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(section)) !== null) {
+    result[match[1].trim()] = match[3].trim()
+  }
+  return result
+}
+
+/** Strip file-attachment metadata from content, leaving any user-typed text. */
+export function stripFileMetadata(content: string): string {
+  return content
+    .replace(/\[File attachment:[\s\S]*?\](?:\n\nExtracted file contents:[\s\S]*)?$/i, "")
+    .trim()
+}
+
+/** Build Realtime API content items from a text message and optional attachments.
+ *  Images become native `input_image` items; non-images become `input_text` with
+ *  extracted text. Multiple files are batched into one content array. */
+export function buildRealtimeContentItems(
+  content: string,
+  attachments: InjectionAttachment[],
+): Array<{ type: string; [key: string]: unknown }> {
+  const items: Array<{ type: string; [key: string]: unknown }> = []
+
+  if (attachments.length === 0) {
+    items.push({ type: "input_text", text: content })
+    return items
+  }
+
+  const extractedTexts = extractFileTexts(content)
+  let imageCount = 0
+
+  for (const att of attachments) {
+    const isImage = att.mimeType?.toLowerCase().startsWith("image/")
+    if (isImage) {
+      if (imageCount >= 3) continue
+      imageCount++
+      const proxyUrl = `${STARGUARD_BASE.replace(/\/+$/, "")}/api/tokidapp/files/proxy?blobUrl=${encodeURIComponent(att.blobUrl)}`
+      items.push({
+        type: "input_image",
+        image_url: { url: proxyUrl, detail: "auto" },
+      })
+    } else {
+      const text = extractedTexts[att.fileName] || `[${att.fileName} (${att.mimeType})]`
+      items.push({
+        type: "input_text",
+        text: `[${att.fileName}]\n${text}`,
+      })
+    }
+  }
+
+  const userText = stripFileMetadata(content)
+  if (userText) {
+    items.push({ type: "input_text", text: userText })
+  }
+
+  return items
+}
+
+/** Inject a text/file message into the active Realtime session after a 300ms
+ *  debounce. Only the latest message in a rapid burst is injected. */
+export function scheduleRealtimeInjection(
+  sessionId: string,
+  content: string,
+  attachments: InjectionAttachment[],
+) {
+  const existing = injectionDebounceTimers.get(sessionId)
+  if (existing) clearTimeout(existing)
+
+  pendingInjectionPayloads.set(sessionId, { content, attachments })
+
+  const timer = setTimeout(() => {
+    injectionDebounceTimers.delete(sessionId)
+    const pending = pendingInjectionPayloads.get(sessionId)
+    pendingInjectionPayloads.delete(sessionId)
+    if (!pending) return
+
+    const rtSession = getRealtimeSessionForUser(sessionId)
+    if (!rtSession?.connected) {
+      console.log("[tokidapp] no active Realtime session for injection, falling through to routeMessage")
+      return
+    }
+
+    const contentItems = buildRealtimeContentItems(pending.content, pending.attachments)
+
+    if (rtSession.responseInProgress) {
+      cancelRealtimeResponse(sessionId)
+    }
+
+    rtSession.ws.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: contentItems,
+      },
+    }))
+
+    if (!rtSession.responseInProgress) {
+      rtSession.responseInProgress = true
+      rtSession.ws.send(JSON.stringify({ type: "response.create" }))
+    } else {
+      rtSession.pendingResponseQueue.push(() => {
+        if (rtSession.connected) {
+          rtSession.responseInProgress = true
+          rtSession.ws.send(JSON.stringify({ type: "response.create" }))
+        }
+      })
+    }
+  }, 300)
+
+  injectionDebounceTimers.set(sessionId, timer)
 }
 
 const tokidappWss = new WebSocketServer({ noServer: true })
@@ -934,6 +1079,34 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     }
   })
 
+  // Session creation — proxy to tokidapp sidecar on :8548
+  // The sidecar has full DB access; this keeps auth handling and route logic unified.
+  app.post("/api/tokidapp/session", async (request, reply) => {
+    try {
+      const sidecarUrl = "http://127.0.0.1:8548/api/tokidapp/session"
+      const rawBody = request.body as Record<string, unknown> | undefined
+      const authHeader = (request.headers.authorization ?? "") as string
+
+      const sidecarRes = await fetch(sidecarUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: authHeader,
+        },
+        body: rawBody ? JSON.stringify(rawBody) : "{}",
+        signal: AbortSignal.timeout(10_000),
+      })
+
+      const data: unknown = await sidecarRes.json()
+      reply.code(sidecarRes.status)
+      return data
+    } catch (error) {
+      request.log.error({ err: error }, "TokiDAPP session proxy to sidecar failed")
+      reply.code(502)
+      return { error: "Sidecar unavailable" }
+    }
+  })
+
   // Deploy shortcut (HTTP POST, no WebSocket needed)
   const DeployBodySchema = z.object({
     commitMsg: z.string().min(1),
@@ -1540,6 +1713,12 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
           if (msg.type === "message" && msg.content) {
             const enrichedContent = await enrichAttachmentWithVision(msg.content)
+
+            // Chat → Voice union: if a Realtime session is active, debounce-inject
+            // the message into it so the voice AI becomes the canonical responder.
+            const attachments = normalizeInjectionAttachments(msg.attachments)
+            scheduleRealtimeInjection(sessionId, enrichedContent, attachments)
+
             routeMessage(
               enrichedContent,
               (outgoing) => socketRef.send(outgoing),

@@ -43,7 +43,7 @@ import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
-import { getTokidappSocket, tokidappSessionId } from "../../../server/ws-socket-registry"
+import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 
 /** Tracks one active session per user — prevents two sessions for the same
  *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
@@ -1396,13 +1396,6 @@ export function endVoiceSession(sessionId: string) {
   }
 }
 
-/** Get the userId from a sessionId (supports "voice_*" and "tokidapp_*" prefixes). */
-function getUserIdFromSessionId(sessionId: string): string | null {
-  if (sessionId.startsWith("voice_")) return sessionId.slice(6)
-  if (sessionId.startsWith("tokidapp_")) return sessionId.slice(9)
-  return null
-}
-
 /** Ensure only one Realtime session is active per user.
  *  If another session (with a different prefix) already exists for this user, end it first.
  *  Returns true if the caller should proceed, false if it was already handled. */
@@ -1422,6 +1415,34 @@ export function ensureSingleUserSession(sessionId: string): boolean {
 
 export function getRealtimeSession(sessionId: string): RealtimeSession | undefined {
   return sessions.get(sessionId)
+}
+
+/** Two-step lookup for the active Realtime session.
+ *  Step 1: direct sessionId match (same socket — covers ~99% of usage).
+ *  Step 2: userId-derived lookup via activeUserSessions (cross-socket fallback). */
+export function getRealtimeSessionForUser(sessionId: string): RealtimeSession | undefined {
+  const direct = sessions.get(sessionId)
+  if (direct?.connected) return direct
+
+  const userId = getUserIdFromSessionId(sessionId)
+  if (!userId) return undefined
+
+  const activeSessionId = activeUserSessions.get(userId)
+  if (!activeSessionId || activeSessionId === sessionId) return undefined
+
+  const fallback = sessions.get(activeSessionId)
+  return fallback?.connected ? fallback : undefined
+}
+
+/** Cancel the current in-progress Realtime response for a session.
+ *  Safe to call repeatedly — no-op if nothing is in progress. */
+export function cancelRealtimeResponse(sessionId: string): void {
+  const session = sessions.get(sessionId)
+  if (!session?.connected || !session.responseInProgress) return
+  session.ws.send(JSON.stringify({ type: "response.cancel" }))
+  session.responseInProgress = false
+  const next = session.pendingResponseQueue.shift()
+  if (next) next()
 }
 
 export function getRealtimeSessionVoice(sessionId: string): RealtimeVoiceId | undefined {
