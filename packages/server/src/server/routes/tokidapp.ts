@@ -250,7 +250,7 @@ export function buildRealtimeContentItems(
       const proxyUrl = `${TUNNEL_PUBLIC_URL}/api/tokidapp/files/proxy?blobUrl=${encodeURIComponent(att.blobUrl)}`
       items.push({
         type: "input_image",
-        image_url: { url: proxyUrl, detail: "auto" },
+        image_url: proxyUrl,
       })
     } else {
       const text = extractedTexts[att.fileName] || `[${att.fileName} (${att.mimeType})]`
