@@ -12,12 +12,20 @@
  *                          │      └── Returns task ID + status
  *                          ├── 2. nomadworks_status handler
  *                          │      └── Reads task file for latest status
- *                          │      └── Returns status to caller
- *                          ├── 3. watchTask — fs.watch for status changes
+ *                          ├── 3. watchTask — in-memory event bus + fs.watch fallback
+ *                          │      └── Updates from updateTaskProgress arrive via event bus
+ *                          │      └── fs.watch detects external edits (editor, agent file writes)
  *                          │      └── Sends nomadworks_task_status + agent_progress updates
- *                          └── 4. updateTaskProgress — write progress to frontmatter
+ *                          └── 4. updateTaskProgress — write progress to frontmatter + emit
  *                                 └── PMA agent writes progress_stage, progress_message
- *                                 └── watchTask detects change → sends agent_progress WS event
+ *                                 └── Emits directly to event bus → WS subscribers (no polling)
+ *                                 └── fs.watch detects disk change as fallback
+ *
+ * Event Bus Architecture:
+ *   updateTaskProgress() writes to disk (persistence) AND emits to in-memory
+ *   ProgressEventBus. The watchTask() handler subscribes to the event bus for
+ *   immediate delivery while keeping fs.watch as a fallback for external file
+ *   changes (editor, git checkout, agent-side write from another process).
  */
 
 import fs from "fs"
@@ -35,6 +43,94 @@ const TODO_DIR = path.join(TASKS_ROOT, "todo")
 const CURRENT_FILE = path.join(TASKS_ROOT, "current.md")
 const BRIDGE_SECTION = "## Bridge-Initiated Tasks"
 const EVIDENCES_ROOT = path.join(REPO_ROOT, "evidences")
+
+// ── Event Bus (In-Memory Progress Notifications) ─────────────
+// Replaces the fs.watch polling round-trip for progress updates.
+// updateTaskProgress() writes to disk (persistence) AND emits to this bus.
+// watchTask() subscribes for immediate delivery; keeps fs.watch as fallback.
+
+/** Progress event payload emitted by the bus. */
+export interface ProgressEvent {
+  taskId: string
+  type: "agent_progress" | "nomadworks_task_status"
+  stage?: string
+  message?: string
+  pct?: number
+  status?: string
+  /** Pre-serialized WS message for immediate send (avoids redundant JSON.stringify). */
+  rawPayload: string
+}
+
+type ProgressCallback = (event: ProgressEvent) => void
+
+/**
+ * Lightweight in-memory event bus for NomadWorks progress notifications.
+ *
+ * Subscribers are registered per-taskId by watchTask(). When
+ * updateTaskProgress() writes its change to disk, it also emits to
+ * this bus so subscribers receive the event immediately — no
+ * fs.watch polling round-trip needed.
+ *
+ * fs.watch is kept as a fallback for changes that bypass
+ * updateTaskProgress() (external editor, git operations, agent writes
+ * from another OpenCode instance).
+ */
+export class ProgressEventBus {
+  private subscribers = new Map<string, Set<ProgressCallback>>()
+  private allSubscribers = new Set<ProgressCallback>()
+
+  /**
+   * Emit a progress event to all subscribers of this taskId,
+   * plus any catch-all subscribers.
+   */
+  emit(event: ProgressEvent): void {
+    const taskSubs = this.subscribers.get(event.taskId)
+    if (taskSubs) {
+      for (const cb of taskSubs) {
+        try { cb(event) } catch { /* subscriber failed — skip */ }
+      }
+    }
+    for (const cb of this.allSubscribers) {
+      try { cb(event) } catch { /* subscriber failed — skip */ }
+    }
+  }
+
+  /**
+   * Subscribe to events for a specific taskId.
+   * Returns an unsubscribe function.
+   */
+  subscribe(taskId: string, callback: ProgressCallback): () => void {
+    if (!this.subscribers.has(taskId)) {
+      this.subscribers.set(taskId, new Set())
+    }
+    this.subscribers.get(taskId)!.add(callback)
+    return () => {
+      this.subscribers.get(taskId)?.delete(callback)
+      if (this.subscribers.get(taskId)?.size === 0) {
+        this.subscribers.delete(taskId)
+      }
+    }
+  }
+
+  /**
+   * Subscribe to ALL progress events (for catch-all listeners).
+   */
+  subscribeAll(callback: ProgressCallback): () => void {
+    this.allSubscribers.add(callback)
+    return () => { this.allSubscribers.delete(callback) }
+  }
+
+  /** Remove all subscribers for a task (cleanup on task completion). */
+  unsubscribeAll(taskId: string): void {
+    this.subscribers.delete(taskId)
+  }
+
+  /** Remove all subscribers globally. */
+  clear(): void {
+    this.subscribers.clear()
+    this.allSubscribers.clear()
+  }
+}
 
 // ── Idempotency Cache ─────────────────────────────────────────
 // key = `${sessionId}::${intent}` — avoids duplicate task files
@@ -105,6 +201,8 @@ export interface NomadworksBridge {
   watchTask(taskId: string, send: (msg: string) => void, onStatus?: (status: TaskStatus) => void): () => void
   listTasks(sessionId?: string): Promise<TaskStatus[]>
   updateTaskProgress(taskId: string, stage: AgentProgressStage, message: string, pct?: number): void
+  /** In-memory event bus for real-time progress notifications. */
+  eventBus: ProgressEventBus
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -455,7 +553,13 @@ async function streamCausalUpdate(
 /**
  * Update the progress fields in a task file's YAML frontmatter.
  * This is called by the PMA agent as it progresses through task stages.
- * The watchTask handler detects the change and streams an agent_progress event.
+ *
+ * After writing to disk for persistence, emits an event to the in-memory
+ * ProgressEventBus so WebSocket subscribers receive the update immediately
+ * without waiting for the fs.watch polling round-trip.
+ *
+ * fs.watch remains as a fallback for file changes that bypass this function
+ * (external editor, git operations, agent writes from another instance).
  */
 function updateTaskProgress(
   taskId: string,
@@ -509,6 +613,47 @@ function updateTaskProgress(
     fs.writeFileSync(filePath, newContent, "utf-8")
 
     console.log(`[nomadworks-bridge] Progress update for ${taskId}: ${stage} — ${message}`)
+
+    // ── Emit to in-memory event bus ──
+    // Subscribers (watchTask handlers) receive this directly, bypassing fs.watch.
+    // The rawPayload is pre-serialized so WS sends are zero-cost.
+    const rawPayload = JSON.stringify({
+      type: "agent_progress",
+      taskId,
+      agentType: (frontmatter.agentType as string) || "developer",
+      stepId: `${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      stage,
+      content: message,
+      pct: pct ?? frontmatter.progress_pct ?? 0,
+      timestamp: new Date().toISOString(),
+    })
+    progressBus.emit({
+      taskId,
+      type: "agent_progress",
+      stage,
+      message,
+      pct: pct ?? frontmatter.progress_pct ?? 0,
+      rawPayload,
+    })
+
+    // Also emit a nomadworks_task_status event for status-polling subscribers
+    const taskStatusPayload = JSON.stringify({
+      type: "nomadworks_task_status",
+      taskId,
+      status: frontmatter.status || "in_progress",
+      complexity: frontmatter.complexity,
+      progress_stage: stage,
+      progress_message: message,
+      progress_pct: pct ?? frontmatter.progress_pct ?? 0,
+      updatedAt: frontmatter.updatedAt,
+    })
+    progressBus.emit({
+      taskId,
+      type: "nomadworks_task_status",
+      stage,
+      status: frontmatter.status as string | undefined,
+      rawPayload: taskStatusPayload,
+    })
   } catch (err) {
     console.error(`[nomadworks-bridge] Failed to update progress for ${taskId}:`, err)
   }
@@ -516,6 +661,16 @@ function updateTaskProgress(
 
 /**
  * Watch a task file for status changes and stream updates via WS.
+ *
+ * Uses a dual-path strategy:
+ *   PRIMARY: In-memory ProgressEventBus — updateTaskProgress() emits directly,
+ *            subscribers receive the event in the same tick (no polling delay).
+ *   FALLBACK: fs.watch — detects changes from external editors, git operations,
+ *             or agent writes that bypass updateTaskProgress().
+ *
+ * The hasDirectEmit flag prevents double-delivery when the event bus fires
+ * first and fs.watch fires shortly after.
+ *
  * Returns an unsubscribe function for cleanup.
  */
 function watchTask(
@@ -535,91 +690,87 @@ function watchTask(
   }
 
   let lastContent = fs.readFileSync(filePath, "utf-8")
+  let hasDirectEmit = false // bus fired; fs.watch should skip the next change
 
-  // macOS fs.watch is reliable for single-file changes
+  // ══════════════════════════════════════════════════════════════
+  // PRIMARY PATH: subscribe to in-memory event bus
+  // ══════════════════════════════════════════════════════════════
+  const busUnsub = progressBus.subscribe(taskId, (event) => {
+    hasDirectEmit = true
+    send(event.rawPayload)
+
+    if (event.stage === "complete") {
+      const sid = extractSessionIdFromFile(taskId)
+      collectEvidence(taskId, sid, send).catch(() => {})
+      streamCausalUpdate(taskId, sid, send).catch(() => {})
+    }
+
+    if (event.type === "nomadworks_task_status" && (event.status === "completed" || event.status === "failed")) {
+      const sid = extractSessionIdFromFile(taskId)
+      collectEvidence(taskId, sid, send).catch(() => {})
+      streamCausalUpdate(taskId, sid, send).catch(() => {})
+      unsubscribe()
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // FALLBACK PATH: fs.watch for external edits
+  // ══════════════════════════════════════════════════════════════
   const watcher = fs.watch(filePath, (eventType) => {
     if (eventType !== "change") return
+    // If the event bus already handled this update, skip the fs.watch round-trip
+    if (hasDirectEmit) {
+      hasDirectEmit = false
+      return
+    }
 
     try {
       if (!fs.existsSync(filePath)) {
-        send(
-          JSON.stringify({
-            type: "nomadworks_task_status",
-            taskId,
-            status: "removed",
-          }),
-        )
+        send(JSON.stringify({ type: "nomadworks_task_status", taskId, status: "removed" }))
         return
       }
 
       const content = fs.readFileSync(filePath, "utf-8")
-      if (content === lastContent) return // deduplicate spurious events
+      if (content === lastContent) return
       lastContent = content
 
       const status = parseTaskFile(content, taskId)
-      if (status) {
-        send(
-          JSON.stringify({
-            type: "nomadworks_task_status",
-            ...status,
-          }),
-        )
-        if (onStatus) onStatus(status)
+      if (!status) return
 
-        // ── Agent Progress Detection ─────────────────────────
-        // If the frontmatter contains progress_stage and it differs from
-        // the last known progress, emit an agent_progress WS event.
-        const currentStage = status.progressStage
-        const currentMessage = status.progressMessage
-        const lastKnown = lastProgressMap.get(taskId)
+      send(JSON.stringify({ type: "nomadworks_task_status", ...status }))
+      if (onStatus) onStatus(status)
 
-        if (currentStage && (
-          currentStage !== lastKnown?.stage ||
-          currentMessage !== lastKnown?.message
-        )) {
-          lastProgressMap.set(taskId, {
-            stage: currentStage,
-            message: currentMessage,
-          })
+      // ── Agent Progress Detection (fs.watch fallback) ────
+      const currentStage = status.progressStage
+      const currentMessage = status.progressMessage
+      const lastKnown = lastProgressMap.get(taskId)
 
-          const stepId = `${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-          const rawSessionId = (status.sessionId as string) || ""
-          const rawAgentType = (status as any).agentType as string | undefined
-          const agentType = rawSessionId.startsWith("ses_")
-            ? rawAgentType || "developer"
-            : "developer"
+      if (currentStage && (currentStage !== lastKnown?.stage || currentMessage !== lastKnown?.message)) {
+        lastProgressMap.set(taskId, { stage: currentStage, message: currentMessage })
 
-          send(
-            JSON.stringify({
-              type: "agent_progress",
-              taskId,
-              agentType,
-              sessionId: status.sessionId || "",
-              stepId,
-              stage: currentStage,
-              content: currentMessage || "",
-              pct: status.progressPct,
-              timestamp: new Date().toISOString(),
-            }),
-          )
+        const stepId = `${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        const rawSessionId = (status.sessionId as string) || ""
+        const rawAgentType = (status as any).agentType as string | undefined
+        const agentType = rawSessionId.startsWith("ses_") ? rawAgentType || "developer" : "developer"
 
-          // When progress is "complete", stream final summary
-          if (currentStage === "complete") {
-            // Fire and forget — evidence collection + causal streaming is async best-effort
-            collectEvidence(taskId, status.sessionId as string || "", send).catch(() => {})
-            streamCausalUpdate(taskId, status.sessionId as string || "", send).catch(() => {})
-          }
+        send(JSON.stringify({
+          type: "agent_progress", taskId, agentType,
+          sessionId: status.sessionId || "", stepId,
+          stage: currentStage, content: currentMessage || "",
+          pct: status.progressPct, timestamp: new Date().toISOString(),
+        }))
+
+        if (currentStage === "complete") {
+          collectEvidence(taskId, status.sessionId as string || "", send).catch(() => {})
+          streamCausalUpdate(taskId, status.sessionId as string || "", send).catch(() => {})
         }
-        // ── End Agent Progress Detection ─────────────────────
+      }
+      // ── End Agent Progress Detection ─────────────────────
 
-        // When a task completes or fails, collect evidence, stream causal update, and auto-unwatch
-        if (status.status === "completed" || status.status === "failed") {
-          // Fire and forget — evidence collection + causal streaming is async best-effort
-          collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
-          streamCausalUpdate(taskId, status.sourceStepId as string || "", send).catch(() => {})
-          // Auto-cleanup: remove the fs.watch so it doesn't leak
-          unsubscribe()
-        }
+      if (status.status === "completed" || status.status === "failed") {
+        collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
+        streamCausalUpdate(taskId, status.sourceStepId as string || "", send).catch(() => {})
+        unsubscribe()
       }
     } catch {
       // Ignore transient errors during rapid writes
@@ -627,16 +778,29 @@ function watchTask(
   })
 
   const unsubscribe = () => {
-    try {
-      watcher.close()
-    } catch {
-      // Already closed
-    }
+    try { watcher.close() } catch { /* already closed */ }
+    busUnsub()
     activeWatchers.delete(taskId)
+    progressBus.unsubscribeAll(taskId)
   }
 
   activeWatchers.set(taskId, unsubscribe)
   return unsubscribe
+}
+
+/** Read a taskId's sessionId from disk (best-effort, for evidence collection). */
+function extractSessionIdFromFile(taskId: string): string {
+  try {
+    const p = path.join(TODO_DIR, `${taskId}.md`)
+    if (!fs.existsSync(p)) return ""
+    const content = fs.readFileSync(p, "utf-8")
+    const fm = content.match(/^---\n([\s\S]*?)\n---/)
+    if (!fm) return ""
+    const parsed = YAML.parse(fm[1])
+    return (parsed?.sessionId as string) || (parsed?.sourceStepId as string) || ""
+  } catch {
+    return ""
+  }
 }
 
 /**
@@ -704,10 +868,14 @@ async function listTasks(sessionId?: string): Promise<TaskStatus[]> {
 
 // ── Default Bridge Instance ───────────────────────────────────
 
+/** Global ProgressEventBus instance shared by updateTaskProgress and watchTask. */
+const progressBus = new ProgressEventBus()
+
 export const bridge: NomadworksBridge = {
   createTaskFile,
   readTaskStatus,
   watchTask,
   listTasks,
   updateTaskProgress,
+  eventBus: progressBus,
 }
