@@ -73,7 +73,7 @@ hello`
 
     expect(items).toHaveLength(1)
     expect(items[0].type).toBe("input_image")
-    const imageUrl = (items[0] as any).image_url?.url as string
+    const imageUrl = (items[0] as any).image_url as string
     expect(imageUrl).toContain("/api/tokidapp/files/proxy?blobUrl=blob%3Aabc")
   })
 
@@ -176,8 +176,14 @@ describe("voice-chat-union injection scheduling", () => {
     scheduleRealtimeInjection("tokidapp_123", "interrupt", [])
     await new Promise((r) => setTimeout(r, 350))
 
-    expect(mockCancelResponse).toHaveBeenCalledWith("tokidapp_123")
-    expect(sent).toHaveLength(2)
+    // Now sends cancel directly to WS instead of calling cancelRealtimeResponse
+    expect(sent).toHaveLength(3)
+    const cancelMsg = JSON.parse(sent[0])
+    expect(cancelMsg.type).toBe("conversation.item.create")
+    const cancelMsg2 = JSON.parse(sent[1])
+    expect(cancelMsg2.type).toBe("response.cancel")
+    const responseMsg = JSON.parse(sent[2])
+    expect(responseMsg.type).toBe("response.create")
   })
 
   test("no injection when Realtime session is not connected", async () => {

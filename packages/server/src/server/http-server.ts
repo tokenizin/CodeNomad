@@ -26,7 +26,7 @@ import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerLocalLlmRoutes } from "./routes/local-llm"
-import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes } from "./routes/tokidapp"
+import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
@@ -412,7 +412,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
   registerTokidappRoutes(app)
   registerRecordingRoutes(app)
-
+  registerFileUploadRoutes(app)
 
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)

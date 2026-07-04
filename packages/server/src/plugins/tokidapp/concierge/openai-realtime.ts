@@ -1220,6 +1220,18 @@ export function createRealtimeSession(
               }
             }, 100)
           } else {
+            // Generic error: reset the responseInProgress flag to prevent it
+            // from getting stuck (e.g. after a failed input_image fetch).
+            // Without this, the voice session goes completely silent — no
+            // subsequent utterances or text injections can trigger a response.
+            session.responseInProgress = false
+            // Flush the pending queue so any queued injection retries
+            setTimeout(() => {
+              while (session.pendingResponseQueue.length > 0) {
+                const next = session.pendingResponseQueue.shift()!
+                next()
+              }
+            }, 500)
             onError(message)
           }
           break

@@ -4,6 +4,7 @@ import { z } from "zod"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import Busboy, { type BusboyHeaders } from "@fastify/busboy"
 import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
 import {
   createRealtimeSession,
@@ -17,7 +18,6 @@ import {
   getRealtimeSessionVoice,
   ensureSingleUserSession,
   getRealtimeSessionForUser,
-  cancelRealtimeResponse,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getArchitectureDigest } from "../../plugins/tokidapp/concierge/codebase-tools"
@@ -79,6 +79,7 @@ import {
 } from "../../plugins/tokidapp/concierge/security-tools"
 import { bridge } from "./nomadworks-bridge"
 import { processExecution } from "../../plugins/tokidapp/workflow-executor"
+import { apiPost } from "../../plugins/tokidapp/orchestrator/starguard-client"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
@@ -251,6 +252,7 @@ export function buildRealtimeContentItems(
       items.push({
         type: "input_image",
         image_url: proxyUrl,
+        detail: "auto",
       })
     } else {
       const text = extractedTexts[att.fileName] || `[${att.fileName} (${att.mimeType})]`
@@ -295,10 +297,8 @@ export function scheduleRealtimeInjection(
 
     const contentItems = buildRealtimeContentItems(pending.content, pending.attachments)
 
-    if (rtSession.responseInProgress) {
-      cancelRealtimeResponse(sessionId)
-    }
-
+    // Step 1: Inject the image/text into the conversation context FIRST
+    // so any subsequent response.create sees it immediately.
     rtSession.ws.send(JSON.stringify({
       type: "conversation.item.create",
       item: {
@@ -308,6 +308,18 @@ export function scheduleRealtimeInjection(
       },
     }))
 
+    // Step 2: Cancel any in-progress response (so the AI stops speaking
+    // and processes the new context). Uses the resolved rtSession directly
+    // instead of sessionId to avoid cross-socket lookup mismatches.
+    if (rtSession.responseInProgress) {
+      rtSession.ws.send(JSON.stringify({ type: "response.cancel" }))
+      rtSession.responseInProgress = false
+      // Drain queue — any dequeued response.create now sees the image context
+      const next = rtSession.pendingResponseQueue.shift()
+      if (next) next()
+    }
+
+    // Step 3: Trigger a new response (or queue if one was just dequeued)
     if (!rtSession.responseInProgress) {
       rtSession.responseInProgress = true
       rtSession.ws.send(JSON.stringify({ type: "response.create" }))
@@ -1374,7 +1386,48 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       return { error: "blobUrl query parameter is required" }
     }
 
-    // Safety check: only allow Vercel Blob URLs
+    // local:// scheme: serve from local file storage
+    if (query.blobUrl.startsWith("local://")) {
+      try {
+        const localPath = query.blobUrl.slice("local://".length)
+        // localPath is expected to be {sessionId}/{filename}
+        const uploadsDir = path.join(os.homedir(), ".config", "codenomad", "uploads")
+        const normalized = path.normalize(localPath).replace(/^(\.\.(\/|\\|$))+/, "")
+        const filePath = path.join(uploadsDir, normalized)
+
+        if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) {
+          reply.code(404)
+          return { error: "File not found" }
+        }
+
+        const ext = path.extname(filePath).toLowerCase()
+        const mimeMap: Record<string, string> = {
+          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+          ".bmp": "image/bmp", ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          ".doc": "application/msword", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ".xls": "application/vnd.ms-excel", ".txt": "text/plain", ".csv": "text/csv",
+          ".json": "application/json", ".xml": "application/xml", ".md": "text/markdown",
+          ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+          ".zip": "application/zip", ".tar": "application/x-tar", ".gz": "application/gzip",
+        }
+        const contentType = mimeMap[ext] || "application/octet-stream"
+
+        return reply
+          .type(contentType)
+          .headers({
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+          })
+          .send(fs.readFileSync(filePath))
+      } catch (error) {
+        request.log.error({ err: error }, "Local file proxy failed")
+        reply.code(500)
+        return { error: "Failed to serve local file" }
+      }
+    }
+
+    // Vercel Blob URL: proxy from blob storage via auth token
     if (!query.blobUrl.includes("blob.vercel-storage.com")) {
       reply.code(400)
       return { error: "Invalid blob URL" }
@@ -1473,6 +1526,275 @@ export function registerRecordingRoutes(app: FastifyInstance) {
       }
     })
   })
+}
+
+// ── Local File Upload & Serve ────────────────────────────────
+// Accepts multipart file uploads, stores to local disk, serves back.
+// Supports images, PDFs, documents, text files, and common formats.
+// Extraction of text content runs in background via StarGuard API.
+// Vercel Blob remains as fallback when local storage is unavailable.
+
+const ALLOWED_UPLOAD_MIME_PREFIXES = [
+  "image/", "video/", "application/pdf", "application/msword",
+  "application/vnd.openxmlformats-officedocument.",
+  "application/vnd.ms-", "text/", "application/json", "application/xml",
+  "application/zip", "application/x-tar", "application/gzip", "audio/",
+]
+
+function isAllowedUploadMime(mime: string): boolean {
+  return ALLOWED_UPLOAD_MIME_PREFIXES.some((p) => mime.toLowerCase().startsWith(p))
+}
+
+function extractImageDimensions(buffer: Buffer, mimeType: string): { width: number | null; height: number | null } {
+  let width: number | null = null
+  let height: number | null = null
+  try {
+    if (mimeType === "image/jpeg" && buffer.length > 20) {
+      for (let i = 0; i < buffer.length - 10; i++) {
+        if (buffer[i] === 0xff && buffer[i + 1] === 0xc0) {
+          height = (buffer[i + 5] << 8) | buffer[i + 6]
+          width = (buffer[i + 7] << 8) | buffer[i + 8]
+          break
+        }
+      }
+    }
+    if (mimeType === "image/png" && buffer.length >= 24) {
+      width = (buffer[16] << 24) | (buffer[17] << 16) | (buffer[18] << 8) | buffer[19]
+      height = (buffer[20] << 24) | (buffer[21] << 16) | (buffer[22] << 8) | buffer[23]
+    }
+    if ((mimeType === "image/gif") && buffer.length >= 10) {
+      width = buffer[7] << 8 | buffer[6]
+      height = buffer[9] << 8 | buffer[8]
+    }
+    if (mimeType === "image/webp" && buffer.length > 30) {
+      const riff = new TextDecoder().decode(buffer.slice(0, 4))
+      if (riff === "RIFF") {
+        const vp8 = new TextDecoder().decode(buffer.slice(12, 16))
+        if (vp8 === "VP8 " && buffer.length > 30) {
+          width = (buffer[26] | ((buffer[27] & 0x3f) << 8))
+          height = (buffer[28] | ((buffer[29] & 0x3f) << 8))
+        } else if (vp8 === "VP8L" && buffer.length > 25) {
+          const bits = (buffer[21] | (buffer[22] << 8) | (buffer[23] << 16) | (buffer[24] << 24)) >>> 0
+          width = (bits & 0x3fff) + 1
+          height = ((bits >> 14) & 0x3fff) + 1
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
+  return { width, height }
+}
+
+export function registerFileUploadRoutes(app: FastifyInstance) {
+  const uploadsDir = path.join(os.homedir(), ".config", "codenomad", "uploads")
+  fs.mkdirSync(uploadsDir, { recursive: true })
+
+  // Upload file to local storage
+  // POST /api/tokidapp/files/upload-local
+  app.post("/api/tokidapp/files/upload-local", async (request, reply) => {
+    try {
+      // Parse multipart form using busboy
+      const busboy = new Busboy({
+        headers: request.raw.headers as unknown as BusboyHeaders,
+        limits: { fileSize: 200 * 1024 * 1024, files: 1 }, // 200 MB max
+      })
+
+      const result = await new Promise<{
+        fields: Record<string, string>
+        fileBuffer: Buffer | null
+        filename: string | null
+        mimeType: string | null
+      }>((resolve, reject) => {
+        const ctx = { fields: {} as Record<string, string>, fileBuffer: null as Buffer | null, filename: null as string | null, mimeType: null as string | null }
+
+        busboy.on("file", (fieldname, stream, filename, _encoding, mimeType) => {
+          const chunks: Buffer[] = []
+          stream.on("data", (chunk: Buffer) => chunks.push(chunk))
+          stream.on("end", () => {
+            ctx.fileBuffer = Buffer.concat(chunks)
+            ctx.filename = filename
+            ctx.mimeType = mimeType
+          })
+          stream.on("error", reject)
+        })
+
+        busboy.on("field", (fieldname, value) => {
+          ctx.fields[fieldname] = value
+        })
+
+        busboy.on("finish", () => resolve(ctx))
+        busboy.on("error", reject)
+
+        request.raw.pipe(busboy)
+      })
+
+      if (!result.fileBuffer || !result.filename || !result.mimeType) {
+        reply.code(400)
+        return { error: "No file provided in upload" }
+      }
+
+      if (!isAllowedUploadMime(result.mimeType)) {
+        reply.code(400)
+        return { error: `File type "${result.mimeType}" is not supported` }
+      }
+
+      const sessionId = result.fields.sessionId
+      if (!sessionId) {
+        reply.code(400)
+        return { error: "sessionId field is required" }
+      }
+
+      // Sanitize filename and build storage path
+      const safeName = result.filename.replace(/[/\\]/g, "_").slice(0, 200)
+      const timestamp = Date.now()
+      const storedFile = `${timestamp}-${safeName}`
+      const sessionDir = path.join(uploadsDir, sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+      const filePath = path.join(sessionDir, storedFile)
+      fs.writeFileSync(filePath, result.fileBuffer)
+
+      // Extract image dimensions for image types
+      const { width, height } = result.mimeType.startsWith("image/")
+        ? extractImageDimensions(result.fileBuffer, result.mimeType)
+        : { width: null, height: null }
+
+      // Fire background extraction via StarGuard extract endpoint
+      // This creates the TokiDAPPFileArtifact in StarGuard's database
+      const tunnelUrl = `${TUNNEL_PUBLIC_URL}/api/tokidapp/files/local/${sessionId}/${storedFile}`
+      extractInBackground(tunnelUrl, safeName, result.mimeType, result.fileBuffer.length, sessionId, result.fileBuffer)
+
+      return {
+        url: `local://${sessionId}/${storedFile}`,
+        fileName: safeName,
+        fileSize: result.fileBuffer.length,
+        mimeType: result.mimeType,
+        width,
+        height,
+      }
+    } catch (error) {
+      request.log.error({ err: error }, "Local file upload failed")
+      reply.code(500)
+      return { error: "Failed to upload file" }
+    }
+  })
+
+  // Serve uploaded file from local storage
+  // GET /api/tokidapp/files/local/:sessionId/:filename
+  app.get("/api/tokidapp/files/local/:sessionId/:filename", async (request, reply) => {
+    try {
+      const { sessionId, filename } = request.params as { sessionId: string; filename: string }
+      const relative = path.join(sessionId, filename)
+      const normalized = path.normalize(relative).replace(/^(\.\.(\/|\\|$))+/, "")
+      const filePath = path.join(uploadsDir, normalized)
+
+      if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) {
+        reply.code(404)
+        return { error: "File not found" }
+      }
+
+      const ext = path.extname(filename).toLowerCase()
+      const mimeMap: Record<string, string> = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+        ".bmp": "image/bmp", ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel", ".txt": "text/plain", ".csv": "text/csv",
+        ".json": "application/json", ".xml": "application/xml", ".md": "text/markdown",
+        ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
+        ".wav": "audio/wav", ".ogg": "audio/ogg",
+        ".zip": "application/zip", ".tar": "application/x-tar", ".gz": "application/gzip",
+        ".js": "application/javascript", ".ts": "application/typescript",
+        ".tsx": "application/typescript", ".py": "text/x-python",
+        ".html": "text/html", ".css": "text/css",
+      }
+      const contentType = mimeMap[ext] || "application/octet-stream"
+
+      return reply
+        .type(contentType)
+        .headers({
+          "Cache-Control": "private, max-age=86400",
+          "X-Content-Type-Options": "nosniff",
+        })
+        .send(fs.readFileSync(filePath))
+    } catch (error) {
+      reply.code(500)
+      return { error: "Failed to serve file" }
+    }
+  })
+}
+
+/** Run text extraction on a locally-stored file in the background.
+ *  For text-based files, extracts directly. For images, uses OpenAI vision API.
+ *  For complex formats, delegates to the StarGuard extract endpoint. */
+async function extractInBackground(
+  fileUrl: string,
+  fileName: string,
+  mimeType: string,
+  fileSize: number,
+  sessionId: string,
+  _buffer: Buffer,
+): Promise<void> {
+  try {
+    // Text-based files: extract directly from buffer
+    const textMimePrefixes = [
+      "text/", "application/json", "application/xml", "application/javascript",
+      "application/typescript", "application/yaml", "application/toml",
+    ]
+    const codeExtensions = [
+      ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+      ".py", ".rs", ".go", ".rb", ".java", ".kt", ".swift",
+      ".cpp", ".c", ".h", ".hpp",
+      ".yaml", ".yml", ".toml", ".json", ".xml",
+      ".sh", ".bash", ".zsh", ".fish",
+      ".sql", ".graphql", ".gql",
+      ".css", ".scss", ".less", ".html", ".svelte", ".vue",
+      ".md", ".mdx", ".rst", ".txt",
+      ".env", ".gitignore", ".dockerfile",
+      ".prisma", ".zmodel",
+    ]
+    const ext = path.extname(fileName).toLowerCase()
+    const isTextExtractable = textMimePrefixes.some((p) => mimeType.startsWith(p))
+      || codeExtensions.includes(ext)
+    const isImage = mimeType.startsWith("image/")
+
+    let text = ""
+    const metadata: Record<string, unknown> = {}
+
+    if (isTextExtractable) {
+      // Direct text extraction for simple formats
+      text = _buffer.toString("utf-8")
+      metadata.encoding = "utf-8"
+      metadata.extractionMethod = "direct"
+    } else if (isImage) {
+      // For images, delegate to StarGuard extract endpoint which uses OpenAI vision API
+      // The endpoint will fetch the image via the tunnel URL
+    }
+
+    // Create artifact via StarGuard extract endpoint
+    const body: Record<string, unknown> = {
+      fileName,
+      mimeType,
+      fileSize,
+      sessionId,
+      localUrl: fileUrl,
+    }
+    if (isTextExtractable && text) {
+      // For simple text files, we already extracted — pass as extractedText
+      body.extractedText = text.slice(0, 100_000)
+      body.metadata = metadata
+      body.status = "extracted"
+    }
+
+    // Call StarGuard extract endpoint (which also accepts localUrl for fetching)
+    const res = await apiPost("/api/tokidapp/files/extract", body)
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "unknown")
+      console.error(`[file-upload] Background extraction failed for ${fileName}: HTTP ${res.status} ${errText}`)
+    }
+  } catch (err) {
+    console.error(`[file-upload] Background extraction error for ${fileName}:`, err)
+  }
 }
 
 // ── WebSocket Upgrade Handler ────────────────────────────────
@@ -1772,12 +2094,18 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "message" && msg.content) {
-            const enrichedContent = await enrichAttachmentWithVision(msg.content)
-
-            // Chat → Voice union: if a Realtime session is active, debounce-inject
-            // the message into it so the voice AI becomes the canonical responder.
             const attachments = normalizeInjectionAttachments(msg.attachments)
-            scheduleRealtimeInjection(sessionId, enrichedContent, attachments)
+
+            // Chat → Voice union: inject into Realtime FIRST with raw content
+            // (no await on vision analysis). The Realtime API processes images
+            // natively via input_image — GPT-4o-mini pre-analysis is only needed
+            // for the routeMessage() fallback and would add 1-3s latency before
+            // the realtime injection, creating race conditions with live voice.
+            scheduleRealtimeInjection(sessionId, msg.content, attachments)
+
+            // Run vision analysis for routeMessage fallback (can overlap with
+            // the 300ms debounce + Realtime response generation).
+            const enrichedContent = await enrichAttachmentWithVision(msg.content)
 
             routeMessage(
               enrichedContent,
