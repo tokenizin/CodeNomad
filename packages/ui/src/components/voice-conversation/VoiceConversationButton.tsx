@@ -152,20 +152,19 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
         </Show>
       </button>
 
-      {/* Visible end button — shown when conversation is active */}
-      <Show when={isActive()}>
-        <button
-          type="button"
-          class="voice-conv-end-btn"
-          onClick={handleEndClick}
-          disabled={props.disabled}
-          aria-label={tGlobal("voiceConversation.button.endTitle")}
-          title={tGlobal("voiceConversation.button.endTitle")}
-        >
-          <Square class="h-3.5 w-3.5 fill-current" />
-          <span class="voice-conv-end-label">{tGlobal("voiceConversation.button.stop")}</span>
-        </button>
-      </Show>
+{/* Visible end button — shown when conversation is active */}
+       <Show when={isActive()}>
+         <button
+           type="button"
+           class="voice-conv-end-btn"
+           onClick={handleEndClick}
+           disabled={props.disabled}
+           aria-label={tGlobal("voiceConversation.button.endTitle")}
+           title={tGlobal("voiceConversation.button.endTitle")}
+         >
+           <Square class="h-3.5 w-3.5 fill-current" />
+         </button>
+       </Show>
     </div>
   )
 }

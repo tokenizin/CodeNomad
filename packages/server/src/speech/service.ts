@@ -55,8 +55,8 @@ export interface NormalizedSpeechSettings {
 }
 
 const DEFAULT_PROVIDER = "openai-compatible"
-const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
-const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
+const DEFAULT_STT_MODEL = "gpt-4o-transcribe"
+const DEFAULT_TTS_MODEL = "gpt-realtime-2"
 const DEFAULT_TTS_VOICE = "marin"
 const DEFAULT_TTS_FORMAT = "mp3"
 const DEFAULT_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
