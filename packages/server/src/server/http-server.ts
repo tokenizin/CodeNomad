@@ -285,6 +285,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/quick-login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/tokidapp/status", "/api/tokidapp/files/proxy", "/api/client-connections/pong"])
+    const publicApiPrefixes = ["/api/tokidapp/files/local/"]
     const publicPagePaths = new Set(["/login", "/auth/starguard"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
@@ -297,6 +298,13 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete) {
       return
+    }
+
+    // Check dynamic public API path prefixes (routes with path params)
+    for (const prefix of publicApiPrefixes) {
+      if (pathname.startsWith(prefix)) {
+        return
+      }
     }
 
     const session = deps.authManager.getSessionFromRequest(request)

@@ -1588,17 +1588,32 @@ export function registerFileUploadRoutes(app: FastifyInstance) {
   const uploadsDir = path.join(os.homedir(), ".config", "codenomad", "uploads")
   fs.mkdirSync(uploadsDir, { recursive: true })
 
-  // Upload file to local storage
-  // POST /api/tokidapp/files/upload-local
-  app.post("/api/tokidapp/files/upload-local", async (request, reply) => {
-    try {
-      // Parse multipart form using busboy
-      const busboy = new Busboy({
-        headers: request.raw.headers as unknown as BusboyHeaders,
-        limits: { fileSize: 200 * 1024 * 1024, files: 1 }, // 200 MB max
-      })
+  // Scoped plugin for file upload (needs multipart/form-data content type parser)
+  // to avoid Fastify trying to parse the body before busboy can read the raw stream.
+  app.register(async (instance) => {
+    // Pass multipart bodies through as raw buffers so busboy can parse them
+    instance.addContentTypeParser("multipart/form-data", { parseAs: "buffer", bodyLimit: 210 * 1024 * 1024 }, (_req, body, done) => done(null, body))
 
-      const result = await new Promise<{
+    // Upload file to local storage
+    // POST /api/tokidapp/files/upload-local
+    instance.post("/api/tokidapp/files/upload-local", async (request, reply) => {
+      try {
+        // Parse multipart form using busboy from the already-parsed body buffer.
+        // Fastify consumed the raw stream via addContentTypeParser; we create a
+        // Readable from the parsed buffer and pipe that through busboy.
+        const bodyBuffer = request.body as Buffer
+        if (!bodyBuffer || bodyBuffer.length === 0) {
+          reply.code(400)
+          return { error: "Empty request body" }
+        }
+
+        const { Readable } = await import("stream")
+        const busboy = new Busboy({
+          headers: request.raw.headers as unknown as BusboyHeaders,
+          limits: { fileSize: 200 * 1024 * 1024, files: 1 }, // 200 MB max
+        })
+
+        const result = await new Promise<{
         fields: Record<string, string>
         fileBuffer: Buffer | null
         filename: string | null
@@ -1624,7 +1639,8 @@ export function registerFileUploadRoutes(app: FastifyInstance) {
         busboy.on("finish", () => resolve(ctx))
         busboy.on("error", reject)
 
-        request.raw.pipe(busboy)
+        // Pipe the parsed body buffer through busboy for field/file extraction
+        Readable.from(bodyBuffer).pipe(busboy)
       })
 
       if (!result.fileBuffer || !result.filename || !result.mimeType) {
@@ -1676,6 +1692,7 @@ export function registerFileUploadRoutes(app: FastifyInstance) {
       return { error: "Failed to upload file" }
     }
   })
+  }) // end scoped plugin
 
   // Serve uploaded file from local storage
   // GET /api/tokidapp/files/local/:sessionId/:filename
