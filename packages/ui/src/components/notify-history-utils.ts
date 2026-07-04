@@ -7,9 +7,6 @@ import type { NotifyEvent, NotifyCategory, NotifyPriority, NotifySeverity } from
 
 // ==================== Types ====================
 
-/** Filter type union for the active filter signal */
-export type NotifyPanelFilter = "all" | NotifyCategory | NotifyPriority | NotifySeverity
-
 export interface DateGroup {
   key: string
   labelKey: string

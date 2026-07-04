@@ -29,11 +29,20 @@ import {
   getPriorityLabel,
   getSeverityLabel,
   formatNotifyTime,
-  getDateGroup,
   groupNotifyEventsByDate,
 } from "./notify-history-utils"
-import type { NotifyPanelFilter } from "./notify-history-utils"
 import "../styles/components/notify-history.css"
+
+// ==================== Types ====================
+
+/** Available category filter pill options (excluding non-category enum values) */
+type CategoryFilterOption = NotifyCategory | "all"
+
+/** Priority filter values (multi-select toggle) */
+type PriorityFilterOption = NotifyPriority
+
+/** Severity filter values (multi-select toggle) */
+type SeverityFilterOption = NotifySeverity
 
 // ==================== Types ====================
 
@@ -53,7 +62,8 @@ interface NotifyHistoryPanelProps {
 // ==================== Constants ====================
 
 /** Category filter pills to show in the filter bar */
-const CATEGORY_FILTERS: NotifyCategory[] = [
+const CATEGORY_FILTERS: CategoryFilterOption[] = [
+  "all",
   "error",
   "success_progress",
   "help_required",
@@ -63,68 +73,79 @@ const CATEGORY_FILTERS: NotifyCategory[] = [
   "mitigation_applied",
 ]
 
-/** Priority quick-filters */
-const PRIORITY_FILTERS: NotifyPriority[] = ["high", "urgent"]
+/** Priority quick-filters (multi-select toggle) */
+const PRIORITY_FILTERS: PriorityFilterOption[] = ["high", "urgent", "normal", "low"]
 
-/** Severity quick-filters */
-const SEVERITY_FILTERS: NotifySeverity[] = ["error", "critical"]
+/** Severity quick-filters (multi-select toggle) */
+const SEVERITY_FILTERS: SeverityFilterOption[] = ["critical", "error", "warning", "info", "success"]
 
-/**
- * Check if a filter value matches a category
- */
-function isCategoryFilter(value: NotifyPanelFilter): value is NotifyCategory {
-  return CATEGORY_FILTERS.includes(value as NotifyCategory)
-}
+/** Default active priorities on initial load */
+const DEFAULT_PRIORITIES: Set<NotifyPriority> = new Set(["high", "urgent"])
 
-/**
- * Check if a filter value matches a priority
- */
-function isPriorityFilter(value: NotifyPanelFilter): value is NotifyPriority {
-  return PRIORITY_FILTERS.includes(value as NotifyPriority)
-}
+/** Default active severities on initial load */
+const DEFAULT_SEVERITIES: Set<NotifySeverity> = new Set(["error", "critical"])
 
-/**
- * Check if a filter value matches a severity
- */
-function isSeverityFilter(value: NotifyPanelFilter): value is NotifySeverity {
-  return SEVERITY_FILTERS.includes(value as NotifySeverity)
-}
+/** Event types to always exclude from the Categorized History tab */
+const EXCLUDED_EVENT_TYPES = new Set(["session.idle"])
 
 // ==================== Component ====================
 
 const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
   const { t } = useI18n()
 
-  // State
-  const [activeFilter, setActiveFilter] = createSignal<NotifyPanelFilter>("all")
+  // ── Multi-select filter state ──
+  // Category: single-select (only one category or "all" can be active)
+  const [activeCategory, setActiveCategory] = createSignal<CategoryFilterOption>("all")
+  // Priority: multi-select toggle — defaults to High + Urgent
+  const [activePriorities, setActivePriorities] = createSignal<Set<NotifyPriority>>(DEFAULT_PRIORITIES)
+  // Severity: multi-select toggle — defaults to Error + Critical
+  const [activeSeverities, setActiveSeverities] = createSignal<Set<NotifySeverity>>(DEFAULT_SEVERITIES)
   const [expandedEventId, setExpandedEventId] = createSignal<string | null>(null)
 
   // All events from store for this instance
   const allEvents = createMemo(() => getNotifyEvents(props.instanceId))
 
-  // Filtered events
-  const filteredEvents = createMemo(() => {
-    const filter = activeFilter()
-    if (filter === "all") return allEvents()
+  // Derived: whether any filter checkboxes are selected
+  const hasAnyPriority = createMemo(() => activePriorities().size > 0)
+  const hasAnySeverity = createMemo(() => activeSeverities().size > 0)
 
-    // Try matching as category first, then priority, then severity
-    if (isCategoryFilter(filter)) {
-      return allEvents().filter((e) => e.category === filter)
+  // Filtered events — always exclude session.idle, then apply category / priority / severity compound filters.
+  // Priority and Severity combine with AND logic:
+  //   - If no priorities selected → show all (no priority filter)
+  //   - If no severities selected → show all (no severity filter)
+  //   - Otherwise: priority ∈ selected AND severity ∈ selected
+  const filteredEvents = createMemo(() => {
+    let events = allEvents()
+
+    // Always exclude idle session events
+    events = events.filter((e) => !EXCLUDED_EVENT_TYPES.has(e.eventType))
+
+    // Category filter (single-select OR)
+    const cat = activeCategory()
+    if (cat !== "all") {
+      events = events.filter((e) => e.category === cat)
     }
-    if (isPriorityFilter(filter)) {
-      return allEvents().filter((e) => e.priority === filter)
+
+    // Priority filter (multi-select: any match in the set)
+    if (hasAnyPriority()) {
+      const prios = activePriorities()
+      events = events.filter((e) => prios.has(e.priority))
     }
-    if (isSeverityFilter(filter)) {
-      return allEvents().filter((e) => e.severity === filter)
+
+    // Severity filter (multi-select: any match in the set)
+    if (hasAnySeverity()) {
+      const sevs = activeSeverities()
+      events = events.filter((e) => sevs.has(e.severity))
     }
-    return allEvents()
+
+    return events
   })
 
   // Grouped events
   const groupedItems = createMemo(() => groupNotifyEventsByDate(filteredEvents()))
 
-  // Is empty (no events at all)
-  const isEmpty = createMemo(() => allEvents().length === 0)
+  // Is empty (no events at all, after excluding idle events)
+  const isEmpty = createMemo(() => allEvents().filter((e) => !EXCLUDED_EVENT_TYPES.has(e.eventType)).length === 0)
 
   // Filter empty (has events but no matches)
   const isFilterEmpty = createMemo(() => !isEmpty() && filteredEvents().length === 0)
@@ -339,68 +360,86 @@ const NotifyHistoryPanel: Component<NotifyHistoryPanelProps> = (props) => {
         {/* Filter bar */}
         <Show when={!isEmpty()}>
           <div class="flex flex-col gap-[var(--space-xs)] px-[var(--space-md)] py-[var(--space-sm)] border-b border-base bg-surface-secondary">
-            {/* Category filter pills */}
+            {/* Category filter pills — single-select */}
             <div class="flex items-center gap-[var(--space-xs)] overflow-x-auto" aria-label={t("notifyHistory.filter.category")}>
-              <button
-                type="button"
-                class="notify-history-filter-btn px-3 py-1 rounded-full border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
-                classList={{
-                  "notify-history-filter-btn-active": activeFilter() === "all",
-                }}
-                aria-pressed={activeFilter() === "all"}
-                onClick={() => setActiveFilter("all")}
-              >
-                {t("notifyHistory.filter.all")}
-              </button>
               <For each={CATEGORY_FILTERS}>
-                {(category) => (
-                  <button
-                    type="button"
-                    class="notify-history-filter-btn px-3 py-1 rounded-full border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
-                    classList={{
-                      "notify-history-filter-btn-active": activeFilter() === category,
-                    }}
-                    aria-pressed={activeFilter() === category}
-                    onClick={() => setActiveFilter(activeFilter() === category ? "all" : category)}
-                  >
-                    {getCategoryLabel(category)}
-                  </button>
-                )}
+                {(option) => {
+                  const isActive = () => activeCategory() === option
+                  return (
+                    <button
+                      type="button"
+                      class="notify-history-filter-btn px-3 py-1 rounded-full border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
+                      classList={{
+                        "notify-history-filter-btn-active": isActive(),
+                      }}
+                      aria-pressed={isActive()}
+                      onClick={() => setActiveCategory(isActive() ? "all" : option)}
+                    >
+                      {option === "all" ? t("notifyHistory.filter.all") : getCategoryLabel(option)}
+                    </button>
+                  )
+                }}
               </For>
             </div>
-            {/* Priority and severity quick-filters */}
+            {/* Priority multi-select toggles */}
             <div class="flex items-center gap-[var(--space-xs)] overflow-x-auto">
               <span class="text-[var(--font-size-xs)] text-muted flex-shrink-0">Priority:</span>
               <For each={PRIORITY_FILTERS}>
-                {(priority) => (
-                  <button
-                    type="button"
-                    class="notify-history-filter-btn notify-history-filter-priority px-2 py-0.5 rounded-[var(--radius-sm)] border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
-                    classList={{
-                      "notify-history-filter-btn-active": activeFilter() === priority,
-                    }}
-                    aria-pressed={activeFilter() === priority}
-                    onClick={() => setActiveFilter(activeFilter() === priority ? "all" : priority)}
-                  >
-                    {getPriorityLabel(priority)}
-                  </button>
-                )}
+                {(priority) => {
+                  const isActive = () => activePriorities().has(priority)
+                  return (
+                    <button
+                      type="button"
+                      class="notify-history-filter-btn notify-history-filter-priority px-2 py-0.5 rounded-[var(--radius-sm)] border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
+                      classList={{
+                        "notify-history-filter-btn-active": isActive(),
+                      }}
+                      aria-pressed={isActive()}
+                      onClick={() => {
+                        setActivePriorities((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(priority)) {
+                            next.delete(priority)
+                          } else {
+                            next.add(priority)
+                          }
+                          return next
+                        })
+                      }}
+                    >
+                      {getPriorityLabel(priority)}
+                    </button>
+                  )
+                }}
               </For>
               <span class="text-[var(--font-size-xs)] text-muted flex-shrink-0 ml-[var(--space-sm)]">Severity:</span>
               <For each={SEVERITY_FILTERS}>
-                {(severity) => (
-                  <button
-                    type="button"
-                    class="notify-history-filter-btn notify-history-filter-severity px-2 py-0.5 rounded-[var(--radius-sm)] border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
-                    classList={{
-                      "notify-history-filter-btn-active": activeFilter() === severity,
-                    }}
-                    aria-pressed={activeFilter() === severity}
-                    onClick={() => setActiveFilter(activeFilter() === severity ? "all" : severity)}
-                  >
-                    {getSeverityLabel(severity)}
-                  </button>
-                )}
+                {(severity) => {
+                  const isActive = () => activeSeverities().has(severity)
+                  return (
+                    <button
+                      type="button"
+                      class="notify-history-filter-btn notify-history-filter-severity px-2 py-0.5 rounded-[var(--radius-sm)] border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
+                      classList={{
+                        "notify-history-filter-btn-active": isActive(),
+                      }}
+                      aria-pressed={isActive()}
+                      onClick={() => {
+                        setActiveSeverities((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(severity)) {
+                            next.delete(severity)
+                          } else {
+                            next.add(severity)
+                          }
+                          return next
+                        })
+                      }}
+                    >
+                      {getSeverityLabel(severity)}
+                    </button>
+                  )
+                }}
               </For>
             </div>
           </div>
