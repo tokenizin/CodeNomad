@@ -122,6 +122,37 @@ export async function getArchitectureDigest(): Promise<string> {
     }
   }
 
+  // 5. Session persistence flow — how your messages are saved
+  const persistDoc = path.resolve(piDir, "realtime-persistence-flow.md")
+  if (fs.existsSync(persistDoc)) {
+    try {
+      const persistContent = fs.readFileSync(persistDoc, "utf-8")
+      // Extract the concise overview section — everything between the first heading
+      // and the "Related Files" heading.
+      const overviewMatch = persistContent.match(
+        /## Architecture Overview[\s\S]*?(?=## |$)/,
+      )
+      const pathsMatch = persistContent.match(
+        /### Path [A-D]:[^#]+/g,
+      )
+      if (overviewMatch) {
+        parts.push("Session persistence overview:")
+        parts.push(overviewMatch[0].trim())
+      }
+      if (pathsMatch) {
+        // Condense each path to a one-liner
+        for (const p of pathsMatch) {
+          const title = p.match(/### (Path [A-D]:[^\n]+)/)
+          const detail = p.match(/`([^`]+)`\s*→\s*`([^`]+)`/)
+          if (title) {
+            const line = title[1]
+            parts.push(`  ${line}`)
+          }
+        }
+      }
+    } catch { /* skip */ }
+  }
+
   return parts.length > 0 ? parts.join("\n") : ""
 }
 
