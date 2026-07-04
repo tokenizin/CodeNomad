@@ -84,6 +84,10 @@ const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
+/** Public tunnel URL for constructing blob proxy URLs that OpenAI can fetch.
+ *  The tunnel has the blob proxy route and doesn't require JWT auth. */
+const TUNNEL_PUBLIC_URL = (process.env.TUNNEL_PUBLIC_URL || "https://chat.tokenizin.com").replace(/\/+$/, "")
+
 /** WS registry keys (tokidapp_*, voice_*) — not StarWorld TokiDAPPSession ids. */
 function isWsTransportSessionKey(id: string): boolean {
   return id.startsWith("tokidapp_") || id.startsWith("voice_")
@@ -158,8 +162,9 @@ async function enrichAttachmentWithVision(content: string): Promise<string> {
 
   for (let i = 0; i < imagesToAnalyze.length; i++) {
     const relativeUrl = imagesToAnalyze[i]
-    // Resolve against StarGuard base so OpenAI can fetch the image
-    const fullUrl = `${STARGUARD_BASE.replace(/\/+$/, "")}${relativeUrl}`
+    // Resolve against tunnel URL so OpenAI can fetch the image
+    // (the tunnel has the blob proxy route and doesn't require JWT auth)
+    const fullUrl = `${TUNNEL_PUBLIC_URL}${relativeUrl}`
     try {
       const analysis = await visionAnalyze(
         fullUrl,
@@ -242,7 +247,7 @@ export function buildRealtimeContentItems(
     if (isImage) {
       if (imageCount >= 3) continue
       imageCount++
-      const proxyUrl = `${STARGUARD_BASE.replace(/\/+$/, "")}/api/tokidapp/files/proxy?blobUrl=${encodeURIComponent(att.blobUrl)}`
+      const proxyUrl = `${TUNNEL_PUBLIC_URL}/api/tokidapp/files/proxy?blobUrl=${encodeURIComponent(att.blobUrl)}`
       items.push({
         type: "input_image",
         image_url: { url: proxyUrl, detail: "auto" },
@@ -1353,6 +1358,61 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     } catch (error) {
       reply.code(500)
       return { error: (error as Error).message }
+    }
+  })
+
+  // ── File Blob Proxy ─────────────────────────────────────────
+  // Proxies private Vercel Blob files so they can be accessed from:
+  //   - Browser <img>/<video> tags served through the tunnel
+  //   - OpenAI Vision API (via vision_analyze tool)
+  //   - OpenAI Realtime API (via input_image items)
+  // Uses BLOB_READ_WRITE_TOKEN to fetch from Vercel Blob's private store.
+  app.get("/api/tokidapp/files/proxy", async (request, reply) => {
+    const query = request.query as { blobUrl?: string }
+    if (!query.blobUrl) {
+      reply.code(400)
+      return { error: "blobUrl query parameter is required" }
+    }
+
+    // Safety check: only allow Vercel Blob URLs
+    if (!query.blobUrl.includes("blob.vercel-storage.com")) {
+      reply.code(400)
+      return { error: "Invalid blob URL" }
+    }
+
+    const token = process.env.BLOB_READ_WRITE_TOKEN
+    if (!token) {
+      request.log.error("BLOB_READ_WRITE_TOKEN not configured")
+      reply.code(500)
+      return { error: "Blob proxy not configured" }
+    }
+
+    try {
+      const res = await fetch(query.blobUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+      })
+
+      if (!res.ok) {
+        request.log.error({ status: res.status, blobUrl: query.blobUrl.slice(0, 80) }, "Blob fetch failed")
+        reply.code(res.status === 404 ? 404 : 502)
+        return { error: `Blob fetch failed: ${res.status}` }
+      }
+
+      const contentType = res.headers.get("content-type") || "application/octet-stream"
+      const arrayBuffer = await res.arrayBuffer()
+
+      return reply
+        .type(contentType)
+        .headers({
+          "Cache-Control": "private, max-age=3600",
+          "X-Content-Type-Options": "nosniff",
+        })
+        .send(Buffer.from(arrayBuffer))
+    } catch (error) {
+      request.log.error({ err: error }, "Blob proxy fetch failed")
+      reply.code(502)
+      return { error: "Failed to fetch blob" }
     }
   })
 }
