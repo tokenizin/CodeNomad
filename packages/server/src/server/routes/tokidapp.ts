@@ -84,6 +84,13 @@ import {
   hasActivePrompt,
   activePromptCount,
 } from "../../plugins/tokidapp/concierge/interactive-session"
+import {
+  askUserPickOne,
+  askUserPickMany,
+  askUserConfirm,
+  askUserText,
+  askUserSlider,
+} from "../../plugins/tokidapp/concierge/interactive-tools"
 import { bridge } from "./nomadworks-bridge"
 import { processExecution } from "../../plugins/tokidapp/workflow-executor"
 import { apiPost } from "../../plugins/tokidapp/orchestrator/starguard-client"
@@ -989,6 +996,10 @@ async function routeMessage(
         content: `Available contracts to scan:\n${contracts.map(c => `  \u2022 ${c.name}`).join("\n") || "  (none)"}\n\n${scanList}`,
       }))
     }
+  } else if (hasWord("clickflow") || hasWord("interactive") || hasWord("inline prompt") ||
+             (hasWord("ask") && hasWord("me") && (hasWord("about") || hasWord("choose") || hasWord("pick") || hasWord("select")))) {
+    // ClickFlow interactive prompts — route to a helper that creates a simple prompt
+    send(JSON.stringify({ type: "message", content: "ClickFlow interactive prompts are available. Try: ask_user_pick_one, ask_user_confirm, ask_user_text, ask_user_slider, or ask_user_pick_many." }))
   } else {
     // Unrecognized query — try GPT for a natural-language answer
     // before falling back to the static capabilities list.
@@ -2259,6 +2270,62 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 content: `interactive_response failed: ${(err as Error).message}`,
               }))
             }
+            return
+          }
+
+          if (msg.type === "clickflow_prompt") {
+            ;(async () => {
+              const promptType = msg.promptType as string | undefined
+              const question = msg.question as string | undefined
+              if (!promptType || !question) {
+                socketRef.send(JSON.stringify({ type: "error", content: "clickflow_prompt requires promptType and question" }))
+                return
+              }
+              try {
+                const options = msg.options as Array<{ value: string; label: string; description?: string }> | undefined
+                const config = msg.config as Record<string, unknown> | undefined
+                const timeoutMs = msg.timeoutMs as number | undefined
+                const sendFn = (data: string) => socketRef.send(data)
+
+                let result: Record<string, unknown> = {}
+                switch (promptType) {
+                  case 'pick_one': {
+                    const r = await askUserPickOne({ question, options: options || [], timeoutMs }, sendFn)
+                    result = { selected: r.selected, status: r.timeout ? 'timeout' : r.cancelled ? 'cancelled' : 'answered' }
+                    break
+                  }
+                  case 'pick_many': {
+                    const r = await askUserPickMany({ question, options: options || [], config: config as any, timeoutMs }, sendFn)
+                    result = { selected: r.selected, status: r.timeout ? 'timeout' : r.cancelled ? 'cancelled' : 'answered' }
+                    break
+                  }
+                  case 'confirm': {
+                    const r = await askUserConfirm({ question, config: config as any, timeoutMs }, sendFn)
+                    result = { choice: r.choice, status: r.timeout ? 'timeout' : r.cancelled ? 'cancelled' : 'answered' }
+                    break
+                  }
+                  case 'ask_text': {
+                    const r = await askUserText({ question, config: config as any, timeoutMs }, sendFn)
+                    result = { text: r.text, status: r.timeout ? 'timeout' : r.cancelled ? 'cancelled' : 'answered' }
+                    break
+                  }
+                  case 'slider': {
+                    const r = await askUserSlider({ question, config: config as { min: number; max: number; step?: number; defaultValue?: number }, timeoutMs }, sendFn)
+                    result = { value: r.value, status: r.timeout ? 'timeout' : r.cancelled ? 'cancelled' : 'answered' }
+                    break
+                  }
+                  default:
+                    socketRef.send(JSON.stringify({ type: "error", content: `Unknown clickflow prompt type: ${promptType}` }))
+                    return
+                }
+                socketRef.send(JSON.stringify({ type: "clickflow_result", promptType, question, result }))
+              } catch (err) {
+                socketRef.send(JSON.stringify({
+                  type: "error",
+                  content: `clickflow_prompt failed: ${(err as Error).message}`,
+                }))
+              }
+            })()
             return
           }
 

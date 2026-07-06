@@ -33,6 +33,12 @@ import path from "path"
 import crypto from "crypto"
 import YAML from "yaml"
 import { apiPut } from "../../plugins/tokidapp/orchestrator/starguard-client"
+import {
+  createPrompt,
+  cancelPrompt,
+  type InteractivePromptOption,
+  type InteractivePromptConfig,
+} from "../../plugins/tokidapp/concierge/interactive-session"
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -147,6 +153,10 @@ interface LastProgress {
   message?: string
 }
 const lastProgressMap = new Map<string, LastProgress>()
+
+// ── ClickFlow Idempotency ─────────────────────────────────────
+// key = `${taskId}::${promptId}` — prevents re-processing the same prompt
+const processedClickflowPrompts = new Set<string>()
 
 // ── Public Types ──────────────────────────────────────────────
 
@@ -660,6 +670,204 @@ function updateTaskProgress(
 }
 
 /**
+ * Process a ClickFlow prompt from a task file frontmatter.
+ *
+ * Detects the `clickflow_prompt` field in task file frontmatter, creates an
+ * interactive prompt via the Interactive Session Manager (T3), waits for the
+ * user response, and writes the `clickflow_result` back to the task file.
+ *
+ * Idempotency: tracked by taskId + promptId combo so the same prompt is never
+ * processed twice.
+ *
+ * @param taskId - The NomadWorks task ID
+ * @param frontmatter - Parsed YAML frontmatter containing clickflow_prompt
+ * @param sendFn - WebSocket send function to deliver the prompt to the client
+ */
+async function processClickflowPrompt(
+  taskId: string,
+  frontmatter: Record<string, unknown>,
+  sendFn: (message: string) => void,
+): Promise<void> {
+  const promptConfig = frontmatter.clickflow_prompt as Record<string, unknown> | undefined
+  if (!promptConfig || typeof promptConfig !== 'object') return
+
+  const type = promptConfig.type as string | undefined
+  const question = promptConfig.question as string | undefined
+  if (!type || !question) {
+    console.warn(`[nomadworks-bridge] clickflow_prompt in ${taskId} missing type or question`)
+    return
+  }
+
+  // Validate prompt type
+  const validTypes = ['pick_one', 'pick_many', 'confirm', 'ask_text', 'slider']
+  if (!validTypes.includes(type)) {
+    console.warn(`[nomadworks-bridge] clickflow_prompt in ${taskId} has invalid type: ${type}`)
+    return
+  }
+
+  // Generate a unique promptId
+  const promptId = `cf_${taskId}_${Date.now()}`
+
+  // Check idempotency
+  const idempotencyKey = `${taskId}::${promptId}`
+  if (processedClickflowPrompts.has(idempotencyKey)) {
+    console.log(`[nomadworks-bridge] Skipping already-processed clickflow_prompt ${promptId} in ${taskId}`)
+    return
+  }
+  processedClickflowPrompts.add(idempotencyKey)
+
+  const options: InteractivePromptOption[] | undefined = promptConfig.options as InteractivePromptOption[] | undefined
+  const config: InteractivePromptConfig | undefined = promptConfig.config as InteractivePromptConfig | undefined
+  const timeoutMs = (promptConfig.timeoutMs as number) || 300000
+
+  console.log(`[nomadworks-bridge] Processing clickflow_prompt ${promptId} (${type}) in ${taskId}`)
+
+  try {
+    const resp = await createPrompt(
+      promptId,
+      type as any,
+      question,
+      sendFn,
+      options,
+      config,
+      timeoutMs,
+    )
+
+    // Build the clickflow_result based on response status and type
+    let result: Record<string, unknown> = {}
+
+    if (resp.status === 'answered') {
+      const response = resp.response || {}
+      switch (type) {
+        case 'pick_one':
+          result = { selected: response.selected as string ?? null, status: 'answered' }
+          break
+        case 'pick_many':
+          result = { selected: (response.selected as string[]) ?? [], status: 'answered' }
+          break
+        case 'confirm':
+          result = { choice: (response.choice as string) ?? 'cancel', status: 'answered' }
+          break
+        case 'ask_text':
+          result = { text: (response.text as string) ?? null, status: 'answered' }
+          break
+        case 'slider':
+          result = { value: (response.value as number) ?? null, status: 'answered' }
+          break
+      }
+    } else if (resp.status === 'timeout') {
+      result = { status: 'timeout' }
+    } else if (resp.status === 'cancelled') {
+      result = { status: 'cancelled' }
+    }
+
+    // Write clickflow_result back to the task file
+    await writeClickflowResult(taskId, frontmatter, result)
+
+    // Emit progress event for the agent to detect
+    const rawPayload = JSON.stringify({
+      type: 'agent_progress',
+      taskId,
+      agentType: 'system',
+      stepId: `${taskId}-clickflow-${Date.now()}`,
+      stage: 'clickflow_answered',
+      content: `ClickFlow prompt '${question}' resolved: ${JSON.stringify(result)}`,
+      pct: 100,
+      timestamp: new Date().toISOString(),
+    })
+    progressBus.emit({
+      taskId,
+      type: 'agent_progress',
+      stage: 'clickflow_answered',
+      message: `ClickFlow prompt resolved: ${JSON.stringify(result)}`,
+      pct: 100,
+      rawPayload,
+    })
+
+    console.log(`[nomadworks-bridge] clickflow_prompt ${promptId} resolved: ${resp.status}`)
+  } catch (err) {
+    console.error(`[nomadworks-bridge] clickflow_prompt ${promptId} failed:`, err)
+  }
+}
+
+/**
+ * Write the clickflow_result back into the task file frontmatter.
+ * Also sets progress_stage to 'clickflow_answered' so agents can detect the state change.
+ */
+async function writeClickflowResult(
+  taskId: string,
+  frontmatter: Record<string, unknown>,
+  result: Record<string, unknown>,
+): Promise<void> {
+  const candidates = [
+    path.join(TODO_DIR, `${taskId}.md`),
+    path.join(TASKS_ROOT, 'done', `${taskId}.md`),
+  ]
+
+  let filePath: string | null = null
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      filePath = p
+      break
+    }
+  }
+
+  if (!filePath) {
+    console.warn(`[nomadworks-bridge] Cannot write clickflow_result for ${taskId}: file not found`)
+    return
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const match = content.match(/^---\n([\s\S]*?)\n---/)
+    if (!match) return
+
+    // Merge results into frontmatter (preserve existing fields)
+    const updatedFrontmatter = { ...frontmatter }
+    updatedFrontmatter.clickflow_result = result
+    updatedFrontmatter.progress_stage = 'clickflow_answered'
+    updatedFrontmatter.updatedAt = new Date().toISOString()
+
+    // Remove clickflow_prompt to avoid re-processing (optional — keep for audit trail)
+    // We keep it so agents can see what was asked, but idempotency prevents re-processing.
+
+    const newFrontmatter = YAML.stringify(updatedFrontmatter, {
+      lineWidth: 0,
+      indent: 2,
+    })
+
+    const bodyAfterFrontmatter = content.slice(match[0].length)
+    const newContent = `---\n${newFrontmatter}---${bodyAfterFrontmatter}`
+    fs.writeFileSync(filePath, newContent, 'utf-8')
+
+    console.log(`[nomadworks-bridge] clickflow_result written to ${taskId}`)
+  } catch (err) {
+    console.error(`[nomadworks-bridge] Failed to write clickflow_result for ${taskId}:`, err)
+  }
+}
+
+/**
+ * Check frontmatter for a clickflow_prompt field and process it if present.
+ * Idempotent — only processes prompts that haven't been seen before.
+ */
+async function detectAndProcessClickflow(
+  taskId: string,
+  frontmatter: Record<string, unknown>,
+  send: (msg: string) => void,
+): Promise<void> {
+  if (!frontmatter.clickflow_prompt) return
+
+  // Build a unique key from the prompt content to detect new/updated prompts
+  const promptConfig = frontmatter.clickflow_prompt as Record<string, unknown>
+  const promptKey = `${taskId}::${JSON.stringify(promptConfig)}`
+
+  if (processedClickflowPrompts.has(promptKey)) return
+  processedClickflowPrompts.add(promptKey)
+
+  await processClickflowPrompt(taskId, frontmatter, send)
+}
+
+/**
  * Watch a task file for status changes and stream updates via WS.
  *
  * Uses a dual-path strategy:
@@ -766,6 +974,29 @@ function watchTask(
         }
       }
       // ── End Agent Progress Detection ─────────────────────
+
+      // ── ClickFlow Prompt Detection ─────────────────────────────
+      // Check if the task file has a clickflow_prompt field that hasn't
+      // been processed yet. This allows agents to ask interactive questions
+      // by writing to the task file frontmatter.
+      if (status.clickflow_prompt && !status.clickflow_result) {
+        // Re-parse the full frontmatter object
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
+        if (fmMatch) {
+          try {
+            const fullFm = YAML.parse(fmMatch[1])
+            if (fullFm && typeof fullFm === 'object' && fullFm.clickflow_prompt) {
+              // Process asynchronously — don't block the fs.watch handler
+              detectAndProcessClickflow(taskId, fullFm, send).catch((err) => {
+                console.error(`[nomadworks-bridge] ClickFlow detection error for ${taskId}:`, err)
+              })
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+      // ── End ClickFlow Prompt Detection ──────────────────────
 
       if (status.status === "completed" || status.status === "failed") {
         collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
