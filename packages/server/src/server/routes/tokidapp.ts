@@ -77,6 +77,13 @@ import {
   listSecurityScans,
   listSolidityContracts,
 } from "../../plugins/tokidapp/concierge/security-tools"
+import {
+  createPrompt,
+  resolvePrompt,
+  cancelPrompt,
+  hasActivePrompt,
+  activePromptCount,
+} from "../../plugins/tokidapp/concierge/interactive-session"
 import { bridge } from "./nomadworks-bridge"
 import { processExecution } from "../../plugins/tokidapp/workflow-executor"
 import { apiPost } from "../../plugins/tokidapp/orchestrator/starguard-client"
@@ -701,6 +708,27 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_list failed: ${(err as Error).message}` }))
           }
         })()
+        return
+      }
+
+      if (msg.type === "interactive_response") {
+        if (!msg.promptId || typeof msg.promptId !== "string") {
+          socketRef.send(JSON.stringify({ type: "error", content: "interactive_response requires promptId" }))
+          return
+        }
+        try {
+          const resolved = resolvePrompt(msg.promptId, (msg.response as Record<string, unknown>) || {})
+          socketRef.send(JSON.stringify({
+            type: "interactive_response_ack",
+            promptId: msg.promptId,
+            status: resolved ? "resolved" : "not_found",
+          }))
+        } catch (err) {
+          socketRef.send(JSON.stringify({
+            type: "error",
+            content: `interactive_response failed: ${(err as Error).message}`,
+          }))
+        }
         return
       }
 
@@ -2210,6 +2238,27 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_list failed: ${(err as Error).message}` }))
               }
             })()
+            return
+          }
+
+          if (msg.type === "interactive_response") {
+            if (!msg.promptId || typeof msg.promptId !== "string") {
+              socketRef.send(JSON.stringify({ type: "error", content: "interactive_response requires promptId" }))
+              return
+            }
+            try {
+              const resolved = resolvePrompt(msg.promptId, (msg.response as Record<string, unknown>) || {})
+              socketRef.send(JSON.stringify({
+                type: "interactive_response_ack",
+                promptId: msg.promptId,
+                status: resolved ? "resolved" : "not_found",
+              }))
+            } catch (err) {
+              socketRef.send(JSON.stringify({
+                type: "error",
+                content: `interactive_response failed: ${(err as Error).message}`,
+              }))
+            }
             return
           }
 
