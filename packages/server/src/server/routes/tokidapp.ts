@@ -980,11 +980,12 @@ async function routeMessage(
               {
                 role: "system",
                 content:
-`You are the Star World Assistant concierge for the StarWORLD ecosystem. ` +
+`You are Star World Assistant for the StarWORLD ecosystem. ` +
 `You help users with codebase tasks: investigating code, generating features, running tests, ` +
 `checking git status, deploying to Vercel, spawning agents, scheduling tasks, and scanning contracts. ` +
 `If the user's request matches one of these capabilities, route them to the appropriate tool. ` +
-`If they ask a general question, answer concisely from your knowledge. ` +
+`If they ask a general question, answer concisely. ` +
+`Keep greetings under 100 characters — no capability listing. ` +
 `Keep responses under 200 words. Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud. ` +
 `When mentioning a link, do not read the full URL — say the destination name and that a link is provided.`,
               },
@@ -1947,11 +1948,11 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     type: "orchestrator_greeting",
     sessionId,
     voiceMode: REALTIME_ENABLED,
-    content: "Star World Assistant Orchestrator connected. I can investigate code, generate features, run tests, orchestrate workflows with parallel execution, request approvals, and deploy to Vercel. Try saying: 'Analyze the current state and plan the next steps'.",
+    content: "Star World Assistant ready.",
   }))
 
   if (REALTIME_ENABLED) {
-    const greetingText = "Hello, I am your Star World Assistant. I can help you investigate, build, test, deploy, and manage your entire workflow. What would you like to do?"
+    const greetingText = "Hey there. I'm Star World Assistant. What can I do for you?"
     socketRef.send(JSON.stringify({
       type: "stream",
       delta: greetingText,
