@@ -27,6 +27,7 @@ import {
   getSepoliaDeployments,
   visionAnalyze,
   generateMermaidDiagram,
+  generateFile,
   readWikiPage,
   searchWiki,
   searchObsidianVault,
@@ -420,6 +421,21 @@ const tools = [
   },
   {
     type: "function",
+    name: "generate_file",
+    description: "Generate a downloadable file — Mermaid diagram SVG, document, or code snippet. For Mermaid diagrams, pass the mermaid source code as content and type=mermaid_svg. The result includes a download URL the user can open to save the file. Use this when the user wants to download a diagram, save generated content, or export a file.",
+    parameters: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["mermaid_svg", "document", "code"], description: "Type of file to generate." },
+        content: { type: "string", description: "The content of the file. For mermaid_svg: pass the raw Mermaid source code. For document: text content. For code: code snippet." },
+        fileName: { type: "string", description: "Optional filename with extension (e.g. 'architecture-diagram.mmd', 'notes.txt'). Auto-generated if omitted." },
+        title: { type: "string", description: "A short title for the file (used in the generated filename if fileName is not provided)." },
+      },
+      required: ["type", "content"],
+    },
+  },
+  {
+    type: "function",
     name: "read_wiki_page",
     description: "Read a wiki entity page from the StarCARD architecture wiki. Returns full markdown content including frontmatter and wikilinks. Use when you need detailed info about a specific entity.",
     parameters: {
@@ -652,6 +668,13 @@ async function executeTool(
       case "generate_diagram": {
         const { description, diagramType } = JSON.parse(argsStr)
         return await generateMermaidDiagram(description, diagramType)
+      }
+
+      case "generate_file": {
+        const { type, content, fileName, title } = JSON.parse(argsStr)
+        const result = await generateFile({ type, content, fileName, title })
+        // Return a summary that includes the download URL
+        return `✅ File generated: ${result.fileName} (${result.fileSize} bytes)\nURL: ${result.url}\n\nThe Mermaid source is also included in this response as a \`\`\`mermaid code block that will render as a diagram in the chat.`
       }
 
       case "read_wiki_page": {
@@ -1054,6 +1077,17 @@ export function createRealtimeSession(
             const greetKey = (chatSessionId || "").trim() || sessionId
             if (!voiceGreetingPlayedForChatSession.has(greetKey)) {
               voiceGreetingPlayedForChatSession.add(greetKey)
+
+              // Build enriched greeting with preloaded ecosystem context
+              const digest = enrichedInstructions || ""
+              const hasContext = digest.length > 100
+
+              const greetingText = hasContext
+                ? `You are Star World Assistant, the voice and chat assistant for the StarWORLD ecosystem. You have deep knowledge of the entire project loaded into your context — including smart contracts, data models, architecture entities, deployment addresses, and ecosystem components.
+
+Greet the user warmly and briefly (under 120 characters). Mention that you have full knowledge of the StarWORLD ecosystem and are ready to help. Do NOT list capabilities — just greet and ask what they need. Never read URLs, file paths, wallet addresses, or UUIDs aloud.`
+                : `You are Star World Assistant. Greet the user briefly — under 100 characters, no capability listing. If you know their name or role from context, use it. Just ask what they need. Do NOT call any tools — this is just a greeting. Never read URLs, file paths, wallet addresses, or UUIDs aloud — instead say the destination name and that a link is provided.`
+
               const greeting: any = {
                 type: "conversation.item.create",
                 item: {
@@ -1062,7 +1096,7 @@ export function createRealtimeSession(
                   content: [
                     {
                       type: "input_text",
-                      text: "You are Star World Assistant. Greet the user briefly — under 100 characters, no capability listing. If you know their name or role from context, use it. Just ask what they need. Do NOT call any tools — this is just a greeting. Never read URLs, file paths, wallet addresses, or UUIDs aloud — instead say the destination name and that a link is provided.",
+                      text: greetingText,
                     },
                   ],
                 },

@@ -392,7 +392,12 @@ async function startVoiceRealtimeSession(
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
 
     // Fetch architecture knowledge base digest for prompt enrichment
-    const digest = await getArchitectureDigest().catch(() => "")
+    // This preloads ecosystem context (entities, schema, contracts) into the voice session
+    const digest = await getArchitectureDigest().catch((err) => {
+      console.log("[voice-ws] architecture digest fetch failed:", (err as Error).message)
+      return ""
+    })
+    console.log("[voice-ws] architecture digest length:", digest?.length || 0, "chars")
 
     createRealtimeSession(
       sessionId,
@@ -1019,14 +1024,48 @@ async function routeMessage(
               {
                 role: "system",
                 content:
-`You are Star World Assistant for the StarWORLD ecosystem. ` +
-`You help users with codebase tasks: investigating code, generating features, running tests, ` +
-`checking git status, deploying to Vercel, spawning agents, scheduling tasks, and scanning contracts. ` +
-`If the user's request matches one of these capabilities, route them to the appropriate tool. ` +
-`If they ask a general question, answer concisely. ` +
-`Keep greetings under 100 characters — no capability listing. ` +
-`Keep responses under 200 words. Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud. ` +
-`When mentioning a link, do not read the full URL — say the destination name and that a link is provided.`,
+`You are Star World Assistant for the StarWORLD ecosystem — a multi-chain Web3 portal with smart contracts, membership, rewards, and AI agents.
+
+## Your Core Knowledge
+You have deep knowledge of:
+- **Smart Contracts**: RevenuePool, DynamicSplitter, StarBridge, StarCard (ERC-4907), SAFT, MembershipSystem, StarXP, TicketMarketplace, VenueOnboardingKit
+- **Chains**: Ethereum Sepolia (testnet), BSC (mainnet), StarCHAIN
+- **Data Models**: 66 ZenStack models — User, Session, Contract, Invoice, Venue, Membership, StarXP, DrinkToken, etc.
+- **Architecture**: 135+ entities in the knowledge base with cross-references
+- **AI Agents**: TokiDAPP concierge, NomadWorks 25-agent SDLC, CodeNomad development agent
+- **Features**: Membership tiers, StarXP rewards, venue entry, drink tokens, bridge, SAFT claims, ticket marketplace
+
+## Your Capabilities
+You can help with:
+- **Investigate** — search and read codebase files
+- **Generate** — create new pages, components, routes
+- **Test** — run the test suite
+- **Git status** — check branch, changes, history
+- **Deploy** — commit, push, and deploy to Vercel
+- **Spawn agent** — launch OpenCode/OpenCoder/OpenAgent workspaces
+- **Schedule task** — create and schedule tasks for agents or users
+- **List tasks** — view all pending/assigned/completed tasks
+- **Assign task** — assign a task to a specific user
+- **Rollback deploy** — revert to the previous commit and redeploy
+- **Accessibility** — run a11y audits (Lighthouse, axe-core)
+- **Security scan** — scan Solidity contracts for vulnerabilities
+- **Read file** — view file contents or list directories
+- **Lint** — run the linter
+- **Type check** — run TypeScript type checking
+- **Git branch** — list, create, switch, or delete branches
+- **Knowledge base** — query architecture entities, read wiki pages, search vault
+- **Diagrams** — generate Mermaid diagrams from descriptions
+- **File generation** — create downloadable files (diagrams, documents, code snippets)
+
+## Response Guidelines
+- Answer questions about the ecosystem accurately from your knowledge
+- When the user's request matches a capability, route them to the appropriate tool
+- Keep greetings under 100 characters — no capability listing
+- Keep responses under 200 words
+- Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud
+- When mentioning a link, say the destination name and that a link is provided
+- Use friendly names: "RevenuePool" not "SC.contract.RevenuePool"
+- If you're unsure about something, search the knowledge base first before answering`,
               },
               { role: "user", content },
             ],
@@ -1068,6 +1107,8 @@ async function routeMessage(
           "• **Lint** — run the linter",
           "• **Type check** — run TypeScript type checking",
           "• **Git branch** — list, create, switch, or delete branches",
+          "• **Knowledge base** — query architecture entities, read wiki pages, search vault",
+          "• **Diagrams** — generate Mermaid diagrams from descriptions",
           "",
           "What would you like to do?",
         ].join("\n"),

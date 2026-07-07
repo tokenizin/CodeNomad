@@ -47,35 +47,114 @@ export async function queryKnowledgeBase(
 }
 
 /** Get a compact digest of key knowledge sources for prompt enrichment.
- *  Includes architecture entities + pointers to project-intelligence docs,
- *  ecosystem architecture references, and domain policies.
- *  Returns a plain-text digest (target: ≤2000 chars). */
+ *  Includes architecture entities with descriptions + project-intelligence docs,
+ *  ecosystem architecture references, domain policies, ZenStack schema summary,
+ *  and Solidity contract overview. Returns a plain-text digest (target: ≤4000 chars). */
 export async function getArchitectureDigest(): Promise<string> {
   const parts: string[] = []
   const KB = path.resolve(process.cwd(), "..")
 
+  // 0. Core ecosystem identity — always present
+  parts.push("## StarWORLD Ecosystem Overview")
+  parts.push("StarWORLD is a multi-chain Web3 ecosystem portal with:")
+  parts.push("- Smart contracts on Sepolia (testnet) and BSC (mainnet)")
+  parts.push("- Membership system with tiers (Free/Standard/Participatory)")
+  parts.push("- StarXP reward points for venue purchases")
+  parts.push("- Revenue sharing via RevenuePool + DynamicSplitter")
+  parts.push("- Cross-chain bridge (Sepolia ↔ BSC)")
+  parts.push("- NFT membership cards (StarCard, ERC-4907)")
+  parts.push("- AI concierge (TokiDAPP) with voice + text")
+  parts.push("- NomadWorks 25-agent SDLC orchestration")
+  parts.push("")
+
+  // 1. Architecture entities from StarGuard API — include descriptions
   try {
-    // 1. Architecture entities from StarGuard API
-    const res = await apiGet("/api/architecture/entities", { limit: "20" })
+    const res = await apiGet("/api/architecture/entities", { limit: "30" })
     if (res.ok) {
       const data = await res.json()
       const entities = data.entities || data || []
       if (Array.isArray(entities) && entities.length > 0) {
-        const byDomain = new Map<string, string[]>()
+        parts.push("## Key Architecture Entities")
+        const byDomain = new Map<string, Array<{ name: string; stableId: string; description: string; category: string }>>()
         for (const e of entities) {
           const domain = e.domain || "GENERAL"
           if (!byDomain.has(domain)) byDomain.set(domain, [])
-          byDomain.get(domain)!.push(e.name || e.stableId || "(unnamed)")
+          byDomain.get(domain)!.push({
+            name: e.name || e.stableId || "(unnamed)",
+            stableId: e.stableId || "",
+            description: (e.description || "").slice(0, 150),
+            category: e.category || "",
+          })
         }
-        parts.push("Key StarCARD ecosystem entities:")
-        for (const [domain, names] of byDomain) {
-          parts.push(`  ${domain}: ${names.slice(0, 5).join(", ")}`)
+        for (const [domain, ents] of byDomain) {
+          parts.push(`\n### ${domain}`)
+          for (const e of ents.slice(0, 8)) {
+            const desc = e.description ? ` — ${e.description}` : ""
+            parts.push(`- ${e.name} (${e.stableId}) [${e.category}]${desc}`)
+          }
         }
       }
     }
   } catch { /* skip — API unavailable */ }
 
-  // 2. Project-intelligence files (prioritize critical/high)
+  // 2. ZenStack schema summary — model names and key relationships
+  try {
+    const schemaPath = path.resolve(KB, "zenstack/schema.zmodel")
+    if (fs.existsSync(schemaPath)) {
+      const schemaContent = fs.readFileSync(schemaPath, "utf-8")
+      // Extract model names (lines starting with "model ")
+      const modelNames = [...schemaContent.matchAll(/^model\s+(\w+)/gm)].map(m => m[1])
+      // Extract enum names
+      const enumNames = [...schemaContent.matchAll(/^enum\s+(\w+)/gm)].map(m => m[1])
+      // Extract procedure names
+      const procNames = [...schemaContent.matchAll(/^(?:mutation\s+)?procedure\s+(\w+)/gm)].map(m => m[1])
+
+      if (modelNames.length > 0) {
+        parts.push("\n## ZenStack Data Models (66 models)")
+        // Group models by domain prefix
+        const domainGroups: Record<string, string[]> = {}
+        for (const name of modelNames) {
+          const prefix = name.match(/^(TokiDAPP|StarXP|Venue|Membership|Capital|SAFT|Ticket|Revenue|Drink|Merchant|Region|Treasury|Linked|VenueAccess|Promoter|Referral|Nonce|Client|Invoice|Contract|Document|Audit|Security|Architecture|Entity|Diagram|NomadWorks|AI|Causal|Node|Tool|Nav|Page)/i)?.[1] || "Core"
+          if (!domainGroups[prefix]) domainGroups[prefix] = []
+          domainGroups[prefix].push(name)
+        }
+        for (const [group, names] of Object.entries(domainGroups).slice(0, 10)) {
+          parts.push(`- ${group}: ${names.slice(0, 6).join(", ")}${names.length > 6 ? ` (+${names.length - 6})` : ""}`)
+        }
+      }
+      if (enumNames.length > 0) {
+        parts.push(`- Enums: ${enumNames.slice(0, 10).join(", ")}${enumNames.length > 10 ? ` (+${enumNames.length - 10})` : ""}`)
+      }
+      if (procNames.length > 0) {
+        parts.push(`- Procedures: ${procNames.join(", ")}`)
+      }
+    }
+  } catch { /* skip */ }
+
+  // 3. Solidity contracts overview
+  try {
+    const contractsDir = path.resolve(KB, "solidity/contracts")
+    if (fs.existsSync(contractsDir)) {
+      const contractFiles = fs.readdirSync(contractsDir).filter(f => f.endsWith(".sol"))
+      if (contractFiles.length > 0) {
+        parts.push("\n## Solidity Contracts")
+        // Group by directory
+        const groups: Record<string, string[]> = {}
+        for (const file of contractFiles) {
+          const parts2 = file.replace(".sol", "").split(/(?=[A-Z])/)
+          const prefix = parts2[0] || "Other"
+          if (!groups[prefix]) groups[prefix] = []
+          groups[prefix].push(file.replace(".sol", ""))
+        }
+        for (const [group, names] of Object.entries(groups).slice(0, 8)) {
+          parts.push(`- ${group}: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ` (+${names.length - 5})` : ""}`)
+        }
+        parts.push(`- Total: ${contractFiles.length} contract files`)
+      }
+    }
+  } catch { /* skip */ }
+
+  // 4. Project-intelligence files (prioritize critical/high)
   const piDir = path.resolve(KB, ".opencode/context/project-intelligence")
   if (fs.existsSync(piDir)) {
     const piFiles = fs.readdirSync(piDir).filter(f => f.endsWith(".md"))
@@ -92,66 +171,65 @@ export async function getArchitectureDigest(): Promise<string> {
       } catch { /* skip */ }
     }
     if (critical.length > 0) {
-      parts.push("Project Intelligence (critical):")
-      parts.push(`  ${critical.join(", ")}`)
+      parts.push("\n## Project Intelligence (critical)")
+      parts.push(critical.join(", "))
     }
     if (high.length > 0) {
-      parts.push("Project Intelligence (high):")
-      parts.push(`  ${high.slice(0, 5).join(", ")}`)
+      parts.push("## Project Intelligence (high)")
+      parts.push(high.slice(0, 8).join(", "))
     }
   }
 
-  // 3. Ecosystem architecture deep-dives
+  // 5. Ecosystem architecture deep-dives
   const ecoDir = path.resolve(KB, "docs/architecture/ecosystem")
   if (fs.existsSync(ecoDir)) {
     const ecoFiles = fs.readdirSync(ecoDir).filter(f => f.endsWith(".md"))
     if (ecoFiles.length > 0) {
-      parts.push("Ecosystem architecture:")
-      parts.push(`  ${ecoFiles.map(f => f.replace(/\.md$/, "")).join(", ")}`)
+      parts.push("\n## Ecosystem Architecture Docs")
+      parts.push(ecoFiles.map(f => f.replace(/\.md$/, "")).join(", "))
     }
   }
 
-  // 4. NomadWorks domain policies
+  // 6. NomadWorks domain policies
   const polDir = path.resolve(KB, ".nomadworks/policies")
   if (fs.existsSync(polDir)) {
     const polFiles = fs.readdirSync(polDir).filter(f => f.endsWith(".md"))
     if (polFiles.length > 0) {
       const polNames = polFiles.map(f => f.replace(/\.md$/, "")).filter(n => n !== "README")
-      parts.push("Domain policies:")
-      parts.push(`  ${polNames.join(", ")}`)
+      parts.push("\n## Domain Policies")
+      parts.push(polNames.join(", "))
     }
   }
 
-  // 5. Session persistence flow — how your messages are saved
-  const persistDoc = path.resolve(piDir, "realtime-persistence-flow.md")
-  if (fs.existsSync(persistDoc)) {
-    try {
-      const persistContent = fs.readFileSync(persistDoc, "utf-8")
-      // Extract the concise overview section — everything between the first heading
-      // and the "Related Files" heading.
-      const overviewMatch = persistContent.match(
-        /## Architecture Overview[\s\S]*?(?=## |$)/,
-      )
-      const pathsMatch = persistContent.match(
-        /### Path [A-D]:[^#]+/g,
-      )
-      if (overviewMatch) {
-        parts.push("Session persistence overview:")
-        parts.push(overviewMatch[0].trim())
+  // 7. NomadWorks agents available
+  try {
+    const nomadDir = path.resolve(KB, ".nomadworks")
+    const agentsFile = path.join(nomadDir, "nomadworks.yaml")
+    if (fs.existsSync(agentsFile)) {
+      const agentContent = fs.readFileSync(agentsFile, "utf-8")
+      const agentSlugs = [...agentContent.matchAll(/slug:\s*(\w+)/g)].map(m => m[1])
+      if (agentSlugs.length > 0) {
+        parts.push("\n## NomadWorks Agents")
+        parts.push(agentSlugs.join(", "))
       }
-      if (pathsMatch) {
-        // Condense each path to a one-liner
-        for (const p of pathsMatch) {
-          const title = p.match(/### (Path [A-D]:[^\n]+)/)
-          const detail = p.match(/`([^`]+)`\s*→\s*`([^`]+)`/)
-          if (title) {
-            const line = title[1]
-            parts.push(`  ${line}`)
-          }
-        }
+    }
+  } catch { /* skip */ }
+
+  // 8. Key deployment addresses
+  try {
+    const deployPath = path.resolve(KB, "src/data/sepolia-deployments.ts")
+    if (fs.existsSync(deployPath)) {
+      const deployContent = fs.readFileSync(deployPath, "utf-8")
+      // Extract contract names from the deployment map
+      const contractNames = [...deployContent.matchAll(/["']?(\w+)["']?\s*:\s*["']?(0x[a-fA-F0-9]{40})/g)]
+        .slice(0, 10)
+        .map(m => `${m[1]}: ${m[2].slice(0, 6)}...${m[2].slice(-4)}`)
+      if (contractNames.length > 0) {
+        parts.push("\n## Sepolia Deployments")
+        parts.push(contractNames.join(", "))
       }
-    } catch { /* skip */ }
-  }
+    }
+  } catch { /* skip */ }
 
   return parts.length > 0 ? parts.join("\n") : ""
 }
@@ -1120,6 +1198,139 @@ export async function generateMermaidDiagram(
     return cleaned
   } catch (err) {
     return `Mermaid generation failed: ${(err as Error).message}`
+  }
+}
+
+// ── File Generation ─────────────────────────────────────────
+
+const GENERATED_FILES_DIR = path.resolve(process.cwd(), "public/generated")
+const GENERATED_FILES_BASE = "/generated"
+
+/** Generate a downloadable file from Mermaid source or other content.
+ *
+ *  Supported types:
+ *  - "mermaid_svg": Renders Mermaid source to SVG and saves it as a file.
+ *    Returns a downloadable URL and file metadata.
+ *  - "document": Creates a text document file.
+ *  - "code": Creates a code snippet file.
+ */
+export async function generateFile(options: {
+  type: "mermaid_svg" | "document" | "code"
+  content: string
+  fileName?: string
+  title?: string
+}): Promise<{
+  url: string
+  fileName: string
+  fileSize: number
+  mimeType: string
+  content: string
+}> {
+  const { type, content, title } = options
+  const timestamp = Date.now()
+  const safeTitle = (title || "file").replace(/[^a-zA-Z0-9_-]/g, "_")
+  const sanitized = content.replace(/^```(?:mermaid|svg|typescript|javascript|python|solidity|bash)?\s*\n?/gm, "").replace(/```\s*$/gm, "").trim()
+
+  let fileName: string
+  let mimeType: string
+  let fileContent: string
+
+  switch (type) {
+    case "mermaid_svg": {
+      // For Mermaid, we save the raw source — client renders via MermaidBlock
+      // Also produce a standalone SVG wrapper that can be downloaded/viewed
+      fileName = `${safeTitle}-${timestamp}.mmd`
+      mimeType = "text/plain"
+      fileContent = sanitized
+      break
+    }
+    case "document": {
+      fileName = options.fileName || `${safeTitle}-${timestamp}.txt`
+      mimeType = "text/plain"
+      fileContent = sanitized
+      break
+    }
+    case "code": {
+      const ext = options.fileName?.includes(".") ? options.fileName.split(".").pop() : "txt"
+      fileName = options.fileName || `${safeTitle}-${timestamp}.${ext}`
+      mimeType = "text/plain"
+      fileContent = sanitized
+      break
+    }
+    default:
+      fileName = `${safeTitle}-${timestamp}.txt`
+      mimeType = "text/plain"
+      fileContent = sanitized
+  }
+
+  // Ensure generated directory exists
+  fs.mkdirSync(GENERATED_FILES_DIR, { recursive: true })
+
+  // Write the file
+  const filePath = path.join(GENERATED_FILES_DIR, fileName)
+  fs.writeFileSync(filePath, fileContent, "utf-8")
+
+  const url = `${GENERATED_FILES_BASE}/${fileName}`
+  const stat = fs.statSync(filePath)
+
+  return {
+    url,
+    fileName,
+    fileSize: stat.size,
+    mimeType,
+    content: fileContent,
+  }
+}
+
+/** Upload a generated file to Vercel Blob and return a proxy URL.
+ *  Requires BLOB_READ_WRITE_TOKEN to be set. Falls back to local URL
+ *  if Blob token is not available. */
+export async function uploadGeneratedFile(filePath: string): Promise<{
+  url: string
+  fileName: string
+  fileSize: number
+  mimeType: string
+}> {
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN
+  if (!blobToken) {
+    // Fallback: local file path
+    const fileName = path.basename(filePath)
+    const stat = fs.statSync(filePath)
+    return { url: `${GENERATED_FILES_BASE}/${fileName}`, fileName, fileSize: stat.size, mimeType: "application/octet-stream" }
+  }
+
+  try {
+    const fileBuffer = fs.readFileSync(filePath)
+    const fileName = path.basename(filePath)
+    const blob = await fetch("https://api.vercel.com/v1/blob/upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${blobToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        files: [{ data: fileBuffer.toString("base64"), filename: fileName }],
+      }),
+    })
+
+    if (!blob.ok) {
+      throw new Error(`Blob upload failed: ${blob.status}`)
+    }
+
+    const data = await blob.json()
+    const blobUrl = data?.url || data?.blobUrl || data?.blobs?.[0]?.url || ""
+
+    if (!blobUrl) {
+      throw new Error("No URL returned from Blob upload")
+    }
+
+    const stat = fs.statSync(filePath)
+    return { url: blobUrl, fileName, fileSize: stat.size, mimeType: "application/octet-stream" }
+  } catch {
+    // Fallback to local path
+    const fileName = path.basename(filePath)
+    const stat = fs.statSync(filePath)
+    return { url: `${GENERATED_FILES_BASE}/${fileName}`, fileName, fileSize: stat.size, mimeType: "application/octet-stream" }
   }
 }
 
