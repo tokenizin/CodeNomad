@@ -1204,11 +1204,50 @@ export async function generateMermaidDiagram(
 // ── File Generation ─────────────────────────────────────────
 
 // Server public/generated directory — resolved relative to this file's location
-// so it works regardless of process.cwd()
+// so it works regardless of process.cwd().
 // Source: packages/server/src/plugins/tokidapp/concierge/codebase-tools.ts
 // 6 levels up → packages/ (root of CodeNomad monorepo)
 const CODENOMAD_ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..", "..", "..")
 const GENERATED_FILES_DIR = path.resolve(CODENOMAD_ROOT, "public", "generated")
+const GENERATED_FILES_BASE = `/api/tokidapp/files/generated`
+/** Public tunnel URL — used to build fully-qualified download URLs.
+ *  Falls back to the CodeNomad tunnel hostname. */
+const TUNNEL_PUBLIC_URL = (process.env.TUNNEL_PUBLIC_URL || "https://codenomad.tokenizin.com").replace(/\/+$/, "")
+
+/** Upload a file buffer to Vercel Blob using direct REST API.
+ *  The StarWorld blob store is private — uses access: 'private' and
+ *  returns a Vercel Blob URL that can be served via the /api/tokidapp/files/proxy
+ *  endpoint. Falls back to null if Blob upload is unavailable.
+ *  Requires BLOB_READ_WRITE_TOKEN env var. */
+async function uploadToVercelBlob(
+  fileBuffer: Buffer,
+  fileName: string,
+  contentType: string,
+): Promise<string | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN
+  if (!token) return null
+
+  try {
+    // Vercel Blob REST API — private access is the default when 'access' is omitted
+    const res = await fetch("https://api.vercel.com/v1/blob/upload", {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        files: [{ data: fileBuffer.toString("base64"), filename: fileName, content_type: contentType }],
+      }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    // Private store returns a URL that requires a token to read directly.
+    // We still return it so the proxy endpoint can serve it.
+    return data?.url || data?.blobUrl || data?.blobs?.[0]?.url || null
+  } catch {
+    return null
+  }
+}
 
 /** Generate a downloadable file from Mermaid source or other content.
  *
@@ -1217,6 +1256,11 @@ const GENERATED_FILES_DIR = path.resolve(CODENOMAD_ROOT, "public", "generated")
  *    Returns a downloadable URL and file metadata.
  *  - "document": Creates a text document file.
  *  - "code": Creates a code snippet file.
+ *
+ *  The function:
+ *  1. Writes the file to the local generated directory
+ *  2. Attempts to upload to Vercel Blob (if BLOB_READ_WRITE_TOKEN is set)
+ *  3. Returns a fully-qualified HTTPS URL + markdown-wrapped content for chat rendering
  */
 export async function generateFile(options: {
   type: "mermaid_svg" | "document" | "code"
@@ -1229,6 +1273,10 @@ export async function generateFile(options: {
   fileSize: number
   mimeType: string
   content: string
+  /** Markdown-wrapped content suitable for inline chat rendering.
+   *  For mermaid_svg: wraps in ```mermaid block.
+   *  For documents/code: wraps in ``` block with appropriate language tag. */
+  markdownContent: string
 }> {
   const { type, content, title } = options
   const timestamp = Date.now()
@@ -1238,20 +1286,21 @@ export async function generateFile(options: {
   let fileName: string
   let mimeType: string
   let fileContent: string
+  let languageTag: string
 
   switch (type) {
     case "mermaid_svg": {
-      // For Mermaid, we save the raw source — client renders via MermaidBlock
-      // Also produce a standalone SVG wrapper that can be downloaded/viewed
       fileName = `${safeTitle}-${timestamp}.mmd`
       mimeType = "text/plain"
       fileContent = sanitized
+      languageTag = "mermaid"
       break
     }
     case "document": {
       fileName = options.fileName || `${safeTitle}-${timestamp}.txt`
       mimeType = "text/plain"
       fileContent = sanitized
+      languageTag = ""
       break
     }
     case "code": {
@@ -1259,36 +1308,65 @@ export async function generateFile(options: {
       fileName = options.fileName || `${safeTitle}-${timestamp}.${ext}`
       mimeType = "text/plain"
       fileContent = sanitized
+      languageTag = ext === "txt" ? "" : ext || ""
       break
     }
     default:
       fileName = `${safeTitle}-${timestamp}.txt`
       mimeType = "text/plain"
       fileContent = sanitized
+      languageTag = ""
   }
 
   // Ensure generated directory exists
   fs.mkdirSync(GENERATED_FILES_DIR, { recursive: true })
 
-  // Write the file
+  // Write the file locally (always — for local serving fallback)
   const filePath = path.join(GENERATED_FILES_DIR, fileName)
   fs.writeFileSync(filePath, fileContent, "utf-8")
-
-  const url = `/api/tokidapp/files/generated/${fileName}`
   const stat = fs.statSync(filePath)
+  const fileBuffer = Buffer.from(fileContent, "utf-8")
+
+  // Attempt to upload to Vercel Blob for a persistent, globally-accessible URL
+  let publicUrl: string | null = null
+  try {
+    publicUrl = await uploadToVercelBlob(fileBuffer, fileName, mimeType)
+  } catch {
+    // Non-fatal — fall through to tunnel URL
+  }
+
+  // Use the tunnel URL as primary (always accessible, no auth required).
+  // Blob URL (if available) is used for fallback via proxy endpoint.
+  const primaryUrl = `${TUNNEL_PUBLIC_URL}${GENERATED_FILES_BASE}/${fileName}`
+  const finalUrl = publicUrl || primaryUrl
+
+  // Build markdown-wrapped content for inline chat rendering
+  // Always use the tunnel URL in the download link (it's directly accessible)
+  const downloadLine = `📎 [Download ${fileName}](${primaryUrl})`
+  let markdownContent: string
+
+  if (type === "mermaid_svg") {
+    markdownContent = `\`\`\`mermaid\n${fileContent}\n\`\`\`\n\n---\n${downloadLine}`
+  } else if (languageTag) {
+    markdownContent = `\`\`\`${languageTag}\n${fileContent}\n\`\`\`\n\n---\n${downloadLine}`
+  } else {
+    markdownContent = `${fileContent}\n\n---\n${downloadLine}`
+  }
 
   return {
-    url,
+    url: finalUrl,
     fileName,
     fileSize: stat.size,
     mimeType,
     content: fileContent,
+    markdownContent,
   }
 }
 
 /** Upload a generated file to Vercel Blob and return a proxy URL.
  *  Requires BLOB_READ_WRITE_TOKEN to be set. Falls back to local URL
- *  if Blob token is not available. */
+ *  if Blob token is not available.
+ *  @deprecated Use generateFile() which handles Blob upload automatically. */
 export async function uploadGeneratedFile(filePath: string): Promise<{
   url: string
   fileName: string
@@ -1335,6 +1413,92 @@ export async function uploadGeneratedFile(filePath: string): Promise<{
     const fileName = path.basename(filePath)
     const stat = fs.statSync(filePath)
     return { url: `${GENERATED_FILES_BASE}/${fileName}`, fileName, fileSize: stat.size, mimeType: "application/octet-stream" }
+  }
+}
+
+// ── Web Search ────────────────────────────────────────────
+
+/** Known venue official websites for site-restricted member searches.
+ *  Members searching for venue info will be restricted to these domains.
+ *  Admins can search all sites. Add new venue domains here as they onboard. */
+const VENUE_SEARCH_DOMAINS: string[] = [
+  "redrubyclub.com",
+  "tokenizin.com",
+  "starworksglobal.com",
+  // Add new venue domains below:
+  // "example-venue.com",
+]
+
+/** Perform a web search using Tavily Search API (AI-optimized, 1000 free queries/month).
+ *  Requires TAVILY_API_KEY env var. Get one free at https://tavily.com
+ *  Returns a text summary of up to 10 search results with titles, snippets, and URLs.
+ *
+ *  @param query - The search query
+ *  @param numResults - Results to return (1-10, default 5)
+ *  @param sites - Search scope: "all" (unrestricted, default), "venues" (venue official sites only),
+ *                 or a comma-separated list of domains. Members should use "venues" for venue-related queries. */
+export async function googleSearch(
+  query: string,
+  numResults: number = 5,
+  sites?: "all" | "venues" | string,
+): Promise<string> {
+  const apiKey = process.env.TAVILY_API_KEY
+  if (!apiKey) {
+    return "Web search requires TAVILY_API_KEY environment variable. Get a free key at https://tavily.com, add it to .env, and restart the server."
+  }
+
+  // Resolve include_domains based on sites parameter
+  let includeDomains: string[] = []
+  if (sites === "venues") {
+    includeDomains = [...VENUE_SEARCH_DOMAINS]
+  } else if (sites && sites !== "all") {
+    // Custom comma-separated domain list
+    includeDomains = sites.split(",").map(s => s.trim()).filter(Boolean)
+  }
+  // "all" or undefined = empty array = search everything
+
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: "basic",
+        max_results: Math.min(Math.max(numResults, 1), 10),
+        include_answer: false,
+        include_domains: includeDomains,
+        exclude_domains: [],
+      }),
+      signal: AbortSignal.timeout(15000),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "")
+      return `Web search API error (${res.status}): ${errText.slice(0, 200)}`
+    }
+
+    const data = await res.json()
+    const results = data.results || []
+    if (results.length === 0) return `No search results found for "${query}".`
+
+    const scopeLabel = includeDomains.length > 0
+      ? ` (searched within: ${includeDomains.join(", ")})`
+      : " (all web)"
+    const lines: string[] = [`**Search results for:** ${query}${scopeLabel}\n`]
+    for (let i = 0; i < results.length; i++) {
+      const item = results[i]
+      const title = (item.title || "").trim()
+      const snippet = (item.content || item.snippet || "").trim()
+      const link = (item.url || "").trim()
+      lines.push(`${i + 1}. **${title}**`)
+      if (snippet) lines.push(`   ${snippet}`)
+      if (link) lines.push(`   ${link}`)
+      lines.push("")
+    }
+    return lines.join("\n").slice(0, 4000)
+  } catch (err) {
+    return `Web search failed: ${(err as Error).message}`
   }
 }
 

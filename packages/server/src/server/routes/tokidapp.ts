@@ -1056,6 +1056,7 @@ You can help with:
 - **Knowledge base** — query architecture entities, read wiki pages, search vault
 - **Diagrams** — generate Mermaid diagrams from descriptions
 - **File generation** — create downloadable files (diagrams, documents, code snippets)
+- **Web search** — search the web for current information, news, documentation
 
 ## Response Guidelines
 - Answer questions about the ecosystem accurately from your knowledge
@@ -1065,7 +1066,8 @@ You can help with:
 - Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud
 - When mentioning a link, say the destination name and that a link is provided
 - Use friendly names: "RevenuePool" not "SC.contract.RevenuePool"
-- If you're unsure about something, search the knowledge base first before answering`,
+- If you're unsure about something, search the knowledge base first before answering
+- If the knowledge base doesn't have the answer and the user needs current/recent information, tell them to ask in voice mode which has web_search capability, or suggest they use the web_search tool in a voice conversation`,
               },
               { role: "user", content },
             ],
@@ -1109,6 +1111,8 @@ You can help with:
           "• **Git branch** — list, create, switch, or delete branches",
           "• **Knowledge base** — query architecture entities, read wiki pages, search vault",
           "• **Diagrams** — generate Mermaid diagrams from descriptions",
+          "• **File generation** — create downloadable files (diagrams, documents, code)",
+          "• **Web search** — search the web for current info, news, docs",
           "",
           "What would you like to do?",
         ].join("\n"),

@@ -28,6 +28,7 @@ import {
   visionAnalyze,
   generateMermaidDiagram,
   generateFile,
+  googleSearch,
   readWikiPage,
   searchWiki,
   searchObsidianVault,
@@ -422,7 +423,7 @@ const tools = [
   {
     type: "function",
     name: "generate_file",
-    description: "Generate a downloadable file — Mermaid diagram SVG, document, or code snippet. For Mermaid diagrams, pass the mermaid source code as content and type=mermaid_svg. The result includes a download URL the user can open to save the file. Use this when the user wants to download a diagram, save generated content, or export a file.",
+    description: "Generate a downloadable file — Mermaid diagram SVG, document, or code snippet. For Mermaid diagrams, pass the mermaid source code as content and type=mermaid_svg. The result includes a download URL the user can open to save the file and inline markdown for chat rendering. Use this when the user wants to download a diagram, save generated content, or export a file.",
     parameters: {
       type: "object",
       properties: {
@@ -432,6 +433,20 @@ const tools = [
         title: { type: "string", description: "A short title for the file (used in the generated filename if fileName is not provided)." },
       },
       required: ["type", "content"],
+    },
+  },
+  {
+    type: "function",
+    name: "web_search",
+    description: "Search the web for current information using Tavily web search. Use this when the user asks for real-time information, recent news, documentation lookups, current events, prices, or any topic that requires up-to-date web content that may not be in the knowledge base. Returns up to 10 search results with titles, snippets, and links. For venue-specific queries from members, use sites='venues' to restrict to venue official sites. Admins can use sites='all' for unrestricted search.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query — what to look up on the web. Be specific for best results." },
+        numResults: { type: "number", description: "Optional: number of results to return (1-10, default 5)." },
+        sites: { type: "string", enum: ["all", "venues"], description: "Search scope: 'all' (unrestricted, default), or 'venues' (venue official sites only — use for member venue queries)." },
+      },
+      required: ["query"],
     },
   },
   {
@@ -673,8 +688,15 @@ async function executeTool(
       case "generate_file": {
         const { type, content, fileName, title } = JSON.parse(argsStr)
         const result = await generateFile({ type, content, fileName, title })
-        // Return a summary that includes the download URL
-        return `✅ File generated: ${result.fileName} (${result.fileSize} bytes)\nURL: ${result.url}\n\nThe Mermaid source is also included in this response as a \`\`\`mermaid code block that will render as a diagram in the chat.`
+        // Return the markdown-wrapped content for inline rendering.
+        // The chat client will render ```mermaid blocks as diagrams
+        // and the download link will be clickable.
+        return `${result.markdownContent}\n\n_File also available for download: ${result.url}_`
+      }
+
+      case "web_search": {
+        const { query, numResults, sites } = JSON.parse(argsStr)
+        return await googleSearch(query, numResults ?? 5, sites)
       }
 
       case "read_wiki_page": {
