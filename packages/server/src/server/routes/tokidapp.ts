@@ -1,3 +1,4 @@
+import { execSync } from "child_process"
 import { WebSocket, WebSocketServer } from "ws"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
@@ -20,7 +21,9 @@ import {
   getRealtimeSessionForUser,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
-import { getArchitectureDigest } from "../../plugins/tokidapp/concierge/codebase-tools"
+import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
+import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
+import { AGENT_REGISTRY, getCommandsByCategory } from "../../plugins/tokidapp/concierge/command-registry"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
 import {
   createApprovalRequest,
@@ -391,13 +394,50 @@ async function startVoiceRealtimeSession(
   if (!getRealtimeSession(sessionId)) {
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
 
-    // Fetch architecture knowledge base digest for prompt enrichment
-    // This preloads ecosystem context (entities, schema, contracts) into the voice session
-    const digest = await getArchitectureDigest().catch((err) => {
-      console.log("[voice-ws] architecture digest fetch failed:", (err as Error).message)
-      return ""
-    })
-    console.log("[voice-ws] architecture digest length:", digest?.length || 0, "chars")
+    // Fetch warm-cached architecture knowledge digest for prompt enrichment
+    // This preloads ecosystem context into the voice session from a shared,
+    // auto-refreshing cache — no API wait time for warm sessions.
+    const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({
+      digest: "",
+      fetchedAt: new Date(0).toISOString(),
+      isFresh: false,
+      age: 0,
+    }))
+    console.log(`[voice-ws] warm digest: ${digest?.length || 0} chars, fetched ${fetchedAt}, age ${age}s, fresh=${isFresh}`)
+
+    // Build enriched instructions with workspace state and session context
+    // This injects real-time project state so the voice assistant knows
+    // which branch, what's changed, and what's active right now.
+    const enrichedCtxParts: string[] = []
+
+    // Inject current workspace state (git branch, changes)
+    try {
+      const repoRoot = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+      const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
+        cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+      }).trim()
+      const changed = execSync("git status --porcelain 2>/dev/null | head -15", {
+        cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+      }).trim()
+      if (branch) enrichedCtxParts.push(`## Session Workspace State\n- Branch: ${branch}`)
+      if (changed) {
+        const fileCount = changed.split("\n").length
+        enrichedCtxParts.push(`- Uncommitted files: ${fileCount}`)
+      }
+    } catch { /* non-git workspace */ }
+
+    // Inject user context if available
+    if (userId) {
+      enrichedCtxParts.push(`- User: ${userId}`)
+    }
+    enrichedCtxParts.push(`- Cache age: ${age}s, fresh: ${isFresh}`)
+    enrichedCtxParts.push(`- Knowledge snapshot: ${fetchedAt}`)
+
+    const sessionContext = enrichedCtxParts.length > 0
+      ? `\n\n## Session Context\n${enrichedCtxParts.join("\n")}`
+      : ""
+
+    const enrichedInstructions = (digest || "") + sessionContext
 
     createRealtimeSession(
       sessionId,
@@ -415,7 +455,7 @@ async function startVoiceRealtimeSession(
       () => socketRef.send(JSON.stringify({ type: "voice_stream_complete" })),
       voice,
       userId,
-      digest || undefined,
+      enrichedInstructions || undefined,
       chatSessionId,
     )
   } else {
@@ -869,6 +909,96 @@ async function routeMessage(
   agentType?: string,
   dbSessionId?: string | null,
 ): Promise<void> {
+  // ── Command Parsing (@mentions, /commands, [directives], pipelines) ──
+  const parseResult = parseInput(content)
+  const resolvedActions = resolveActions(parseResult)
+  if (parseResult.hasCommands) {
+    console.log(`[routeMessage] Commands detected: ${formatParseSummary(parseResult)}`)
+
+    // Handle each resolved action
+    for (const action of resolvedActions) {
+      switch (action.actionType) {
+        case "route_to_agent":
+          // Route to specific agent with directive
+          if (action.targetAgent) {
+            const target = AGENT_REGISTRY.find(a => a.name === action.targetAgent)
+            const roleHint = target ? ` (${target.role})` : ""
+            send(JSON.stringify({
+              type: "tool_call",
+              id: `route-${action.targetAgent}`,
+              tool: `dispatch_${action.targetAgent}`,
+              status: "running",
+              summary: `Routing to @${action.targetAgent}${roleHint}...`,
+            }))
+            await handleAgentRouting(action.targetAgent, action.instruction || parseResult.cleanText, dbSessionId ?? null, send)
+            return
+          }
+          break
+
+        case "execute_command":
+          // Execute known slash commands
+          switch (action.commandName) {
+            case "test":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-test", tool: "run_tests", status: "running", summary: "Running tests..." }))
+              const testResult = await runTests(WORKSPACE_ROOT, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-test", tool: "run_tests", status: "complete", summary: testResult }))
+              return
+
+            case "deploy":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-deploy", tool: "trigger_deploy", status: "running", summary: "Deploying..." }))
+              const deployResult = await triggerVercelDeploy(WORKSPACE_ROOT, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-deploy", tool: "trigger_deploy", status: "complete", summary: deployResult }))
+              return
+
+            case "status":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-status", tool: "git_status", status: "running", summary: "Checking status..." }))
+              const statusResult = await gitStatus(WORKSPACE_ROOT)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-status", tool: "git_status", status: "complete", summary: statusResult }))
+              return
+
+            case "help":
+              const grouped = getCommandsByCategory()
+              const helpText = Object.entries(grouped)
+                .map(([cat, cmds]) => `**/${cat}**\n${cmds.map((c) => `  /${c.name} — ${c.description}`).join("\n")}`)
+                .join("\n\n")
+              send(JSON.stringify({ type: "message", content: `Available commands:\n\n${helpText}` }))
+              return
+
+            default:
+              // Unknown command — fall through to keyword routing
+              break
+          }
+          break
+
+        case "dispatch_directive":
+          // [A → B: action] syntax — route to target agent
+          if (action.targetAgent) {
+            send(JSON.stringify({
+              type: "tool_call",
+              id: `directive-${action.targetAgent}`,
+              tool: `dispatch_${action.targetAgent}`,
+              status: "running",
+              summary: `[→${action.targetAgent}]: ${action.instruction}`,
+            }))
+            await handleAgentRouting(action.targetAgent, action.instruction || "", dbSessionId ?? null, send)
+            return
+          }
+          break
+
+        case "run_pipeline":
+          // A | B | C syntax — execute steps sequentially
+          send(JSON.stringify({ type: "message", content: `Executing pipeline: ${action.pipelineSteps?.join(" → ")}` }))
+          for (const step of action.pipelineSteps || []) {
+            send(JSON.stringify({ type: "tool_call", id: `pipeline-${step}`, tool: "pipeline_step", status: "running", summary: `Step: ${step}` }))
+            // Recurse into routeMessage for each step
+            await routeMessage(step, send, undefined, undefined, undefined, dbSessionId)
+          }
+          return
+      }
+    }
+  }
+  // ── End Command Parsing ───────────────────────────────────
+
   // ── Agent-Aware Routing ───────────────────────────────────
   if (agentType) {
     await handleAgentRouting(agentType, content, dbSessionId ?? null, send)

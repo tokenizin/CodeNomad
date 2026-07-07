@@ -231,6 +231,97 @@ export async function getArchitectureDigest(): Promise<string> {
     }
   } catch { /* skip */ }
 
+  // 9. Active SCRs — recently approved or in-progress spec changes
+  try {
+    const scrsDir = path.resolve(KB, "docs/scrs")
+    if (fs.existsSync(scrsDir)) {
+      const scrFiles = fs.readdirSync(scrsDir)
+        .filter(f => f.endsWith(".md") && f !== "current.md" && f !== "done.md")
+        .sort()
+        .reverse()
+        .slice(0, 8)
+      if (scrFiles.length > 0) {
+        parts.push("\n## Recent Spec Change Requests (SCRs)")
+        for (const file of scrFiles) {
+          try {
+            const content = fs.readFileSync(path.join(scrsDir, file), "utf-8")
+            const title = content.match(/^# (.+)$/m)?.[1] || file.replace(".md", "")
+            const status = content.match(/status:\s*(\w+)/i)?.[1] || "unknown"
+            parts.push(`- ${file} — ${title} [${status}]`)
+          } catch { /* skip file */ }
+        }
+      }
+    }
+  } catch { /* skip */ }
+
+  // 10. Current active tasks from current.md
+  try {
+    const currentFile = path.resolve(KB, "tasks/current.md")
+    if (fs.existsSync(currentFile)) {
+      const content = fs.readFileSync(currentFile, "utf-8")
+      // Extract task entries (lines starting with - **TASK)
+      const taskLines: string[] = []
+      let inActive = false
+      for (const line of content.split("\n")) {
+        if (line.startsWith("## Active")) inActive = true
+        else if (line.startsWith("## ")) inActive = false
+        if (inActive && line.includes("**TASK")) {
+          taskLines.push(line.replace(/^-\s+/, "").replace(/\*\*/g, "").trim())
+        }
+      }
+      if (taskLines.length > 0) {
+        parts.push("\n## Active Tasks")
+        for (const t of taskLines.slice(0, 8)) {
+          parts.push(`- ${t}`)
+        }
+      }
+    }
+  } catch { /* skip */ }
+
+  // 11. Recent discussions
+  try {
+    const discDir = path.resolve(KB, "tasks/discussions")
+    if (fs.existsSync(discDir)) {
+      const discFiles = fs.readdirSync(discDir)
+        .filter(f => f.endsWith(".md"))
+        .sort()
+        .reverse()
+        .slice(0, 5)
+      if (discFiles.length > 0) {
+        parts.push("\n## Recent Discussions")
+        for (const file of discFiles) {
+          try {
+            const content = fs.readFileSync(path.join(discDir, file), "utf-8")
+            const title = content.match(/^# (.+)$/m)?.[1] || file.replace(".md", "")
+            parts.push(`- ${title}`)
+          } catch { /* skip */ }
+        }
+      }
+    }
+  } catch { /* skip */ }
+
+  // 12. Git workspace state — branch and uncommitted changes
+  try {
+    const gitDir = path.resolve(KB, ".git")
+    if (fs.existsSync(gitDir)) {
+      const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
+        cwd: KB, encoding: "utf-8", maxBuffer: 1024 * 16,
+      }).trim()
+      const changed = execSync("git status --porcelain 2>/dev/null | wc -l", {
+        cwd: KB, encoding: "utf-8", maxBuffer: 1024 * 16,
+      }).trim()
+      const ahead = execSync("git log --oneline @{u}..HEAD 2>/dev/null | wc -l", {
+        cwd: KB, encoding: "utf-8", maxBuffer: 1024 * 16,
+      }).trim()
+      if (branch) {
+        parts.push("\n## Workspace State")
+        parts.push(`- Branch: ${branch}`)
+        parts.push(`- Uncommitted files: ${changed || "0"}`)
+        if (ahead && ahead !== "0") parts.push(`- Commits ahead of remote: ${ahead}`)
+      }
+    }
+  } catch { /* skip */ }
+
   return parts.length > 0 ? parts.join("\n") : ""
 }
 

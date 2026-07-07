@@ -233,12 +233,23 @@ export function sanitizeAsrText(text: string): string {
   return out.replace(/\s{2,}/g, " ").trim()
 }
 
-/**
- * Voice instructions for GPT Realtime v2 (gpt-realtime-2).
- * Structured prompt following OpenAI's Realtime 2 prompting guide.
- * @see https://developers.openai.com/api/docs/guides/realtime-models-prompting
- */
-export const VOICE_INSTRUCTIONS = `# Role and Objective
+// ── File-backed Voice Instructions ─────────────────────────────
+//
+// VOICE_INSTRUCTIONS is the system prompt for the OpenAI Realtime voice assistant.
+// It can be configured via a markdown file at:
+//   CodeNomad/packages/server/config/voice-instructions.md
+//
+// If the file doesn't exist or can't be read, a hardcoded fallback is used.
+// This allows the prompt to be updated without recompiling the server.
+
+import * as fs from "fs"
+import * as path from "path"
+
+const VOICE_INSTRUCTIONS_FILE = path.resolve(
+  __dirname, "..", "..", "..", "..", "..", "config", "voice-instructions.md",
+)
+
+const HARDCODED_FALLBACK = `# Role and Objective
 You are Star World Assistant, the voice assistant for the StarCARD ecosystem. You help developers investigate code, generate features, run tests, manage git, deploy, and orchestrate multi-step workflows.
 
 # Personality and Tone
@@ -318,7 +329,7 @@ Resume normal responses only when the user clearly addresses you or asks for hel
 
 # Knowledge Base — PROACTIVE USE REQUIRED
 You have deep knowledge of the StarWORLD ecosystem loaded into your context. This includes:
-- 66 ZenStack data models (User, Session, Contract, Invoice, Venue, Membership, StarXP, etc.)
+- 66+ ZenStack data models (User, Session, Contract, Invoice, Venue, Membership, StarXP, etc.)
 - 135+ architecture entities (smart contracts, chains, venues, tokens, actors, infrastructure)
 - Solidity contracts (RevenuePool, DynamicSplitter, StarBridge, StarCard, SAFT, Membership, etc.)
 - Sepolia testnet deployments with contract addresses
@@ -470,3 +481,57 @@ You have access to web search (Tavily) via the \`web_search\` tool. Use it to fi
 - The \`web_search\` tool requires TAVILY_API_KEY environment variable to be configured
 - Get a free key at https://tavily.com, add it to .env, and restart the server
 - Do NOT fabricate search results — if you can't search the web, say so honestly`
+
+/**
+ * Voice instructions for GPT Realtime v2 (gpt-realtime-2).
+ * Structured prompt following OpenAI's Realtime 2 prompting guide.
+ *
+ * Loaded from config/voice-instructions.md if available. Falls back to
+ * a hardcoded fallback if the file does not exist or cannot be read.
+ *
+ * Uses `let` to support hot-reload via reloadVoiceInstructions().
+ * Importers get a live binding — changes to this value propagate to all consumers.
+ *
+ * @see https://developers.openai.com/api/docs/guides/realtime-models-prompting
+ */
+export let VOICE_INSTRUCTIONS: string = (() => {
+  try {
+    if (fs.existsSync(VOICE_INSTRUCTIONS_FILE)) {
+      const content = fs.readFileSync(VOICE_INSTRUCTIONS_FILE, "utf-8").trim()
+      if (content.length > 100) {
+        console.log(`[speech-sanitize] Loaded VOICE_INSTRUCTIONS from ${VOICE_INSTRUCTIONS_FILE} (${content.length} chars)`)
+        return content
+      }
+    }
+  } catch (err) {
+    console.warn(`[speech-sanitize] Could not load VOICE_INSTRUCTIONS from ${VOICE_INSTRUCTIONS_FILE}:`, (err as Error).message)
+  }
+  console.log(`[speech-sanitize] Using hardcoded VOICE_INSTRUCTIONS fallback (${HARDCODED_FALLBACK.length} chars)`)
+  return HARDCODED_FALLBACK
+})()
+
+/**
+ * Hot-reload VOICE_INSTRUCTIONS from disk.
+ * Call this to pick up changes to voice-instructions.md without restarting.
+ * Since `VOICE_INSTRUCTIONS` is a `let`, changes propagate to all importers
+ * that reference it as a live binding (ESM / compiled CommonJS).
+ *
+ * Returns true on successful reload, false otherwise.
+ */
+export function reloadVoiceInstructions(): boolean {
+  try {
+    if (fs.existsSync(VOICE_INSTRUCTIONS_FILE)) {
+      const content = fs.readFileSync(VOICE_INSTRUCTIONS_FILE, "utf-8").trim()
+      if (content.length > 100) {
+        VOICE_INSTRUCTIONS = content
+        console.log(`[speech-sanitize] Hot-reloaded VOICE_INSTRUCTIONS from ${VOICE_INSTRUCTIONS_FILE} (${content.length} chars)`)
+        return true
+      }
+    }
+    console.warn(`[speech-sanitize] Hot-reload failed: ${VOICE_INSTRUCTIONS_FILE} not found or too short`)
+    return false
+  } catch (err) {
+    console.error(`[speech-sanitize] Hot-reload error:`, (err as Error).message)
+    return false
+  }
+}

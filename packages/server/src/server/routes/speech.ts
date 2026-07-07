@@ -1,6 +1,13 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { SpeechService } from "../../speech/service"
+import {
+  getDigest as getSharedDigest,
+  forceRefresh as forceDigestRefresh,
+  getCacheAge,
+  isCacheWarm,
+  getRefreshInterval,
+} from "../../plugins/tokidapp/concierge/knowledge-cache"
 
 interface RouteDeps {
   speechService: SpeechService
@@ -69,6 +76,40 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
       request.log.error({ err: error }, "Failed to stream synthesized audio")
       reply.code(getSpeechErrorStatus(error))
       return { error: getSpeechErrorMessage(error, "Failed to stream synthesized audio") }
+    }
+  })
+
+  /**
+   * Knowledge Cache endpoint — shared between Path A (Speech REST) and
+   * Path B (Realtime WS). Returns the current warm cache status and the
+   * cached digest text, ensuring both paths use the same knowledge snapshot.
+   */
+  app.get("/api/speech/knowledge", async () => {
+    const { digest, fetchedAt, isFresh, age } = await getSharedDigest()
+    return {
+      digest,
+      cachedAt: fetchedAt,
+      isFresh,
+      ageSeconds: age,
+      cacheWarm: isCacheWarm(),
+      refreshIntervalMs: getRefreshInterval(),
+    }
+  })
+
+  /**
+   * Force refresh the shared knowledge cache.
+   * Useful after significant project state changes (SCR approval, deploy).
+   */
+  app.post("/api/speech/knowledge/refresh", async () => {
+    await forceDigestRefresh()
+    const { digest, fetchedAt, isFresh, age } = await getSharedDigest()
+    return {
+      status: "refreshed",
+      digest,
+      cachedAt: fetchedAt,
+      isFresh,
+      ageSeconds: age,
+      cacheWarm: isCacheWarm(),
     }
   })
 }

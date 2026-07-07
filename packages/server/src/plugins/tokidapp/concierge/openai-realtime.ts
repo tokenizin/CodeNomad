@@ -42,6 +42,7 @@ import {
   suggestRepairLinks,
 } from "./codebase-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
+import { parseInput, resolveActions, formatParseSummary } from "./commands-router"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
@@ -125,6 +126,18 @@ const tools = [
     name: "wait_for_user",
     description: "Call when audio is silence, background noise, or speech not addressed to you. Ends the turn without a spoken reply.",
     parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
+    name: "parse_commands",
+    description: "Parse user input for commands, @agent mentions, [A→B: directives], pipeline syntax (A|B|C), and #tags. Returns structured interpretations you can act on. Call this FIRST when the user uses /commands, @mentions, [brackets], pipes, or any structured syntax. Do NOT guess what a command means — let this tool tell you.",
+    parameters: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "The full raw user input text to parse for commands" },
+      },
+      required: ["input"],
+    },
   },
   {
     type: "function",
@@ -697,6 +710,27 @@ async function executeTool(
       case "web_search": {
         const { query, numResults, sites } = JSON.parse(argsStr)
         return await googleSearch(query, numResults ?? 5, sites)
+      }
+
+      case "parse_commands": {
+        const { input } = JSON.parse(argsStr)
+        const parseResult = parseInput(input)
+        const actions = resolveActions(parseResult)
+        return JSON.stringify({
+          summary: formatParseSummary(parseResult),
+          hasCommands: parseResult.hasCommands,
+          tags: parseResult.tags,
+          cleanText: parseResult.cleanText,
+          actions: actions.map((a) => ({
+            actionType: a.actionType,
+            targetAgent: a.targetAgent,
+            commandName: a.commandName,
+            commandArgs: a.commandArgs,
+            instruction: a.instruction,
+            confidence: a.confidence,
+            requiresConfirmation: a.requiresConfirmation,
+          })),
+        }, null, 2)
       }
 
       case "read_wiki_page": {
