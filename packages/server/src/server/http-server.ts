@@ -285,7 +285,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/quick-login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/tokidapp/status", "/api/tokidapp/files/proxy", "/api/client-connections/pong"])
-    const publicApiPrefixes = ["/api/tokidapp/files/local/"]
+    const publicApiPrefixes = ["/api/tokidapp/files/local/", "/api/tokidapp/files/generated/"]
     const publicPagePaths = new Set(["/login", "/auth/starguard"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")

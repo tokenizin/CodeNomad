@@ -1,0 +1,30 @@
+graph TD
+    Users --> Portal
+    Users --> TokiDAPP
+    Portal --> SmartContracts
+    SmartContracts --> RevenuePool
+    RevenuePool --> DynamicSplitter
+    DynamicSplitter --> Stakeholders
+    VenueSystems --> RevenuePool
+    StarBridge --> EthereumSepolia
+    StarBridge --> BSC
+    StarBridge --> StarCHAIN
+    RewardDistributor --> Users
+    NomadWorks --> SDLC
+    Monitoring --> SmartContracts
+    Monitoring --> Infrastructure
+
+    classDef users fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef portal fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef contracts fill:#fbf,stroke:#333,stroke-width:2px;
+    classDef revenue fill:#ffb,stroke:#333,stroke-width:2px;
+    classDef bridge fill:#bfb,stroke:#333,stroke-width:2px;
+    classDef monitoring fill:#fff,stroke:#333,stroke-width:2px;
+
+    class Users users;
+    class Portal portal;
+    class SmartContracts contracts;
+    class RevenuePool revenue;
+    class DynamicSplitter revenue;
+    class StarBridge bridge;
+    class Monitoring monitoring;

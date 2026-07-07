@@ -1203,8 +1203,12 @@ export async function generateMermaidDiagram(
 
 // ── File Generation ─────────────────────────────────────────
 
-const GENERATED_FILES_DIR = path.resolve(process.cwd(), "public/generated")
-const GENERATED_FILES_BASE = "/generated"
+// Server public/generated directory — resolved relative to this file's location
+// so it works regardless of process.cwd()
+// Source: packages/server/src/plugins/tokidapp/concierge/codebase-tools.ts
+// 6 levels up → packages/ (root of CodeNomad monorepo)
+const CODENOMAD_ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..", "..", "..")
+const GENERATED_FILES_DIR = path.resolve(CODENOMAD_ROOT, "public", "generated")
 
 /** Generate a downloadable file from Mermaid source or other content.
  *
@@ -1270,7 +1274,7 @@ export async function generateFile(options: {
   const filePath = path.join(GENERATED_FILES_DIR, fileName)
   fs.writeFileSync(filePath, fileContent, "utf-8")
 
-  const url = `${GENERATED_FILES_BASE}/${fileName}`
+  const url = `/api/tokidapp/files/generated/${fileName}`
   const stat = fs.statSync(filePath)
 
   return {
