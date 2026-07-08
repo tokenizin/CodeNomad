@@ -593,6 +593,32 @@ const tools = [
       required: ["notePath"],
     },
   },
+  // ── Builder Framework Tools ──────────────────────────────────
+  {
+    type: "function",
+    name: "create_ui",
+    description: "Generate structured UI components using the Builder Framework. Returns a uiResource that renders as MUI components in the chat. Use when the user asks to create a dashboard, card, table, chart, or any visual UI.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Optional title for the UI" },
+        layout: { type: "string", enum: ["pageShell", "pageSection", "dashboardGrid"], description: "Layout wrapper component" },
+        components: {
+          type: "array",
+          description: "Array of component references to render",
+          items: {
+            type: "object",
+            properties: {
+              component: { type: "string", description: "Component name (e.g., summaryCard, metricCard, infoRow, statusChip, dataTable, chart, timeline)" },
+              props: { type: "object", description: "Component props" },
+            },
+            required: ["component", "props"],
+          },
+        },
+      },
+      required: ["layout", "components"],
+    },
+  },
   // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────────
   ...voiceOrchestratorToolDefinitions,
 ]
@@ -645,6 +671,21 @@ async function executeTool(
 
       case "trigger_deploy": {
         return await triggerVercelDeploy(config.workspaceRoot)
+      }
+
+      case "create_ui": {
+        const { title, layout, components } = JSON.parse(argsStr)
+        // Build the BuilderOutput JSON that the frontend will render
+        const builderOutput = {
+          layout: layout || "pageShell",
+          components: components || [],
+        }
+        // Return the BuilderOutput as a JSON string that will be wrapped in uiResource
+        return JSON.stringify({
+          type: "builder",
+          title: title || "Generated UI",
+          content: builderOutput,
+        })
       }
 
       case "check_deploy_status": {
@@ -1333,6 +1374,29 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             sessionId: session.sessionId,
             sendFn: (msg: string) => ws.send(msg),
           })
+
+          // Send tool_result to frontend for UI rendering (supports uiResource)
+          // This allows the frontend to render Builder Framework UI components
+          try {
+            const parsedResult = JSON.parse(result)
+            if (parsedResult.type === "builder" && parsedResult.content) {
+              // Send a tool_result message with uiResource for the Builder Framework
+              ws.send(JSON.stringify({
+                type: "tool_result",
+                id: parsed.call_id || `voice-${Date.now()}`,
+                tool: toolName,
+                status: "complete",
+                summary: parsedResult.title || "Generated UI",
+                uiResource: {
+                  type: "builder",
+                  content: JSON.stringify(parsedResult.content),
+                  title: parsedResult.title,
+                },
+              }))
+            }
+          } catch {
+            // Not JSON or not a builder result — continue with normal flow
+          }
 
           ws.send(
             JSON.stringify({

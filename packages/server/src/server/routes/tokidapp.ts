@@ -221,6 +221,24 @@ function normalizeInjectionAttachments(raw: unknown): InjectionAttachment[] {
   return raw.filter(isInjectionAttachment)
 }
 
+/** Emit a tool_result with optional UI resource (generative UI). */
+function sendToolResultWithUI(
+  send: (msg: string) => void,
+  id: string,
+  tool: string,
+  summary: string,
+  uiResource?: { type: string; content: string; title?: string; height?: number },
+) {
+  send(JSON.stringify({
+    type: "tool_result",
+    id,
+    tool,
+    status: "complete",
+    summary,
+    ...(uiResource ? { uiResource } : {}),
+  }))
+}
+
 /** Extract per-file extracted text blocks from a file-attachment context message.
  *  Content format: `[fileName (mimeType)]:\n<extracted text>` */
 export function extractFileTexts(content: string): Record<string, string> {
