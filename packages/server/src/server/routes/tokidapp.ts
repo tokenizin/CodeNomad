@@ -475,6 +475,7 @@ async function startVoiceRealtimeSession(
       userId,
       enrichedInstructions || undefined,
       chatSessionId,
+      (msg: string) => socketRef.send(msg),
     )
   } else {
     console.log("[voice-ws] existing session found, calling notifyReady directly")

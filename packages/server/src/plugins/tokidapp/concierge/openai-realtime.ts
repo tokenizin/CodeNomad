@@ -122,6 +122,9 @@ interface RealtimeSession {
   pendingResponseQueue: Array<() => void>
   /** Collected user+assistant transcript lines for post-session wiki update */
   transcript: string[]
+  /** Send a message to the frontend client WebSocket (not the OpenAI WS).
+   *  Used for tool_result, clickflow prompts, and other client-destined messages. */
+  sendToClient?: (msg: string) => void
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -1113,6 +1116,8 @@ export function createRealtimeSession(
   enrichedInstructions?: string,
   /** StarWorld / chat-html DB session — greeting plays once per this id. */
   chatSessionId?: string,
+  /** Send a message to the frontend client WebSocket (not the OpenAI WS). */
+  sendToClient?: (msg: string) => void,
 ): RealtimeSession {
   console.log("[openai-realtime] createRealtimeSession sessionId:", sessionId, "hasKey:", !!OPENAI_API_KEY, "keyPrefix:", OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 8) + "..." : "none")
   if (!OPENAI_API_KEY) {
@@ -1161,6 +1166,7 @@ export function createRealtimeSession(
     responseInProgress: false,
     pendingResponseQueue: [],
     transcript: [],
+    sendToClient,
   }
 
   /** Send response.create, guarding against concurrent responses */
@@ -1376,12 +1382,28 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             cancelCurrentResponse()
           }
 
-          const result = await executeTool(toolName, args, {
-            workspaceRoot: WORKSPACE_ROOT,
-            starguardBase: STARGUARD_BASE,
-            sessionId: session.sessionId,
-            sendFn: (msg: string) => ws.send(msg),
-          })
+          const TOOL_TIMEOUT_MS = 30_000
+          const result = await Promise.race([
+            executeTool(toolName, args, {
+              workspaceRoot: WORKSPACE_ROOT,
+              starguardBase: STARGUARD_BASE,
+              sessionId: session.sessionId,
+              sendFn: (msg: string) => session.sendToClient?.(msg),
+            }),
+            new Promise<string>((resolve) =>
+              setTimeout(
+                () =>
+                  resolve(
+                    JSON.stringify({
+                      error: true,
+                      type: "timeout",
+                      message: `Tool "${toolName}" timed out after ${TOOL_TIMEOUT_MS / 1000}s. The database or external service may be slow — please retry or simplify the request.`,
+                    }),
+                  ),
+                TOOL_TIMEOUT_MS,
+              ),
+            ),
+          ])
 
           // Extract tool result text and generatedFiles metadata from structured JSON.
           // Structured results (builder, generate_file) carry extra info beyond the text.
@@ -1393,7 +1415,7 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             const parsedResult = JSON.parse(result)
             if (parsedResult.type === "builder" && parsedResult.content) {
               // Send a tool_result message with uiResource for the Builder Framework
-              ws.send(JSON.stringify({
+              session.sendToClient?.(JSON.stringify({
                 type: "tool_result",
                 id: parsed.call_id || `voice-${Date.now()}`,
                 tool: toolName,
@@ -1414,7 +1436,7 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
                 mimeType: parsedResult.mimeType || "text/plain",
               }]
               // Send a tool_result message with generatedFiles for DownloadableAttachment rendering
-              ws.send(JSON.stringify({
+              session.sendToClient?.(JSON.stringify({
                 type: "tool_result",
                 id: parsed.call_id || `voice-${Date.now()}`,
                 tool: toolName,

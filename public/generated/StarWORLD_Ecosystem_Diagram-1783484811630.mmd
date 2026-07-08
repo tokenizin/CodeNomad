@@ -1,0 +1,23 @@
+graph TD
+    A[Users] -->|interact with| B[Portal]
+    B -->|uses| C[Membership]
+    B -->|uses| D[Invoice]
+    B -->|uses| E[Session]
+    B -->|orchestrated by| F[NomadWorks]
+    F -->|connects to| G[TokiDAPP AI Concierge]
+    
+    B -->|interacts with| H[Smart Contracts Cluster]
+    H --> I[StarCard]
+    H --> J[RevenuePool]
+    H --> K[DynamicSplitter]
+    H --> L[StarBridge]
+    H --> M[STARX Token]
+    H --> N[RewardDistributor]
+
+    J -->|purchases flow into| K
+    K -->|payouts to| O[Stakeholders]
+    
+    N -->|StarXP rewards to| A
+
+    L -->|connects| P[Ethereum Sepolia]
+    L -->|connects| Q[BSC]

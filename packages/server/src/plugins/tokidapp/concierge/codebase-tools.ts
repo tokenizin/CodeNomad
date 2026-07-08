@@ -1193,6 +1193,7 @@ export async function visionAnalyze(imageUrl: string, prompt?: string): Promise<
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
@@ -1245,6 +1246,7 @@ export async function generateMermaidDiagram(
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
@@ -1753,7 +1755,9 @@ export async function searchObsidianVault(query: string): Promise<string> {
   if (!query?.trim()) return "Please provide a search term."
 
   try {
-    const res = await fetch(`http://127.0.0.1:5100/vault/search/${encodeURIComponent(query.trim())}`)
+    const res = await fetch(`http://127.0.0.1:5100/vault/search/${encodeURIComponent(query.trim())}`, {
+      signal: AbortSignal.timeout(15_000),
+    })
     if (!res.ok) {
       if (res.status === 404) return `No Obsidian vault pages found matching: ${query}`
       return `Obsidian vault search unavailable (MCP server returned ${res.status}).`
@@ -1779,7 +1783,9 @@ export async function readObsidianNote(notePath: string): Promise<string> {
   if (!notePath?.trim()) return "Please provide a note path (e.g. Dashboard/Live-Context/Live-Context.md)."
 
   try {
-    const res = await fetch(`http://127.0.0.1:5100/vault/${encodeURIComponent(notePath.trim())}`)
+    const res = await fetch(`http://127.0.0.1:5100/vault/${encodeURIComponent(notePath.trim())}`, {
+      signal: AbortSignal.timeout(15_000),
+    })
     if (!res.ok) {
       if (res.status === 404) return `Obsidian note not found: ${notePath}`
       return `Could not read Obsidian note (MCP server returned ${res.status}).`

@@ -1,0 +1,71 @@
+graph TD
+    subgraph StarCARD Architecture Vault
+        A1[Contracts]
+        A2[Chains]
+        A3[Venues]
+        A4[Tokens]
+        A5[Actors]
+        A6[Workflows]
+    end
+
+    subgraph Project Intelligence
+        B1[Security]
+        B2[Signing]
+        B3[Voice]
+        B4[ORM]
+        B5[State Management]
+        B6[Deployments]
+        B7[Agent Workflows]
+    end
+
+    subgraph Ecosystem Architecture
+        C1[Users]
+        C2[Portal]
+        C3[Contracts]
+        C4[AI Agents]
+        C5[Blockchain]
+        C6[Infrastructure]
+        C7[Rewards]
+    end
+
+    subgraph Obsidian Vault
+        D1[Planning Docs]
+        D2[Strategy Briefs]
+        D3[Membership Models]
+        D4[Marketing Plans]
+        D5[Meeting Notes]
+    end
+
+    subgraph Core System Components
+        E1[Sepolia Deployments]
+        E2[Multi-chain Layer]
+        E3[RevenuePool]
+        E4[DynamicSplitter]
+        E5[StarBridge]
+        E6[Membership System]
+        E7[StarXP Rewards]
+        E8[TokiDAPP Concierge]
+        E9[NomadWorks Orchestration]
+        E10[ZenStack Data Models]
+    end
+
+    C2 -->|connects to| E8
+    C3 -->|connects to| A2
+    E3 -->|flows to| E4
+    E5 -->|connects| A2
+    E10 -->|supports| C2
+    E10 -->|supports| E1
+    B1 -->|informs| B6
+    D1 -->|informs| D2
+    A1 -->|canonical source| A2
+    A1 -->|connects to| A3
+    A1 -->|connects to| A4
+    A1 -->|connects to| A5
+    A1 -->|connects to| A6
+    B2 -->|informs| B7
+    B3 -->|informs| B4
+    B5 -->|informs| B6
+    C1 -->|connects to| C4
+    C1 -->|connects to| C5
+    C1 -->|connects to| C6
+    C1 -->|connects to| C7
