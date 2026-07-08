@@ -755,11 +755,19 @@ async function executeTool(
 
       case "generate_file": {
         const { type, content, fileName, title } = JSON.parse(argsStr)
-        const result = await generateFile({ type, content, fileName, title })
-        // Return the markdown-wrapped content for inline rendering.
-        // The chat client will render ```mermaid blocks as diagrams
-        // and the download link will be clickable.
-        return `${result.markdownContent}\n\n_File also available for download: ${result.url}_`
+        const fileResult = await generateFile({ type, content, fileName, title })
+        // Return structured JSON so the tool result handler can extract
+        // file metadata and send a dedicated tool_result WS message with
+        // generatedFiles for DownloadableAttachment rendering.
+        return JSON.stringify({
+          type: "generate_file_result",
+          url: fileResult.url,
+          fileName: fileResult.fileName,
+          fileSize: fileResult.fileSize,
+          mimeType: fileResult.mimeType,
+          markdownContent: fileResult.markdownContent,
+          text: `${fileResult.markdownContent}\n\n_File also available for download: ${fileResult.url}_`,
+        })
       }
 
       case "web_search": {
@@ -1375,8 +1383,12 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             sendFn: (msg: string) => ws.send(msg),
           })
 
-          // Send tool_result to frontend for UI rendering (supports uiResource)
-          // This allows the frontend to render Builder Framework UI components
+          // Extract tool result text and generatedFiles metadata from structured JSON.
+          // Structured results (builder, generate_file) carry extra info beyond the text.
+          let toolResultText = result
+          let generatedFiles: Array<{ url: string; fileName: string; fileSize: number; mimeType: string }> | undefined
+
+          // Send tool_result to frontend for UI rendering (supports uiResource, generatedFiles)
           try {
             const parsedResult = JSON.parse(result)
             if (parsedResult.type === "builder" && parsedResult.content) {
@@ -1393,9 +1405,26 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
                   title: parsedResult.title,
                 },
               }))
+            } else if (parsedResult.type === "generate_file_result") {
+              toolResultText = parsedResult.text
+              generatedFiles = [{
+                url: parsedResult.url,
+                fileName: parsedResult.fileName,
+                fileSize: parsedResult.fileSize || 0,
+                mimeType: parsedResult.mimeType || "text/plain",
+              }]
+              // Send a tool_result message with generatedFiles for DownloadableAttachment rendering
+              ws.send(JSON.stringify({
+                type: "tool_result",
+                id: parsed.call_id || `voice-${Date.now()}`,
+                tool: toolName,
+                status: "complete",
+                summary: `Generated file: ${parsedResult.fileName}`,
+                generatedFiles,
+              }))
             }
           } catch {
-            // Not JSON or not a builder result — continue with normal flow
+            // Not JSON or not a structured result — continue with normal flow
           }
 
           ws.send(
@@ -1404,7 +1433,7 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
               item: {
                 type: "function_call_output",
                 call_id: parsed.call_id,
-                output: result,
+                output: toolResultText,
               },
             }),
           )

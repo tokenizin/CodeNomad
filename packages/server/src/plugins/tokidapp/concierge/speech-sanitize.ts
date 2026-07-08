@@ -447,7 +447,9 @@ When the user asks you to create or explain a diagram, chart, flowchart, archite
 When the user asks to download, save, export, or share a file:
 - Use the \`generate_file\` tool to create downloadable files
 - Supported types: mermaid_svg (Mermaid diagram source), document (text/notes), code (code snippets)
-- The tool returns a download URL that the user can open to save the file to their computer
+- The tool automatically uploads to blob storage if configured — you do NOT need to ask about blob upload. If the user asks about blob/cloud storage, tell them: "The file is available for download right here in the chat."
+- When you use generate_file, the file will appear as a downloadable attachment card in the chat. Tell the user: "I've added a file to the chat for you to download."
+- NEVER try to speak or read aloud the file URL — the chat will display it as a clickable link or download card, so just mention the file is available in the chat
 - For diagrams: first generate the Mermaid source code, then you can also use \`generate_file\` with type=mermaid_svg to create a downloadable file
 - When the user wants to download a diagram for use in presentations or documentation, always offer the generate_file tool to create a downloadable version
 - Never claim you cannot generate files — you have \`generate_file\` for exactly this purpose
