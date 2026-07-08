@@ -41,6 +41,17 @@ import {
   getWikiHealth,
   suggestRepairLinks,
 } from "./codebase-tools"
+import {
+  createTask,
+  checkTaskStatus,
+  voiceAskUserPickOne,
+  voiceAskUserConfirm,
+  delegateToAgent,
+  createLinearChain,
+  requestApproval,
+  findRepoRoot,
+  voiceOrchestratorToolDefinitions,
+} from "./voice-orchestrator-tools"
 import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { parseInput, resolveActions, formatParseSummary } from "./commands-router"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
@@ -582,6 +593,8 @@ const tools = [
       required: ["notePath"],
     },
   },
+  // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────────
+  ...voiceOrchestratorToolDefinitions,
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -593,6 +606,7 @@ async function executeTool(
     workspaceRoot: string
     starguardBase: string
     sessionId?: string  // e.g. "voice_<userId>" — used for progress callbacks
+    sendFn?: (msg: string) => void  // For ClickFlow tools that need to send WS messages to client
   },
 ): Promise<string> {
   try {
@@ -951,6 +965,54 @@ async function executeTool(
         return `NomadWorks task created: ${result.taskId} (${agentType}, ${complexity}). Task file: ${result.taskFilePath}. Evidence will appear in the Evidence Browser and Causal tabs once the task is completed.`
       }
 
+      // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────
+
+      case "create_task": {
+        const params = JSON.parse(argsStr)
+        const repoRoot = findRepoRoot(config.workspaceRoot)
+        const result = await createTask(params, repoRoot)
+        return JSON.stringify(result)
+      }
+
+      case "check_task_status": {
+        const { taskId } = JSON.parse(argsStr)
+        const repoRoot = findRepoRoot(config.workspaceRoot)
+        const result = await checkTaskStatus(taskId, repoRoot)
+        return JSON.stringify(result)
+      }
+
+      case "ask_user_pick_one": {
+        const params = JSON.parse(argsStr)
+        if (!config.sendFn) return JSON.stringify({ status: "error", message: "No send function available" })
+        return await voiceAskUserPickOne(params, config.sendFn)
+      }
+
+      case "ask_user_confirm": {
+        const params = JSON.parse(argsStr)
+        if (!config.sendFn) return JSON.stringify({ status: "error", message: "No send function available" })
+        return await voiceAskUserConfirm(params, config.sendFn)
+      }
+
+      case "delegate_to_agent": {
+        const params = JSON.parse(argsStr)
+        const repoRoot = findRepoRoot(config.workspaceRoot)
+        const result = await delegateToAgent(params, repoRoot, config.starguardBase)
+        return JSON.stringify(result)
+      }
+
+      case "create_linear_chain": {
+        const { intent } = JSON.parse(argsStr)
+        const result = createLinearChain({ intent })
+        return JSON.stringify(result)
+      }
+
+      case "request_approval": {
+        const params = JSON.parse(argsStr)
+        if (!config.sendFn) return JSON.stringify({ status: "error", message: "No send function available" })
+        const result = await requestApproval(params, config.sendFn)
+        return JSON.stringify(result)
+      }
+
       default:
         return `Unknown tool: ${name}`
     }
@@ -1269,6 +1331,7 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             workspaceRoot: WORKSPACE_ROOT,
             starguardBase: STARGUARD_BASE,
             sessionId: session.sessionId,
+            sendFn: (msg: string) => ws.send(msg),
           })
 
           ws.send(
