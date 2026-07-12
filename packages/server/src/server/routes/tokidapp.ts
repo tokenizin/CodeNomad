@@ -20,6 +20,13 @@ import {
   ensureSingleUserSession,
   getRealtimeSessionForUser,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
+import {
+  createDeepgramSession,
+  getDeepgramSession,
+  endDeepgramSession,
+  hasActiveDeepgramSession,
+  preSessionAudio as deepgramPreSessionAudio,
+} from "../../plugins/tokidapp/concierge/deepgram-realtime"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
@@ -101,6 +108,15 @@ import { apiPost } from "../../plugins/tokidapp/orchestrator/starguard-client"
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
+
+/** Voice engine selection — 'openai' (default, backward-compatible) or 'deepgram'. */
+type VoiceEngine = "openai" | "deepgram"
+const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram"])
+
+function parseVoiceEngine(raw: unknown): VoiceEngine {
+  if (typeof raw === "string" && VALID_ENGINES.has(raw)) return raw as VoiceEngine
+  return "openai"
+}
 
 /** Public tunnel URL for constructing blob proxy URLs that OpenAI can fetch.
  *  The tunnel has the blob proxy route and doesn't require JWT auth. */
@@ -483,6 +499,91 @@ async function startVoiceRealtimeSession(
   }
 }
 
+/** Start a Deepgram voice session (Nova-3 STT + Aura-2 TTS + Ollama LLM). */
+async function startDeepgramVoiceSession(
+  sessionId: string,
+  requestedVoice: unknown,
+  socketRef: { send: (msg: string) => void },
+  chatSessionId?: string,
+) {
+  console.log("[voice-ws] startDeepgramVoiceSession sessionId:", sessionId, "voice:", requestedVoice)
+
+  const notifyReady = () => {
+    console.log("[voice-ws] Deepgram session ready — sending voice_ready to client")
+    socketRef.send(JSON.stringify({ type: "voice_ready", voice: requestedVoice || "aura-asteria-en", engine: "deepgram" }))
+  }
+
+  // End any existing session for this user first
+  ensureSingleUserSession(sessionId)
+
+  // Check if an existing Deepgram session is already active
+  const existing = getDeepgramSession(sessionId)
+  if (existing?.connected) {
+    console.log("[voice-ws] existing Deepgram session found, calling notifyReady directly")
+    notifyReady()
+    return
+  }
+
+  // Extract userId from sessionId (format: "voice_${userId}")
+  const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
+
+  // Fetch warm-cached architecture knowledge digest for prompt enrichment
+  const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({
+    digest: "",
+    fetchedAt: new Date(0).toISOString(),
+    isFresh: false,
+    age: 0,
+  }))
+  console.log(`[voice-ws] Deepgram warm digest: ${digest?.length || 0} chars, age ${age}s, fresh=${isFresh}`)
+
+  // Build enriched instructions
+  const enrichedCtxParts: string[] = []
+  try {
+    const repoRoot = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+    const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
+      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+    }).trim()
+    const changed = execSync("git status --porcelain 2>/dev/null | head -15", {
+      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+    }).trim()
+    if (branch) enrichedCtxParts.push(`## Session Workspace State\n- Branch: ${branch}`)
+    if (changed) {
+      const fileCount = changed.split("\n").length
+      enrichedCtxParts.push(`- Uncommitted files: ${fileCount}`)
+    }
+  } catch { /* non-git workspace */ }
+
+  if (userId) enrichedCtxParts.push(`- User: ${userId}`)
+  enrichedCtxParts.push(`- Cache age: ${age}s, fresh: ${isFresh}`)
+  enrichedCtxParts.push(`- Knowledge snapshot: ${fetchedAt}`)
+
+  const sessionContext = enrichedCtxParts.length > 0
+    ? `\n\n## Session Context\n${enrichedCtxParts.join("\n")}`
+    : ""
+
+  const enrichedInstructions = (digest || "") + sessionContext
+
+  // Create Deepgram session
+  createDeepgramSession({
+    sessionId,
+    onAudioDelta: (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
+    onTextDelta: (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
+    onError: (error) => {
+      console.log("[voice-ws] Deepgram error:", error)
+      socketRef.send(JSON.stringify({ type: "error", content: error }))
+    },
+    onReady: notifyReady,
+    onUserTranscript: (transcript) =>
+      socketRef.send(JSON.stringify({ type: "user_transcript", content: transcript })),
+    onResponseDone: () => socketRef.send(JSON.stringify({ type: "voice_stream_complete" })),
+    voice: typeof requestedVoice === "string" ? requestedVoice as any : undefined,
+    userId,
+    enrichedInstructions: enrichedInstructions || undefined,
+    chatSessionId,
+    sendToClient: (msg: string) => socketRef.send(msg),
+  })
+}
+
 const voiceSockets = new Map<string, VoiceRealtimeSocket>()
 
 function attachVoiceSocket(ws: WebSocket, userId: string) {
@@ -500,6 +601,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
+  let activeEngine: VoiceEngine = "openai"
 
   const cleanup = () => {
     voiceSockets.delete(sessionId)
@@ -511,6 +613,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
+    endDeepgramSession(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {
@@ -528,31 +631,52 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "cancel") {
-        // Cancel the in-progress OpenAI Realtime response
-        const sess = getRealtimeSession(sessionId)
-        if (sess?.connected && sess.responseInProgress) {
-          sess.ws.send(JSON.stringify({ type: "response.cancel" }))
-          sess.responseInProgress = false
-          // Drain queued responses
-          const next = sess.pendingResponseQueue.shift()
-          if (next) next()
+        // Cancel the in-progress response on the active engine
+        if (activeEngine === "deepgram") {
+          const dgSession = getDeepgramSession(sessionId)
+          if (dgSession?.connected && dgSession.responseInProgress) {
+            dgSession.responseInProgress = false
+          }
+        } else {
+          const sess = getRealtimeSession(sessionId)
+          if (sess?.connected && sess.responseInProgress) {
+            sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+            sess.responseInProgress = false
+            // Drain queued responses
+            const next = sess.pendingResponseQueue.shift()
+            if (next) next()
+          }
         }
         socketRef.send(JSON.stringify({ type: "voice_cancelled" }))
         return
       }
 
       if (msg.type === "voice_start") {
-        console.log("[voice-ws] voice_start received, REALTIME_ENABLED:", REALTIME_ENABLED)
-        if (REALTIME_ENABLED) {
-          startVoiceRealtimeSession(
+        const engine = parseVoiceEngine(msg.engine)
+        console.log("[voice-ws] voice_start received, engine:", engine, "REALTIME_ENABLED:", REALTIME_ENABLED)
+        activeEngine = engine
+
+        if (engine === "deepgram") {
+          // Deepgram engine — requires DEEPGRAM_ENABLED=true + DEEPGRAM_API_KEY
+          startDeepgramVoiceSession(
             sessionId,
             msg.voice,
             socketRef,
             typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
           )
         } else {
-          console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
-          socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+          // OpenAI Realtime engine (default, backward-compatible)
+          if (REALTIME_ENABLED) {
+            startVoiceRealtimeSession(
+              sessionId,
+              msg.voice,
+              socketRef,
+              typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+            )
+          } else {
+            console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
+            socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+          }
         }
         return
       }
@@ -570,13 +694,20 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         // Barge-in: cancel the current assistant response so the user can
         // interrupt mid-speech. Clear the audio buffer to discard any
         // residual playback capture.
-        const sess = getRealtimeSession(sessionId)
-        if (sess && sess.responseInProgress) {
-          sess.ws.send(JSON.stringify({ type: "response.cancel" }))
-          sess.responseInProgress = false
-          // Drain any queued responses
-          const next = sess.pendingResponseQueue.shift()
-          if (next) next()
+        if (activeEngine === "deepgram") {
+          const dgSession = getDeepgramSession(sessionId)
+          if (dgSession?.connected && dgSession.responseInProgress) {
+            dgSession.responseInProgress = false
+          }
+        } else {
+          const sess = getRealtimeSession(sessionId)
+          if (sess && sess.responseInProgress) {
+            sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+            sess.responseInProgress = false
+            // Drain any queued responses
+            const next = sess.pendingResponseQueue.shift()
+            if (next) next()
+          }
         }
         clearAudioBuffer(sessionId)
         console.log("[voice-ws] voice_interrupt — cancelled assistant response")
@@ -585,30 +716,61 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "voice_stop") {
-        if (hasEnoughInputAudio(sessionId)) {
-          commitAudioBuffer(sessionId)
+        if (activeEngine === "deepgram") {
+          // Deepgram: send audio via pre-session buffer or direct session
+          const dgSession = getDeepgramSession(sessionId)
+          if (dgSession?.connected) {
+            // Session is live — flush any pre-session audio
+            const pending = deepgramPreSessionAudio.drain(sessionId)
+            for (const chunk of pending) {
+              (dgSession as any).sendAudio?.(chunk)
+            }
+          }
+          // Deepgram STT auto-commits on utterance end, so we just acknowledge
+          socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
         } else {
-          resetInputAudio(sessionId)
-          socketRef.send(JSON.stringify({
-            type: "voice_cancelled",
-            content: "No speech detected. Hold the microphone a little longer.",
-          }))
+          // OpenAI Realtime: commit buffered audio for processing
+          if (hasEnoughInputAudio(sessionId)) {
+            commitAudioBuffer(sessionId)
+          } else {
+            resetInputAudio(sessionId)
+            socketRef.send(JSON.stringify({
+              type: "voice_cancelled",
+              content: "No speech detected. Hold the microphone a little longer.",
+            }))
+          }
         }
         return
       }
 
       if (msg.type === "voice_disconnect") {
-        // Full teardown of the voice session — close OpenAI Realtime WS,
+        // Full teardown of the voice session — close Realtime WS and/or Deepgram,
         // clear audio buffers, and reset state. The WebSocket itself stays
         // open so the client can re-connect with voice_start if needed.
-        endVoiceSession(sessionId)
+        if (activeEngine === "deepgram") {
+          endDeepgramSession(sessionId)
+        } else {
+          endVoiceSession(sessionId)
+        }
         clearAudioBuffer(sessionId)
         socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
         return
       }
 
       if (msg.type === "audio" && msg.data) {
-        sendAudioChunk(sessionId, msg.data)
+        if (activeEngine === "deepgram") {
+          // Deepgram: route audio directly to the STT connection
+          const dgSession = getDeepgramSession(sessionId)
+          if (dgSession?.connected) {
+            ;(dgSession as any).sendAudio?.(msg.data)
+          } else {
+            // Queue in pre-session buffer until session is live
+            deepgramPreSessionAudio.enqueue(sessionId, msg.data)
+          }
+        } else {
+          // OpenAI Realtime: buffer audio chunks
+          sendAudioChunk(sessionId, msg.data)
+        }
         return
       }
 
@@ -634,27 +796,34 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         // before injection so the AI can "see" images without the user asking.
         const enrichedContent = await enrichAttachmentWithVision(msg.content)
 
-        // Inject the text into the OpenAI Realtime session so the voice AI
-        // can see what the user typed (e.g. file attachments, follow-ups).
-        const rtSession = getRealtimeSession(sessionId)
-        if (rtSession?.connected) {
-          rtSession.ws.send(JSON.stringify({
-            type: "conversation.item.create",
-            item: {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: enrichedContent }],
-            },
-          }))
-          // Trigger a response so the AI processes the text and responds
-          if (!rtSession.responseInProgress) {
-            rtSession.responseInProgress = true
-            rtSession.ws.send(JSON.stringify({ type: "response.create" }))
-          } else {
-            rtSession.pendingResponseQueue.push(() => {
+        // Inject the text into the active voice session so the AI can see
+        // what the user typed (e.g. file attachments, follow-ups).
+        if (activeEngine === "deepgram") {
+          const dgSession = getDeepgramSession(sessionId)
+          if (dgSession?.connected) {
+            ;(dgSession as any).sendMessage?.(enrichedContent)
+          }
+        } else {
+          const rtSession = getRealtimeSession(sessionId)
+          if (rtSession?.connected) {
+            rtSession.ws.send(JSON.stringify({
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: enrichedContent }],
+              },
+            }))
+            // Trigger a response so the AI processes the text and responds
+            if (!rtSession.responseInProgress) {
               rtSession.responseInProgress = true
               rtSession.ws.send(JSON.stringify({ type: "response.create" }))
-            })
+            } else {
+              rtSession.pendingResponseQueue.push(() => {
+                rtSession.responseInProgress = true
+                rtSession.ws.send(JSON.stringify({ type: "response.create" }))
+              })
+            }
           }
         }
         routeMessage(
@@ -2237,6 +2406,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
+  let activeEngine: VoiceEngine = "openai"
 
   const cleanup = () => {
     unregisterTokidappSocket(sessionId)
@@ -2248,6 +2418,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
+    endDeepgramSession(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {
@@ -2270,28 +2441,50 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_start") {
-            if (REALTIME_ENABLED) {
-              startVoiceRealtimeSession(
-            sessionId,
-            msg.voice,
-            socketRef,
-            typeof msg.tokidappSessionId === "string"
-              ? msg.tokidappSessionId
-              : dbSessionId ?? undefined,
-          )
+            const engine = parseVoiceEngine(msg.engine)
+            console.log("[tokidapp-ws] voice_start received, engine:", engine, "REALTIME_ENABLED:", REALTIME_ENABLED)
+            activeEngine = engine
+
+            if (engine === "deepgram") {
+              startDeepgramVoiceSession(
+                sessionId,
+                msg.voice,
+                socketRef,
+                typeof msg.tokidappSessionId === "string"
+                  ? msg.tokidappSessionId
+                  : dbSessionId ?? undefined,
+              )
             } else {
-              socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+              if (REALTIME_ENABLED) {
+                startVoiceRealtimeSession(
+                  sessionId,
+                  msg.voice,
+                  socketRef,
+                  typeof msg.tokidappSessionId === "string"
+                    ? msg.tokidappSessionId
+                    : dbSessionId ?? undefined,
+                )
+              } else {
+                socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+              }
             }
             return
           }
 
           if (msg.type === "voice_interrupt") {
-            const sess = getRealtimeSession(sessionId)
-            if (sess?.responseInProgress && sess.connected) {
-              sess.ws.send(JSON.stringify({ type: "response.cancel" }))
-              sess.responseInProgress = false
-              const next = sess.pendingResponseQueue.shift()
-              if (next) next()
+            if (activeEngine === "deepgram") {
+              const dgSession = getDeepgramSession(sessionId)
+              if (dgSession?.connected && dgSession.responseInProgress) {
+                dgSession.responseInProgress = false
+              }
+            } else {
+              const sess = getRealtimeSession(sessionId)
+              if (sess?.responseInProgress && sess.connected) {
+                sess.ws.send(JSON.stringify({ type: "response.cancel" }))
+                sess.responseInProgress = false
+                const next = sess.pendingResponseQueue.shift()
+                if (next) next()
+              }
             }
             clearAudioBuffer(sessionId)
             socketRef.send(JSON.stringify({ type: "voice_interrupted" }))
@@ -2304,28 +2497,51 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_stop") {
-            if (hasEnoughInputAudio(sessionId)) {
-              commitAudioBuffer(sessionId)
+            if (activeEngine === "deepgram") {
+              const dgSession = getDeepgramSession(sessionId)
+              if (dgSession?.connected) {
+                const pending = deepgramPreSessionAudio.drain(sessionId)
+                for (const chunk of pending) {
+                  (dgSession as any).sendAudio?.(chunk)
+                }
+              }
+              socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else {
-              resetInputAudio(sessionId)
-              socketRef.send(JSON.stringify({
-                type: "voice_cancelled",
-                content: "No speech detected. Hold the microphone a little longer.",
-              }))
+              if (hasEnoughInputAudio(sessionId)) {
+                commitAudioBuffer(sessionId)
+              } else {
+                resetInputAudio(sessionId)
+                socketRef.send(JSON.stringify({
+                  type: "voice_cancelled",
+                  content: "No speech detected. Hold the microphone a little longer.",
+                }))
+              }
             }
             return
           }
 
           if (msg.type === "voice_disconnect") {
-            // Full teardown of the voice session
-            endVoiceSession(sessionId)
+            if (activeEngine === "deepgram") {
+              endDeepgramSession(sessionId)
+            } else {
+              endVoiceSession(sessionId)
+            }
             clearAudioBuffer(sessionId)
             socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
             return
           }
 
           if (msg.type === "audio" && msg.data) {
-            sendAudioChunk(sessionId, msg.data)
+            if (activeEngine === "deepgram") {
+              const dgSession = getDeepgramSession(sessionId)
+              if (dgSession?.connected) {
+                ;(dgSession as any).sendAudio?.(msg.data)
+              } else {
+                deepgramPreSessionAudio.enqueue(sessionId, msg.data)
+              }
+            } else {
+              sendAudioChunk(sessionId, msg.data)
+            }
             return
           }
 
@@ -2393,12 +2609,19 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "message" && msg.content) {
             const attachments = normalizeInjectionAttachments(msg.attachments)
 
-            // Chat → Voice union: inject into Realtime FIRST with raw content
+            // Chat → Voice union: inject into active engine FIRST with raw content
             // (no await on vision analysis). The Realtime API processes images
             // natively via input_image — GPT-4o-mini pre-analysis is only needed
             // for the routeMessage() fallback and would add 1-3s latency before
             // the realtime injection, creating race conditions with live voice.
-            scheduleRealtimeInjection(sessionId, msg.content, attachments)
+            if (activeEngine === "deepgram") {
+              const dgSession = getDeepgramSession(sessionId)
+              if (dgSession?.connected) {
+                ;(dgSession as any).sendMessage?.(msg.content)
+              }
+            } else {
+              scheduleRealtimeInjection(sessionId, msg.content, attachments)
+            }
 
             // Run vision analysis for routeMessage fallback (can overlap with
             // the 300ms debounce + Realtime response generation).
