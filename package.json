@@ -27,10 +27,11 @@
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
+    "caniuse-lite": "^1.0.30001805",
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.11"
+    "baseline-browser-mapping": "^2.10.43"
   },
   "optionalDependencies": {
     "@rollup/rollup-darwin-arm64": "4.52.5",

@@ -9,6 +9,10 @@ out/
 .dir-locals.el
 .opencode/bashOutputs/
 
+# Package manager: npm only (CI uses npm ci + package-lock.json)
+bun.lock
+bun.lockb
+
 # Local runtime artifacts
 .codenomad/
 .tmp/
