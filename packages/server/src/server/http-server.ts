@@ -245,7 +245,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     credentials: true,
   })
 
-  // Bun + hoisted undici v7 breaks @fastify/reply-from v9's pool.request(); use Node http for localhost OpenCode proxy.
+  // Prefer Node http for localhost OpenCode proxy (avoids Bun/undici pool quirks on loopback).
   app.register(replyFrom, {
     contentTypesToEncode: [],
     undici: false as any,
