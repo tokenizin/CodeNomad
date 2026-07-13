@@ -6,6 +6,7 @@ import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscr
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 import { NvidiaSpeechProvider } from "./providers/nvidia"
 import { LocalSpeechProvider } from "./providers/local"
+import { WhisperSpeechProvider } from "./providers/whisper"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -96,6 +97,10 @@ export class SpeechService {
 
     if (settings.provider === "local") {
       return new LocalSpeechProvider({ settings, logger })
+    }
+
+    if (settings.provider === "whisper") {
+      return new WhisperSpeechProvider({ settings, logger })
     }
 
     // Default to OpenAI-compatible provider (covers openai, deepgram, etc.)

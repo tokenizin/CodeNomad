@@ -24,7 +24,6 @@ Voice models are cached in $XDG_DATA_HOME/piper-voices (default
 from __future__ import annotations
 
 import base64
-import io
 import json
 import os
 import re
@@ -152,39 +151,30 @@ SAMPLE_RATE = 24000
 def synthesize_pcm(voice, text: str, speed: float = 1.0) -> bytes:
     """Synthesize *text* to raw PCM bytes (16-bit signed LE, 24 kHz mono).
 
-    Piper outputs 16-bit PCM at the model's native sample rate.  If the
-    model does not natively produce 24 kHz audio we re-sample here.
+    Piper's synthesize() returns an iterable of AudioChunk objects.  Each
+    chunk has audio_int16_bytes (raw 16-bit signed LE PCM) at the model's
+    native sample rate.  We concatenate all chunks and resample to 24 kHz.
     """
-    wav_buffer = io.BytesIO()
-    voice.synthesize(text, wav_buffer)
-    wav_bytes = wav_buffer.getvalue()
+    chunks = list(voice.synthesize(text))
 
-    # Strip WAV header to get raw PCM.  WAV header is at least 44 bytes.
-    # We look for the 'data' chunk to find the exact offset.
-    raw_pcm = _strip_wav_header(wav_bytes)
+    # Concatenate raw PCM from all chunks
+    raw_pcm = b"".join(c.audio_int16_bytes for c in chunks)
+
+    if not raw_pcm:
+        return b""
+
+    # Determine native sample rate from first chunk
+    native_rate = chunks[0].sample_rate if chunks else 22050
 
     # Resample to 24 kHz if the model's sample rate differs
-    native_rate = voice.config.sample_rate if hasattr(voice.config, "sample_rate") else 22050
     if native_rate != SAMPLE_RATE:
         raw_pcm = _resample(raw_pcm, native_rate, SAMPLE_RATE)
 
-    # Apply speed adjustment via simple sample skipping/interpolation
+    # Apply speed adjustment via simple sample skipping
     if speed != 1.0:
         raw_pcm = _adjust_speed(raw_pcm, speed)
 
     return raw_pcm
-
-
-def _strip_wav_header(data: bytes) -> bytes:
-    """Return raw PCM audio from a WAV buffer, stripping the header."""
-    # Standard WAV: find 'data' chunk
-    idx = data.find(b"data")
-    if idx > 0 and idx + 8 <= len(data):
-        offset = idx + 8  # skip 'data' + 4-byte size
-        size_bytes = struct.unpack_from("<I", data, idx + 4)[0]
-        return data[offset : offset + size_bytes]
-    # Fallback: skip 44-byte header
-    return data[44:] if len(data) > 44 else data
 
 
 def _resample(pcm: bytes, from_rate: int, to_rate: int) -> bytes:

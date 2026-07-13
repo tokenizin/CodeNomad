@@ -27,6 +27,7 @@ import {
   hasActiveDeepgramSession,
   preSessionAudio as deepgramPreSessionAudio,
 } from "../../plugins/tokidapp/concierge/deepgram-realtime"
+import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
@@ -109,9 +110,9 @@ const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
-/** Voice engine selection — 'openai' (default, backward-compatible) or 'deepgram'. */
-type VoiceEngine = "openai" | "deepgram"
-const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram"])
+/** Voice engine selection — 'openai' (default, backward-compatible), 'deepgram', or 'local'. */
+type VoiceEngine = "openai" | "deepgram" | "local"
+const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram", "local"])
 
 function parseVoiceEngine(raw: unknown): VoiceEngine {
   if (typeof raw === "string" && VALID_ENGINES.has(raw)) return raw as VoiceEngine
@@ -664,6 +665,80 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             socketRef,
             typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
           )
+        } else if (engine === "local") {
+          // Local engine — whisper.cpp STT + Piper TTS + Ollama LLM
+          // Uses the unified orchestrator to create and register the session,
+          // then wires event callbacks to the client WebSocket.
+          try {
+            const session = createAndRegisterVoiceSession({
+              engine: "local",
+              sessionId,
+              voice: msg.voice,
+              userId: sessionId.replace(/^voice_/, ""),
+              enrichedInstructions: undefined,
+              chatSessionId: typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+              sendToClient: (msg: string) => socketRef.send(msg),
+            })
+
+            // Wire up event callbacks to the client WebSocket
+            session.onTranscript = (text, isFinal) => {
+              socketRef.send(JSON.stringify({
+                type: isFinal ? "transcript" : "transcript_partial",
+                transcript: text,
+                engine: "local",
+              }))
+            }
+            session.onResponse = (text) => {
+              socketRef.send(JSON.stringify({
+                type: "message",
+                content: text,
+                engine: "local",
+              }))
+            }
+            session.onAudio = (base64Chunk) => {
+              socketRef.send(JSON.stringify({
+                type: "audio",
+                data: base64Chunk,
+                engine: "local",
+              }))
+            }
+            session.onCommand = (command, confidence) => {
+              socketRef.send(JSON.stringify({
+                type: "command_match",
+                command,
+                confidence,
+                engine: "local",
+              }))
+            }
+            session.onError = (error) => {
+              socketRef.send(JSON.stringify({
+                type: "error",
+                content: error.message,
+                engine: "local",
+              }))
+            }
+            session.onStatus((status) => {
+              socketRef.send(JSON.stringify({
+                type: "voice_status",
+                status,
+                engine: "local",
+              }))
+            })
+
+            socketRef.send(JSON.stringify({
+              type: "voice_ready",
+              voice: msg.voice || "local",
+              engine: "local",
+              sessionId,
+            }))
+          } catch (err: any) {
+            console.error("[voice-ws] Failed to start local voice session:", err?.message)
+            socketRef.send(JSON.stringify({
+              type: "error",
+              content: `Failed to start local voice session: ${err?.message}`,
+              engine: "local",
+            }))
+          }
         } else {
           // OpenAI Realtime engine (default, backward-compatible)
           if (REALTIME_ENABLED) {
@@ -699,6 +774,11 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           if (dgSession?.connected && dgSession.responseInProgress) {
             dgSession.responseInProgress = false
           }
+        } else if (activeEngine === "local") {
+          const localSession = getVoiceSession(sessionId)
+          if (localSession?.connected) {
+            localSession.stop()
+          }
         } else {
           const sess = getRealtimeSession(sessionId)
           if (sess && sess.responseInProgress) {
@@ -728,6 +808,9 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           }
           // Deepgram STT auto-commits on utterance end, so we just acknowledge
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
+        } else if (activeEngine === "local") {
+          // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
+          socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
         } else {
           // OpenAI Realtime: commit buffered audio for processing
           if (hasEnoughInputAudio(sessionId)) {
@@ -749,6 +832,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         // open so the client can re-connect with voice_start if needed.
         if (activeEngine === "deepgram") {
           endDeepgramSession(sessionId)
+        } else if (activeEngine === "local") {
+          endOrchestratorVoiceSession(sessionId)
         } else {
           endVoiceSession(sessionId)
         }
@@ -766,6 +851,12 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           } else {
             // Queue in pre-session buffer until session is live
             deepgramPreSessionAudio.enqueue(sessionId, msg.data)
+          }
+        } else if (activeEngine === "local") {
+          // Local engine: route audio to the orchestrator session
+          const localSession = getVoiceSession(sessionId)
+          if (localSession) {
+            localSession.sendAudio(msg.data)
           }
         } else {
           // OpenAI Realtime: buffer audio chunks
@@ -2454,6 +2545,82 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   ? msg.tokidappSessionId
                   : dbSessionId ?? undefined,
               )
+            } else if (engine === "local") {
+              // Local engine — whisper.cpp STT + Piper TTS + Ollama LLM
+              // Uses the unified orchestrator to create and register the session,
+              // then wires event callbacks to the client WebSocket.
+              try {
+                const session = createAndRegisterVoiceSession({
+                  engine: "local",
+                  sessionId,
+                  voice: msg.voice,
+                  userId: sessionId.replace(/^voice_/, ""),
+                  enrichedInstructions: undefined,
+                  chatSessionId: typeof msg.tokidappSessionId === "string"
+                    ? msg.tokidappSessionId
+                    : dbSessionId ?? undefined,
+                  sendToClient: (msg: string) => socketRef.send(msg),
+                })
+
+                // Wire up event callbacks to the client WebSocket
+                session.onTranscript = (text: string, isFinal: boolean) => {
+                  socketRef.send(JSON.stringify({
+                    type: isFinal ? "transcript" : "transcript_partial",
+                    transcript: text,
+                    engine: "local",
+                  }))
+                }
+                session.onResponse = (text: string) => {
+                  socketRef.send(JSON.stringify({
+                    type: "message",
+                    content: text,
+                    engine: "local",
+                  }))
+                }
+                session.onAudio = (base64Chunk: string) => {
+                  socketRef.send(JSON.stringify({
+                    type: "audio",
+                    data: base64Chunk,
+                    engine: "local",
+                  }))
+                }
+                session.onCommand = (command: string, confidence: number) => {
+                  socketRef.send(JSON.stringify({
+                    type: "command_match",
+                    command,
+                    confidence,
+                    engine: "local",
+                  }))
+                }
+                session.onError = (error: Error) => {
+                  socketRef.send(JSON.stringify({
+                    type: "error",
+                    content: error.message,
+                    engine: "local",
+                  }))
+                }
+                session.onStatus((status: string) => {
+                  socketRef.send(JSON.stringify({
+                    type: "voice_status",
+                    status,
+                    engine: "local",
+                  }))
+                })
+
+                socketRef.send(JSON.stringify({
+                  type: "voice_ready",
+                  voice: msg.voice || "local",
+                  engine: "local",
+                  sessionId,
+                }))
+              } catch (err: any) {
+                console.error("[tokidapp-ws] Failed to start local voice session:", err?.message)
+                socketRef.send(JSON.stringify({
+                  type: "error",
+                  content: `Failed to start local voice session: ${err?.message}`,
+                  engine: "local",
+                }))
+              }
             } else {
               if (REALTIME_ENABLED) {
                 startVoiceRealtimeSession(
@@ -2477,6 +2644,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               if (dgSession?.connected && dgSession.responseInProgress) {
                 dgSession.responseInProgress = false
               }
+            } else if (activeEngine === "local") {
+              // Local engine: no response cancellation needed (LLM-based)
             } else {
               const sess = getRealtimeSession(sessionId)
               if (sess?.responseInProgress && sess.connected) {
@@ -2506,6 +2675,9 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 }
               }
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
+            } else if (activeEngine === "local") {
+              // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
+              socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else {
               if (hasEnoughInputAudio(sessionId)) {
                 commitAudioBuffer(sessionId)
@@ -2523,6 +2695,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "voice_disconnect") {
             if (activeEngine === "deepgram") {
               endDeepgramSession(sessionId)
+            } else if (activeEngine === "local") {
+              endOrchestratorVoiceSession(sessionId)
             } else {
               endVoiceSession(sessionId)
             }
@@ -2538,6 +2712,12 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 ;(dgSession as any).sendAudio?.(msg.data)
               } else {
                 deepgramPreSessionAudio.enqueue(sessionId, msg.data)
+              }
+            } else if (activeEngine === "local") {
+              // Local engine: route audio to the orchestrator session
+              const localSession = getVoiceSession(sessionId)
+              if (localSession) {
+                localSession.sendAudio(msg.data)
               }
             } else {
               sendAudioChunk(sessionId, msg.data)
