@@ -5,6 +5,7 @@ import type { SettingsService } from "../settings/service"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 import { NvidiaSpeechProvider } from "./providers/nvidia"
+import { LocalSpeechProvider } from "./providers/local"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -91,6 +92,10 @@ export class SpeechService {
     // Route to the appropriate provider based on settings
     if (settings.provider === "nvidia") {
       return new NvidiaSpeechProvider({ settings, logger })
+    }
+
+    if (settings.provider === "local") {
+      return new LocalSpeechProvider({ settings, logger })
     }
 
     // Default to OpenAI-compatible provider (covers openai, deepgram, etc.)
