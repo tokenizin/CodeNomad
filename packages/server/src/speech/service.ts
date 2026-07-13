@@ -4,6 +4,7 @@ import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
+import { NvidiaSpeechProvider } from "./providers/nvidia"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -85,10 +86,15 @@ export class SpeechService {
 
   private createProvider(): SpeechProvider {
     const settings = this.resolveSettings()
-    return new OpenAICompatibleSpeechProvider({
-      settings,
-      logger: this.logger.child({ provider: settings.provider }),
-    })
+    const logger = this.logger.child({ provider: settings.provider })
+
+    // Route to the appropriate provider based on settings
+    if (settings.provider === "nvidia") {
+      return new NvidiaSpeechProvider({ settings, logger })
+    }
+
+    // Default to OpenAI-compatible provider (covers openai, deepgram, etc.)
+    return new OpenAICompatibleSpeechProvider({ settings, logger })
   }
 
   private resolveSettings(): NormalizedSpeechSettings {
