@@ -483,12 +483,12 @@ export const CONCIERGE_COMMANDS: CommandDef[] = [
   },
   {
     id: "commit",
-    phrases: ["commit", "save changes", "git commit", "commit changes"],
+    phrases: ["commit", "save changes", "git commit", "commit changes", "save my work"],
     action: "gitCommitPush",
   },
   {
     id: "check_deploy",
-    phrases: ["check deploy", "deploy status", "is it live", "deployment status"],
+    phrases: ["check deploy", "deploy status", "is it live", "deployment status", "check deploy status"],
     action: "checkDeployStatus",
   },
 ]
