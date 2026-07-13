@@ -111,7 +111,7 @@ export function VoiceConversationButton(props: VoiceConversationButtonProps) {
   }
 
   return (
-    <div class="voice-conversation-container" role="group" aria-label="Voice conversation controls">
+    <div class={`voice-conversation-container ${isActive() ? "is-active" : ""}`} role="group" aria-label="Voice conversation controls">
       <button
         type="button"
         class={`prompt-voice-button prompt-nav-voice-button voice-conversation-btn ${STATE_CLASSES[state()]}`}

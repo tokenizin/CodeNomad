@@ -55,7 +55,7 @@
     var(--prompt-input-clear-control-top) + var(--prompt-input-inline-control-size) + var(--prompt-input-inline-control-bottom-gap)
   );
   @apply grid items-stretch;
-  grid-template-columns: minmax(0, 1fr) 72px 64px;
+  grid-template-columns: minmax(0, 1fr) 76px 64px;
   gap: 0;
   padding: 0;
 }
@@ -176,6 +176,7 @@
 
 .prompt-nav-column-left {
   min-width: 1.75rem;
+  overflow: hidden;
 }
 
 .prompt-nav-column-right {
@@ -493,6 +494,12 @@
     font-size: 16px;
     padding-bottom: 0.75rem;
   }
+
+  .prompt-nav-voice-button {
+    min-width: 2.75rem;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
 }
 
 .session-center-column[data-session-center-width="medium"] .prompt-input-field-container.is-expanded,
@@ -549,6 +556,12 @@
   align-items: center;
   min-width: 0;
   gap: 0.25rem;
+}
+
+/* Narrow layout: voice buttons side-by-side, not stacked */
+.session-center-column[data-session-center-width="narrow"] .voice-conversation-container.is-active {
+  flex-direction: row;
+  gap: 4px;
 }
 
 @media (max-width: 640px) {

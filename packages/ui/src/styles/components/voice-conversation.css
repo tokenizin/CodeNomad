@@ -4,6 +4,11 @@
   @apply flex items-center gap-2;
 }
 
+.voice-conversation-container.is-active {
+  flex-direction: column;
+  gap: 4px;
+}
+
 .voice-conversation-btn {
   @apply relative flex items-center justify-center w-10 h-10 rounded-full
          transition-all duration-300 ease-out cursor-pointer;
@@ -58,6 +63,13 @@
   border: none;
   outline: none;
   white-space: nowrap;
+}
+
+/* Shrink end button when stacked vertically inside a narrow column */
+.voice-conversation-container.is-active .voice-conv-end-btn {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  gap: 4px;
 }
 
 .voice-conv-end-btn:hover {
