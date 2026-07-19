@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify"
 
-/** OpenCode 1.17.x crashes on POST /session with Content-Type: application/json and body `{}`. */
+/** OpenCode 1.17.x historically crashed / rejected empty JSON `{}` on some routes. */
 export function isEffectivelyEmptyProxyBody(body: unknown): boolean {
   if (body === undefined || body === null) {
     return true
@@ -43,27 +43,61 @@ export function resolveInstanceProxyContentType(request: FastifyRequest): string
 }
 
 /**
- * OpenCode 1.17.9+ requires a body for POST /session and returns 400 without one.
- * Skip the empty-body check for session creation to allow empty JSON through.
+ * OpenCode session create accepts empty/`{}` bodies.
+ * Prompt routes must keep a real JSON body (`parts` required) — never strip those.
  */
-const SESSION_ENDPOINT_REGEX = /\/session$/i
+const SESSION_CREATE_ENDPOINT_REGEX = /\/session\/?$/i
+
+export function isInstanceSessionCreatePath(urlPath: string): boolean {
+  return SESSION_CREATE_ENDPOINT_REGEX.test(urlPath)
+}
+
+/**
+ * Prefer explicit Content-Type; otherwise assume JSON for OpenCode API bodies.
+ * Never fall back to application/octet-stream — OpenCode returns 415 for that on prompt_async.
+ */
+export function resolveInstanceProxyForwardContentType(
+  request: FastifyRequest,
+  body: string | Buffer | undefined,
+): string | undefined {
+  if (body === undefined) {
+    return undefined
+  }
+
+  const explicit = resolveInstanceProxyContentType(request)
+  if (explicit) {
+    return explicit
+  }
+
+  const text = Buffer.isBuffer(body) ? body.toString("utf-8").trim() : body.trim()
+  if (text.startsWith("{") || text.startsWith("[")) {
+    return "application/json"
+  }
+
+  return "application/json"
+}
 
 export function resolveInstanceProxyBody(request: FastifyRequest): string | Buffer | undefined {
   const body = request.body
 
   const urlPath = (request.url ?? "").split("?")[0]
-  const isSessionEndpoint = SESSION_ENDPOINT_REGEX.test(urlPath)
+  const isSessionCreate = isInstanceSessionCreatePath(urlPath)
 
-  if (isEffectivelyEmptyProxyBody(body) && !isSessionEndpoint) {
+  if (isEffectivelyEmptyProxyBody(body)) {
+    // Session create: forward an explicit empty JSON object so OpenCode gets a valid payload
+    // and @fastify/reply-from does not JSON.stringify a Buffer via the request.body fallback.
+    if (isSessionCreate) {
+      return "{}"
+    }
     return undefined
   }
 
   if (Buffer.isBuffer(body)) {
-    return body.length > 0 ? body : undefined
+    return body.length > 0 ? body : isSessionCreate ? "{}" : undefined
   }
 
   if (typeof body === "string") {
-    return body.length > 0 ? body : undefined
+    return body.length > 0 ? body : isSessionCreate ? "{}" : undefined
   }
 
   if (typeof body === "object" && typeof (body as { pipe?: unknown }).pipe !== "function") {

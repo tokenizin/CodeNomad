@@ -45,13 +45,7 @@ import {
   setSessionSearchResults,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
-import {
-  buildOpenCodeOllamaProviderConfig,
-  fetchLocalLlmModelsResponse,
-  fetchLocalLlmProvider,
-  LOCAL_LLM_PROVIDER_ID,
-  mergeLocalLlmProviders,
-} from "../lib/local-llm-providers"
+import { fetchLocalLlmProvider, mergeLocalLlmProviders } from "../lib/local-llm-providers"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
@@ -94,7 +88,10 @@ function getErrorMessage(error: unknown): string {
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
-  return workspace ? { workspace } : {}
+  if (workspace && workspace.startsWith("wrk")) {
+    return { workspace }
+  }
+  return {}
 }
 
 interface SessionForkResponse {
@@ -455,33 +452,48 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   })
 
   try {
-    log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
-    const response = await client.session.create({ title: "New Session" })
-
-    if (!response.data) {
-      throw new Error("Failed to create session: No data returned")
+    // OpenCode POST /session model shape is { providerID, id } (NOT modelID — that is prompt_async only).
+    const createBody: {
+      title: string
+      agent?: string
+      model?: { providerID: string; id: string }
+    } = { title: "New Session" }
+    if (selectedAgent) {
+      createBody.agent = selectedAgent
+    }
+    if (isModelValid(instanceId, defaultModel)) {
+      createBody.model = {
+        providerID: defaultModel.providerId,
+        id: defaultModel.modelId,
+      }
     }
 
+    log.info(`[HTTP] POST /session.create for instance ${instanceId}`, {
+      agent: createBody.agent,
+      model: createBody.model,
+    })
+    const created = await requestData(client.session.create(createBody), "session.create")
+
     const session: Session = {
-      id: response.data.id,
+      id: created?.id ?? "",
       instanceId,
-      title: response.data.title || "New Session",
+      title: created?.title ?? "New Session",
       parentId: null,
       agent: selectedAgent,
       model: defaultModel,
       status: "idle",
       idleSince: null,
-      version: response.data.version,
+      version: created?.version ?? "0",
       time: {
-        ...response.data.time,
+        ...created?.time ?? { created: Date.now(), updated: Date.now() },
       },
-      metadata: (response.data as any).metadata,
-      revert: response.data.revert
+      metadata: (created as any).metadata,
+      revert: created?.revert
         ? {
-            messageID: response.data.revert.messageID,
-            partID: response.data.revert.partID,
-            snapshot: response.data.revert.snapshot,
-            diff: response.data.revert.diff,
+            messageID: created.revert.messageID,
+            partID: created.revert.partID,
+            snapshot: created.revert.snapshot,
+            diff: created.revert.diff,
           }
         : undefined,
     }
@@ -763,59 +775,6 @@ async function fetchAgents(instanceId: string): Promise<void> {
   }
 }
 
-async function syncOpenCodeLocalOllamaProvider(instanceId: string): Promise<void> {
-  const localResponse = await fetchLocalLlmModelsResponse()
-  if (!localResponse?.available || localResponse.models.length === 0) {
-    return
-  }
-
-  const rootClient = getRootClient(instanceId)
-  const configResult = await requestData<any>((rootClient as any).config.get(), "config.get").catch(() => null)
-  if (!configResult) {
-    return
-  }
-
-  const currentProviders = (configResult.provider ?? {}) as Record<string, unknown>
-  const nextOllama = buildOpenCodeOllamaProviderConfig(localResponse)
-  const existingOllama = currentProviders[LOCAL_LLM_PROVIDER_ID] as { models?: Record<string, unknown> } | undefined
-  const existingModelIds = Object.keys(existingOllama?.models ?? {}).sort().join("|")
-  const nextModelIds = localResponse.models
-    .map((model) => model.id)
-    .sort()
-    .join("|")
-
-  if (existingOllama && existingModelIds === nextModelIds) {
-    return
-  }
-
-  log.info("Syncing local Ollama models into OpenCode config", {
-    instanceId,
-    models: localResponse.models.map((model) => model.id),
-  })
-
-  try {
-    // Patch only the Ollama provider — spreading config.get().provider replays
-    // read-only provider metadata from models.dev and can trigger 400 on PATCH.
-    await requestData(
-      (rootClient as any).config.update({
-        config: {
-          provider: {
-            [LOCAL_LLM_PROVIDER_ID]: nextOllama,
-          },
-        },
-      }),
-      "config.update",
-    )
-    // Do not call global.dispose() here — it tears down the OpenCode child process
-    // and causes POST /session → 400 / hang on the next UI action.
-  } catch (error) {
-    log.warn("Failed to sync local Ollama models into OpenCode config", {
-      instanceId,
-      error,
-    })
-  }
-}
-
 async function fetchProviders(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -830,12 +789,11 @@ async function fetchProviders(instanceId: string): Promise<void> {
 
   try {
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    const [response] = await Promise.all([
-      rootClient.config.providers(),
-      syncOpenCodeLocalOllamaProvider(instanceId).catch((error) => {
-        log.warn("Background Ollama provider sync failed", { instanceId, error })
-      }),
-    ])
+    // Do not PATCH /config to sync Ollama models: project opencode.json IDs often
+    // diverge from live tags (hermes3 vs hermes3:latest), PATCH does not persist into
+    // the project provider layer, and the retry loop surfaces as console 400s.
+    // Live models are merged client-side via mergeLocalLlmProviders().
+    const response = await rootClient.config.providers()
     if (!response.data) return
 
     const providerList = response.data.providers.map((provider) => ({

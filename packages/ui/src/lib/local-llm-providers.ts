@@ -76,7 +76,7 @@ export function mergeLocalLlmListedProviders<T extends { id: string; name: strin
   const index = next.findIndex((provider) => provider.id === localProvider.id)
 
   if (index === -1) {
-    return [localProvider as T, ...next]
+    return [localProvider as unknown as T, ...next]
   }
 
   next[index] = {
@@ -94,25 +94,29 @@ export function mergeLocalLlmProviders(existing: Provider[], localProvider: Prov
   }
 
   const index = existing.findIndex((provider) => provider.id === localProvider.id)
+  // Live Ollama tags are the source of truth for model IDs (e.g. hermes3:latest).
+  // Do not intersect with opencode.json keys — those often omit the :latest suffix and
+  // would wipe the picker. OpenCode PATCH /config also does not persist project-file
+  // provider models, so client-side merge is the reliable path.
+  const merged: Provider = {
+    id: localProvider.id,
+    name: localProvider.name,
+    defaultModelId: localProvider.defaultModelId,
+    models: localProvider.models,
+  }
+
   if (index === -1) {
-    return existing
+    return [merged, ...existing]
   }
 
   const current = existing[index]
-  const liveModelIds = new Set(localProvider.models.map((model) => model.id))
-  const registeredModels = current.models.filter((model) => liveModelIds.has(model.id))
-  const preferredDefault =
-    localProvider.defaultModelId && registeredModels.some((model) => model.id === localProvider.defaultModelId)
-      ? localProvider.defaultModelId
-      : registeredModels[0]?.id ?? current.defaultModelId
-
   return existing.map((provider, providerIndex) =>
     providerIndex === index
       ? {
           ...current,
-          name: localProvider.name || current.name,
-          defaultModelId: preferredDefault,
-          models: registeredModels,
+          name: merged.name || current.name,
+          defaultModelId: merged.defaultModelId || current.defaultModelId,
+          models: merged.models,
         }
       : provider,
   )

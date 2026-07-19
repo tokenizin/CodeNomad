@@ -1,8 +1,8 @@
 import { execSync } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
-import { rollbackToPreviousCommit } from "../orchestrator/rollback"
-import { apiGet } from "../orchestrator/starguard-client"
+import { rollbackToPreviousCommit } from "../orchestrator/rollback.js"
+import { apiGet } from "../orchestrator/starguard-client.js"
 
 // ── Knowledge Base ─────────────────────────────────────────────
 
@@ -318,6 +318,46 @@ export async function getArchitectureDigest(): Promise<string> {
         parts.push(`- Branch: ${branch}`)
         parts.push(`- Uncommitted files: ${changed || "0"}`)
         if (ahead && ahead !== "0") parts.push(`- Commits ahead of remote: ${ahead}`)
+      }
+    }
+  } catch { /* skip */ }
+
+  // 13. Consumer FAQ — frequently asked questions for the concierge
+  try {
+    const faqPath = path.resolve(KB, "docs/product/CONCIERGE_FAQ.md")
+    if (fs.existsSync(faqPath)) {
+      const faqContent = fs.readFileSync(faqPath, "utf-8")
+      // Extract the core Q&A sections — skip frontmatter and index
+      const qaSections: string[] = []
+      let currentSection = ""
+      let inQuestion = false
+      for (const line of faqContent.split("\n")) {
+        if (line.startsWith("## ")) {
+          currentSection = line.replace("## ", "").trim()
+          inQuestion = false
+        } else if (line.startsWith("**") && line.includes("?") && line.endsWith("**")) {
+          // Question line — bold with question mark
+          inQuestion = true
+          if (qaSections.length < 25) { // limit to top 25 Q&A pairs
+            qaSections.push(`- ${line.replace(/\*\*/g, "").trim()}`)
+          }
+        } else if (inQuestion && line.trim() && !line.startsWith("|") && !line.startsWith("#")) {
+          // Answer continuation
+          if (qaSections.length > 0 && qaSections.length <= 25) {
+            const last = qaSections.length - 1
+            const answer = line.trim()
+            if (answer && !answer.startsWith("- ") && !answer.startsWith("|")) {
+              qaSections[last] = qaSections[last] + ` ${answer}`
+            }
+          }
+        }
+      }
+      if (qaSections.length > 0) {
+        parts.push("\n## Consumer FAQ — Common Questions")
+        parts.push("Answer these questions directly from this section when users ask about membership, entry, tokens, or support.")
+        for (const qa of qaSections.slice(0, 20)) {
+          parts.push(qa)
+        }
       }
     }
   } catch { /* skip */ }

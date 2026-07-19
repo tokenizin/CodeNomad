@@ -17,7 +17,11 @@ const log = getLogger("actions")
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
-  return workspace ? { workspace } : {}
+  // OpenCode requires workspace query values to start with "wrk"; anything else → 500.
+  if (workspace && workspace.startsWith("wrk")) {
+    return { workspace }
+  }
+  return {}
 }
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {

@@ -7,55 +7,55 @@ import { connect as connectTcp, type Socket } from "net"
 import path from "path"
 import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
-import type { Logger } from "../logger"
-import { WorkspaceManager } from "../workspaces/manager"
+import type { Logger } from "../logger.js"
+import { WorkspaceManager } from "../workspaces/manager.js"
 
-import type { SettingsService } from "../settings/service"
-import { FileSystemBrowser } from "../filesystem/browser"
-import { EventBus } from "../events/bus"
-import { registerWorkspaceRoutes } from "./routes/workspaces"
-import { registerSettingsRoutes } from "./routes/settings"
-import { registerFilesystemRoutes } from "./routes/filesystem"
-import { registerConfigFileRoutes } from "./routes/config-files"
-import { registerMetaRoutes } from "./routes/meta"
-import { registerTunnelRecoveryRoutes } from "./routes/tunnel-recovery"
-import { registerEventRoutes } from "./routes/events"
-import { registerStorageRoutes } from "./routes/storage"
-import { registerPluginRoutes } from "./routes/plugin"
-import { registerBackgroundProcessRoutes } from "./routes/background-processes"
-import { registerWorktreeRoutes } from "./routes/worktrees"
-import { registerSpeechRoutes } from "./routes/speech"
-import { registerLocalLlmRoutes } from "./routes/local-llm"
-import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp"
-import { registerRemoteServerRoutes } from "./routes/remote-servers"
-import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
-import { registerSideCarRoutes } from "./routes/sidecars"
-import { registerPreviewRoutes } from "./routes/previews"
-import { ServerMeta } from "../api-types"
-import { InstanceStore } from "../storage/instance-store"
-import { BackgroundProcessManager } from "../background-processes/manager"
-import type { AuthManager } from "../auth/manager"
-import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
-import { registerAuthRoutes } from "./routes/auth"
-import { registerNotificationRoutes } from "./routes/notifications"
-import { registerChoiceRoutes } from "./routes/choices"
-import { registerWikiLintRoutes } from "./routes/wiki-lint"
-import { NotifyRegistry } from "../notify/registry"
-import { getAllTokidappSockets } from "./ws-socket-registry"
-import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
-import type { SpeechService } from "../speech/service"
-import { getTokidappDb } from "../lib/db"
-import { ClientConnectionManager } from "../clients/connection-manager"
-import { PluginChannelManager } from "../plugins/channel"
-import { VoiceModeManager } from "../plugins/voice-mode"
-import type { SideCarManager } from "../sidecars/manager"
-import type { PreviewManager } from "../previews/manager"
-import type { RemoteProxySessionManager } from "./remote-proxy"
+import type { SettingsService } from "../settings/service.js"
+import { FileSystemBrowser } from "../filesystem/browser.js"
+import { EventBus } from "../events/bus.js"
+import { registerWorkspaceRoutes } from "./routes/workspaces.js"
+import { registerSettingsRoutes } from "./routes/settings.js"
+import { registerFilesystemRoutes } from "./routes/filesystem.js"
+import { registerConfigFileRoutes } from "./routes/config-files.js"
+import { registerMetaRoutes } from "./routes/meta.js"
+import { registerTunnelRecoveryRoutes } from "./routes/tunnel-recovery.js"
+import { registerEventRoutes } from "./routes/events.js"
+import { registerStorageRoutes } from "./routes/storage.js"
+import { registerPluginRoutes } from "./routes/plugin.js"
+import { registerBackgroundProcessRoutes } from "./routes/background-processes.js"
+import { registerWorktreeRoutes } from "./routes/worktrees.js"
+import { registerSpeechRoutes } from "./routes/speech.js"
+import { registerLocalLlmRoutes } from "./routes/local-llm.js"
+import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp.js"  
+import { registerRemoteServerRoutes } from "./routes/remote-servers.js"
+import { registerRemoteProxyRoutes } from "./routes/remote-proxy.js"
+import { registerSideCarRoutes } from "./routes/sidecars.js"
+import { registerPreviewRoutes } from "./routes/previews.js"
+import { ServerMeta } from "../api-types.js"
+import { InstanceStore } from "../storage/instance-store.js"
+import { BackgroundProcessManager } from "../background-processes/manager.js"
+import type { AuthManager } from "../auth/manager.js"
+import type { StarGuardJwtHandler } from "../auth/starguard-jwt.js"
+import { registerAuthRoutes } from "./routes/auth.js"
+import { registerNotificationRoutes } from "./routes/notifications.js"
+import { registerChoiceRoutes } from "./routes/choices.js"
+import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
+import { NotifyRegistry } from "../notify/registry.js"
+import { getAllTokidappSockets } from "./ws-socket-registry.js"  
+import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
+import type { SpeechService } from "../speech/service.js"
+import { getTokidappDb } from "../lib/db.js"
+import { ClientConnectionManager } from "../clients/connection-manager.js"
+import { PluginChannelManager } from "../plugins/channel.js" 
+import { VoiceModeManager } from "../plugins/voice-mode.js"
+import type { SideCarManager } from "../sidecars/manager.js"
+import type { PreviewManager } from "../previews/manager.js"
+import type { RemoteProxySessionManager } from "./remote-proxy.js"
 import {
   instanceProxyAllowsBody,
   resolveInstanceProxyBody,
-  resolveInstanceProxyContentType,
-} from "./instance-proxy-body"
+  resolveInstanceProxyForwardContentType,
+} from "./instance-proxy-body.js"
 
 // reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
 const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
@@ -820,17 +820,21 @@ async function proxyWorkspaceRequest(args: {
     logger.trace({ workspaceId, targetUrl, body: bodyToJson(request.body) }, "Instance proxy payload")
   }
 
-  const forwardBody = instanceProxyAllowsBody(request.method) ? resolveInstanceProxyBody(request) : undefined
-  const forwardContentType =
-    forwardBody !== undefined ? resolveInstanceProxyContentType(request) ?? "application/octet-stream" : undefined
+  const allowsBody = instanceProxyAllowsBody(request.method)
+  const forwardBody = allowsBody ? resolveInstanceProxyBody(request) : undefined
+  const forwardContentType = resolveInstanceProxyForwardContentType(request, forwardBody)
+
+  // Always pass an explicit body option for mutating methods.
+  // Omitting `body` lets @fastify/reply-from fall back to `request.body`; with our
+  // buffer parser + application/json that becomes JSON.stringify(Buffer) → OpenCode 400.
+  const bodyOpts = allowsBody
+    ? forwardBody !== undefined
+      ? { body: forwardBody, contentType: forwardContentType }
+      : { body: null as null }
+    : {}
 
   return reply.from(targetUrl, {
-    ...(forwardBody !== undefined
-      ? {
-          body: forwardBody,
-          contentType: forwardContentType,
-        }
-      : {}),
+    ...bodyOpts,
     rewriteRequestHeaders: (_originalRequest, headers) => {
       if (instanceAuthHeader) {
         headers.authorization = instanceAuthHeader

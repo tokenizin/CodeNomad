@@ -481,7 +481,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         }
         await requestData(
           (authClient as any).config.update({
-            body: {
+            config: {
               ...configData(),
               disabled_providers: disabledProviders,
             },
