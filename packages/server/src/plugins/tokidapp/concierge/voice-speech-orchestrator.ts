@@ -5,6 +5,7 @@
  *   engine: 'openai'   → existing OpenAI Realtime path (no changes)
  *   engine: 'local'    → whisper-stt + local-tts + Ollama LLM
  *   engine: 'deepgram' → deepgram-realtime.ts
+ *   engine: 'ornith'   → ornith-realtime.ts (31B-dense)
  *
  * Provides a unified VoiceSession interface across all engines, and a shared
  * LLM fallback chain (Ollama primary → Ollama fast → GPT-4o mini) for the
@@ -23,6 +24,10 @@ import {
   type DeepgramSession,
 } from "./deepgram-realtime"
 import {
+  createOrnithSession,
+  removeOrnithSession,
+} from "./ornith-realtime"
+import {
   createLocalSTTConnection,
   type LocalSTTConnection,
   type LocalSTTCallbacks,
@@ -36,11 +41,12 @@ import { AudioBuffer, PreSessionAudioManager } from "./audio-buffer"
 import type { RealtimeVoiceId } from "./realtime-voices"
 import type { DeepgramVoiceId } from "./deepgram-speech"
 import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import type WebSocket from "ws"
 
 // ── Engine Types ───────────────────────────────────────────────────────
 
 /** Supported voice engine backends. */
-export type VoiceEngine = "openai" | "local" | "deepgram"
+export type VoiceEngine = "openai" | "local" | "deepgram" | "ornith"
 
 /** Session lifecycle states. */
 export type VoiceSessionStatus =
@@ -825,6 +831,93 @@ function createDeepgramAdapter(params: CreateVoiceSessionParams): VoiceSession {
   }
 }
 
+// ── Ornith Engine Adapter ──────────────────────────────────────────────
+
+/**
+ * Create a unified VoiceSession backed by ornith-realtime.ts.
+ * createOrnithSession expects a client WebSocket; when called via the
+ * orchestrator alone we use a stub until the voice WS route wires the real socket.
+ */
+function createOrnithAdapter(params: CreateVoiceSessionParams): VoiceSession {
+  const { sessionId, voice, sendToClient } = params
+
+  const statusCallbacks: StatusCallback[] = []
+  let transcriptCb: (text: string, isFinal: boolean) => void = () => {}
+  let responseCb: (text: string) => void = () => {}
+  let audioCb: (chunk: string) => void = () => {}
+  let errorCb: (err: Error) => void = () => {}
+
+  function emitStatus(status: VoiceSessionStatus) {
+    for (const cb of statusCallbacks) cb(status)
+  }
+
+  emitStatus("connecting")
+
+  const stubWs = {
+    send() {},
+    close() {},
+    readyState: 1,
+  } as unknown as WebSocket
+
+  const ornithSession = createOrnithSession(
+    stubWs,
+    sessionId,
+    voice || undefined,
+    sendToClient,
+  )
+
+  emitStatus("connected")
+
+  return {
+    engine: "ornith",
+    sessionId,
+    connected: ornithSession.connected,
+
+    sendAudio(_chunk: string) {
+      console.warn(
+        `${LOG_PREFIX} sendAudio on Ornith session — wire via voice WS + ornith-realtime`,
+      )
+    },
+
+    speak(_text: string) {
+      console.warn(
+        `${LOG_PREFIX} speak() on Ornith session — use ornith-realtime response path`,
+      )
+    },
+
+    stop() {
+      emitStatus("idle")
+    },
+
+    destroy() {
+      removeOrnithSession(sessionId)
+      emitStatus("error")
+    },
+
+    onTranscript: (text, isFinal) => {
+      transcriptCb(text, isFinal)
+    },
+
+    onResponse: (text) => {
+      responseCb(text)
+    },
+
+    onAudio: (chunk) => {
+      audioCb(chunk)
+    },
+
+    onCommand: (_command, _confidence) => {},
+
+    onStatus: (cb: StatusCallback) => {
+      statusCallbacks.push(cb)
+    },
+
+    onError: (err) => {
+      errorCb(err)
+    },
+  }
+}
+
 // ── Factory Function ───────────────────────────────────────────────────
 
 /**
@@ -834,6 +927,7 @@ function createDeepgramAdapter(params: CreateVoiceSessionParams): VoiceSession {
  *   - 'openai'   → existing OpenAI Realtime WebSocket path
  *   - 'local'    → whisper-stt + local-tts + Ollama LLM
  *   - 'deepgram' → Deepgram STT → LLM → Deepgram TTS
+ *   - 'ornith'   → Ornith 31B-dense path
  *
  * Returns a VoiceSession with a consistent interface regardless of engine.
  *
@@ -856,6 +950,9 @@ export function createVoiceSession(
 
     case "deepgram":
       return createDeepgramAdapter(params)
+
+    case "ornith":
+      return createOrnithAdapter(params)
 
     default: {
       const _exhaustive: never = engine
@@ -941,6 +1038,11 @@ export function isEngineAvailable(engine: VoiceEngine): boolean {
         process.env.DEEPGRAM_ENABLED?.trim() === "true" &&
         !!process.env.DEEPGRAM_API_KEY
       )
+    case "ornith":
+      return (
+        process.env.ORNITH_ENABLED?.trim() === "true" ||
+        !!process.env.ORNITH_MODEL_ENDPOINT?.trim()
+      )
     case "local":
       // Local engines don't require API keys — they use on-device models.
       // Availability depends on the Python processes being installed.
@@ -957,6 +1059,7 @@ export function getAvailableEngines(): VoiceEngine[] {
   const engines: VoiceEngine[] = []
   if (isEngineAvailable("openai")) engines.push("openai")
   if (isEngineAvailable("deepgram")) engines.push("deepgram")
+  if (isEngineAvailable("ornith")) engines.push("ornith")
   if (isEngineAvailable("local")) engines.push("local")
   return engines
 }

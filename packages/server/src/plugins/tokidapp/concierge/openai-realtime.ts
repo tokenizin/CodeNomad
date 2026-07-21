@@ -628,7 +628,8 @@ const tools = [
 
 // ── Tool Implementations ─────────────────────────────────────
 
-async function executeTool(
+/** Shared by OpenAI Realtime and Ornith engines — keep signatures identical. */
+export async function executeTool(
   name: string,
   argsStr: string,
   config: {

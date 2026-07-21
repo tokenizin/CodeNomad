@@ -27,6 +27,13 @@ import {
   hasActiveDeepgramSession,
   preSessionAudio as deepgramPreSessionAudio,
 } from "../../plugins/tokidapp/concierge/deepgram-realtime"
+import {
+  createOrnithSession,
+  getOrnithSession,
+  removeOrnithSession,
+  handleOrnithMessage,
+  cleanupAllOrnithSessions,
+} from "../../plugins/tokidapp/concierge/ornith-realtime"
 import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
@@ -110,9 +117,9 @@ const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
-/** Voice engine selection — 'openai' (default, backward-compatible), 'deepgram', or 'local'. */
-type VoiceEngine = "openai" | "deepgram" | "local"
-const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram", "local"])
+/** Voice engine selection — 'openai' (default, backward-compatible), 'deepgram', 'local', or 'ornith'. */
+type VoiceEngine = "openai" | "deepgram" | "local" | "ornith"
+const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram", "local", "ornith"])
 
 function parseVoiceEngine(raw: unknown): VoiceEngine {
   if (typeof raw === "string" && VALID_ENGINES.has(raw)) return raw as VoiceEngine
@@ -739,6 +746,35 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               engine: "local",
             }))
           }
+        } else if (engine === "ornith") {
+          // Ornith 31B-dense engine — self-hosted realtime model
+          try {
+            const sendToClient = (msg: string) => socketRef.send(msg)
+            const ornithSession = createOrnithSession(
+              socketRef as unknown as WebSocket,
+              sessionId,
+              msg.voice || "ornith-default",
+              sendToClient,
+            )
+
+            // Send voice_ready confirmation
+            socketRef.send(JSON.stringify({
+              type: "voice_ready",
+              voice: msg.voice || "ornith-default",
+              engine: "ornith",
+              sessionId,
+            }))
+
+            // Ornith messages arrive on the same WS — dispatch to handler
+            // (handled by the main message loop below)
+          } catch (err: any) {
+            console.error("[voice-ws] Failed to start ornith voice session:", err?.message)
+            socketRef.send(JSON.stringify({
+              type: "error",
+              content: `Failed to start ornith voice session: ${err?.message}`,
+              engine: "ornith",
+            }))
+          }
         } else {
           // OpenAI Realtime engine (default, backward-compatible)
           if (REALTIME_ENABLED) {
@@ -779,6 +815,13 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           if (localSession?.connected) {
             localSession.stop()
           }
+        } else if (activeEngine === "ornith") {
+          const ornithSess = getOrnithSession(sessionId)
+          if (ornithSess?.connected && ornithSess.responseInProgress) {
+            ornithSess.responseInProgress = false
+            const next = ornithSess.pendingResponseQueue.shift()
+            if (next) next()
+          }
         } else {
           const sess = getRealtimeSession(sessionId)
           if (sess && sess.responseInProgress) {
@@ -811,6 +854,18 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         } else if (activeEngine === "local") {
           // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
+        } else if (activeEngine === "ornith") {
+          // Ornith: commit buffered audio for processing
+          const ornithSess = getOrnithSession(sessionId)
+          if (ornithSess?.connected) {
+            // Ornith handles audio commit internally via VAD
+            socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
+          } else {
+            socketRef.send(JSON.stringify({
+              type: "voice_cancelled",
+              content: "No speech detected. Hold the microphone a little longer.",
+            }))
+          }
         } else {
           // OpenAI Realtime: commit buffered audio for processing
           if (hasEnoughInputAudio(sessionId)) {
@@ -834,6 +889,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           endDeepgramSession(sessionId)
         } else if (activeEngine === "local") {
           endOrchestratorVoiceSession(sessionId)
+        } else if (activeEngine === "ornith") {
+          removeOrnithSession(sessionId)
         } else {
           endVoiceSession(sessionId)
         }
@@ -857,6 +914,16 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           const localSession = getVoiceSession(sessionId)
           if (localSession) {
             localSession.sendAudio(msg.data)
+          }
+        } else if (activeEngine === "ornith") {
+          // Ornith: route audio to the ornith session
+          const ornithSess = getOrnithSession(sessionId)
+          if (ornithSess?.connected) {
+            // Audio is handled via handleAudioBuffer → handleAudioCommit
+            handleOrnithMessage(ornithSess, JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: msg.data,
+            }))
           }
         } else {
           // OpenAI Realtime: buffer audio chunks
@@ -2621,6 +2688,31 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   engine: "local",
                 }))
               }
+            } else if (engine === "ornith") {
+              // Ornith 31B-dense engine — self-hosted realtime model
+              try {
+                const sendToClient = (msg: string) => socketRef.send(msg)
+                const ornithSession = createOrnithSession(
+                  socketRef as unknown as WebSocket,
+                  sessionId,
+                  msg.voice || "ornith-default",
+                  sendToClient,
+                )
+
+                socketRef.send(JSON.stringify({
+                  type: "voice_ready",
+                  voice: msg.voice || "ornith-default",
+                  engine: "ornith",
+                  sessionId,
+                }))
+              } catch (err: any) {
+                console.error("[tokidapp-ws] Failed to start ornith voice session:", err?.message)
+                socketRef.send(JSON.stringify({
+                  type: "error",
+                  content: `Failed to start ornith voice session: ${err?.message}`,
+                  engine: "ornith",
+                }))
+              }
             } else {
               if (REALTIME_ENABLED) {
                 startVoiceRealtimeSession(
@@ -2646,6 +2738,13 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               }
             } else if (activeEngine === "local") {
               // Local engine: no response cancellation needed (LLM-based)
+            } else if (activeEngine === "ornith") {
+              const ornithSess = getOrnithSession(sessionId)
+              if (ornithSess?.connected && ornithSess.responseInProgress) {
+                ornithSess.responseInProgress = false
+                const next = ornithSess.pendingResponseQueue.shift()
+                if (next) next()
+              }
             } else {
               const sess = getRealtimeSession(sessionId)
               if (sess?.responseInProgress && sess.connected) {
@@ -2678,6 +2777,9 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             } else if (activeEngine === "local") {
               // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
+            } else if (activeEngine === "ornith") {
+              // Ornith: VAD-based auto-commit, just acknowledge
+              socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else {
               if (hasEnoughInputAudio(sessionId)) {
                 commitAudioBuffer(sessionId)
@@ -2697,6 +2799,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               endDeepgramSession(sessionId)
             } else if (activeEngine === "local") {
               endOrchestratorVoiceSession(sessionId)
+            } else if (activeEngine === "ornith") {
+              removeOrnithSession(sessionId)
             } else {
               endVoiceSession(sessionId)
             }
@@ -2718,6 +2822,15 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               const localSession = getVoiceSession(sessionId)
               if (localSession) {
                 localSession.sendAudio(msg.data)
+              }
+            } else if (activeEngine === "ornith") {
+              // Ornith: route audio to the ornith session
+              const ornithSess = getOrnithSession(sessionId)
+              if (ornithSess?.connected) {
+                handleOrnithMessage(ornithSess, JSON.stringify({
+                  type: "input_audio_buffer.append",
+                  audio: msg.data,
+                }))
               }
             } else {
               sendAudioChunk(sessionId, msg.data)
