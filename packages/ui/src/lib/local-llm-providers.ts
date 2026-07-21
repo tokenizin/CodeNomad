@@ -3,7 +3,7 @@ import type { Provider } from "../types/session"
 import { serverApi } from "./api-client"
 
 export const LOCAL_LLM_PROVIDER_ID = "ollama"
-export const DEFAULT_LOCAL_LLM_MODEL = "gemma4:latest"
+export const DEFAULT_LOCAL_LLM_MODEL = "hermes3:latest"
 
 export interface LocalLlmListedProvider {
   id: string

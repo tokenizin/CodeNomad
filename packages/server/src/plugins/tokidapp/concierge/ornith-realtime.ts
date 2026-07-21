@@ -57,12 +57,41 @@ function clearLatency(sessionId: string): void {
   sessionLatency.delete(sessionId)
 }
 
-/** Ornith 31B-dense model endpoint. Override with ORNITH_MODEL_ENDPOINT. */
-const ORNITH_ENDPOINT = process.env.ORNITH_MODEL_ENDPOINT || "http://localhost:8080/v1"
-/** Ornith API key (if required). Override with ORNITH_API_KEY. */
-const ORNITH_API_KEY = process.env.ORNITH_API_KEY || ""
+/** Ornith LLM via Ollama on :11434 (shared). Do not use :8080/:8081 — Deepgram owns those. */
+const ORNITH_OLLAMA_ORIGIN = (() => {
+  const fromEnv = process.env.ORNITH_MODEL_ENDPOINT?.trim()
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, '').replace(/\/v1$/, '')
+  }
+  const ollama = process.env.OLLAMA_BASE_URL?.trim()
+  if (ollama) return ollama.replace(/\/$/, '').replace(/\/v1$/, '')
+  return 'http://127.0.0.1:11434'
+})()
+/** @deprecated Prefer ORNITH_OLLAMA_ORIGIN + /api/chat — /v1 leaves Ornith content empty (reasoning-only). */
+const ORNITH_ENDPOINT = `${ORNITH_OLLAMA_ORIGIN}/v1`
+const ORNITH_MODEL =
+  process.env.ORNITH_MODEL_ID?.trim() || 'ornith-31b-dense:latest'
+/** Ornith API key (unused by Ollama; kept for future dedicated Ornith HTTP). */
+const ORNITH_API_KEY = process.env.ORNITH_API_KEY || ''
 /** Default voice for Ornith engine. Override with ORNITH_DEFAULT_VOICE. */
-const ORNITH_DEFAULT_VOICE = process.env.ORNITH_DEFAULT_VOICE || "ornith-default"
+const ORNITH_DEFAULT_VOICE = process.env.ORNITH_DEFAULT_VOICE || 'ornith-default'
+/** STT/TTS use OpenAI — Ollama has no whisper/tts endpoints. */
+const OPENAI_AUDIO_BASE = (
+  process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1'
+).replace(/\/$/, '')
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
+
+function mapOrnithVoiceToOpenAi(voice: string): string {
+  switch (voice) {
+    case 'ornith-neutral':
+      return 'sage'
+    case 'ornith-professional':
+      return 'ash'
+    case 'ornith-default':
+    default:
+      return 'alloy'
+  }
+}
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
 
@@ -771,37 +800,47 @@ async function handleAudioCommit(session: OrnithSession): Promise<void> {
   // Process buffered audio
   const audioData = session.pendingChunks.join('')
   session.pendingChunks = []
-  
-  // Send to Ornith endpoint for processing
+
+  if (!OPENAI_API_KEY) {
+    console.error('[ornith] OPENAI_API_KEY required for STT (Ollama has no whisper)')
+    return
+  }
+
   try {
-    const response = await fetch(`${ORNITH_ENDPOINT}/audio/transcriptions`, {
+    const audioBuf = Buffer.from(audioData, 'base64')
+    const form = new FormData()
+    form.append('file', new Blob([audioBuf], { type: 'audio/wav' }), 'audio.wav')
+    form.append('model', 'whisper-1')
+
+    const response = await fetch(`${OPENAI_AUDIO_BASE}/audio/transcriptions`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        ...(ORNITH_API_KEY && { 'Authorization': `Bearer ${ORNITH_API_KEY}` })
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
-      body: JSON.stringify({
-        audio: audioData,
-        model: "whisper-1"
-      })
+      body: form,
     })
-    
-    const result = await response.json()
-    
+
+    const result = (await response.json()) as { text?: string; error?: unknown }
+    if (!response.ok) {
+      console.error('[ornith] Audio transcription failed:', result)
+      return
+    }
+
     if (result.text) {
-      // Send transcript to client
-      session.ws.send(JSON.stringify({
-        type: "conversation.item.created",
-        item: {
-          id: `item_${Date.now()}`,
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: result.text }]
-        }
-      }))
-      
-      // Add to transcript
-      session.transcript.push(`User: ${result.text}`)
+      const text = sanitizeAsrText(result.text)
+      session.ws.send(
+        JSON.stringify({
+          type: 'conversation.item.created',
+          item: {
+            id: `item_${Date.now()}`,
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text }],
+          },
+        }),
+      )
+
+      session.transcript.push(`User: ${text}`)
     }
   } catch (error) {
     console.error(`[ornith] Audio transcription error:`, error)
@@ -833,72 +872,87 @@ async function handleResponseCreate(
       return
     }
 
-    // Call Ornith endpoint for chat completion
-    const response = await fetch(`${ORNITH_ENDPOINT}/chat/completions`, {
+    // Native Ollama /api/chat + think:false — /v1 streams empty content for Ornith
+    const response = await fetch(`${ORNITH_OLLAMA_ORIGIN}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(ORNITH_API_KEY && { 'Authorization': `Bearer ${ORNITH_API_KEY}` })
+        ...(ORNITH_API_KEY && { Authorization: `Bearer ${ORNITH_API_KEY}` }),
       },
       body: JSON.stringify({
-        model: "ornith-31b-dense",
+        model: ORNITH_MODEL,
         messages: [
-          { role: "system", content: VOICE_INSTRUCTIONS },
-          { role: "user", content: lastUserMessage }
+          { role: 'system', content: VOICE_INSTRUCTIONS },
+          { role: 'user', content: lastUserMessage },
         ],
-        tools: tools.map(t => ({
-          type: "function",
+        tools: tools.map((t) => ({
+          type: 'function',
           function: {
             name: t.name,
             description: t.description,
-            parameters: t.parameters
-          }
+            parameters: t.parameters,
+          },
         })),
-        stream: true
-      })
+        stream: true,
+        think: false,
+      }),
     })
-    
-    // Process streaming response
-    const reader = response.body?.getReader()
-    if (!reader) {
+
+    if (!response.ok || !response.body) {
+      const errText = await response.text().catch(() => '')
+      console.error(`[ornith] chat failed ${response.status}:`, errText.slice(0, 400))
       session.responseInProgress = false
       return
     }
-    
-    let fullResponse = ""
-    
+
+    const reader = response.body.getReader()
+    let fullResponse = ''
+    let lineBuf = ''
+
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      
-      const chunk = new TextDecoder().decode(value)
-      const lines = chunk.split('\n').filter(line => line.trim() !== '')
-      
+
+      lineBuf += new TextDecoder().decode(value, { stream: true })
+      const lines = lineBuf.split('\n')
+      lineBuf = lines.pop() || ''
+
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          
-          try {
-            const parsed = JSON.parse(data)
-            const content = parsed.choices?.[0]?.delta?.content
-            if (content) {
-              fullResponse += content
-              
-              // Send audio chunk
-              await sendAudioChunk(session, content)
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try {
+          const parsed = JSON.parse(trimmed) as {
+            message?: {
+              content?: string
+              tool_calls?: Array<{
+                id?: string
+                function?: { name?: string; arguments?: unknown }
+              }>
             }
-            
-            // Handle tool calls
-            const toolCalls = parsed.choices?.[0]?.delta?.tool_calls
-            if (toolCalls) {
-              for (const toolCall of toolCalls) {
-                await handleToolCall(session, toolCall)
-              }
-            }
-          } catch (e) {
-            // Ignore parsing errors
+            done?: boolean
           }
+          const content = parsed.message?.content
+          if (content) {
+            fullResponse += content
+            await sendAudioChunk(session, content)
+          }
+          const toolCalls = parsed.message?.tool_calls
+          if (toolCalls?.length) {
+            for (const toolCall of toolCalls) {
+              await handleToolCall(session, {
+                id: toolCall.id,
+                function: {
+                  name: toolCall.function?.name,
+                  arguments:
+                    typeof toolCall.function?.arguments === 'string'
+                      ? toolCall.function.arguments
+                      : JSON.stringify(toolCall.function?.arguments ?? {}),
+                },
+              })
+            }
+          }
+        } catch {
+          // ignore partial JSON
         }
       }
     }
@@ -931,20 +985,27 @@ async function sendAudioChunk(
   text: string
 ): Promise<void> {
   const chunkStart = Date.now()
+  const spoken = sanitizeSpeechText(text)
+  if (!spoken.trim()) return
+
+  if (!OPENAI_API_KEY) {
+    console.error('[ornith] OPENAI_API_KEY required for TTS (Ollama has no /audio/speech)')
+    return
+  }
 
   try {
-    // Convert text to speech using Ornith TTS
-    const response = await fetch(`${ORNITH_ENDPOINT}/audio/speech`, {
+    const response = await fetch(`${OPENAI_AUDIO_BASE}/audio/speech`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(ORNITH_API_KEY && { 'Authorization': `Bearer ${ORNITH_API_KEY}` })
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "tts-1",
-        input: text,
-        voice: session.outputVoice
-      })
+        model: 'tts-1',
+        input: spoken,
+        voice: mapOrnithVoiceToOpenAi(String(session.outputVoice || ORNITH_DEFAULT_VOICE)),
+        response_format: 'pcm',
+      }),
     })
 
     if (response.ok) {
@@ -964,6 +1025,9 @@ async function sendAudioChunk(
       }))
 
       session.audioBytes += audioBuffer.byteLength
+    } else {
+      const errText = await response.text().catch(() => '')
+      console.error(`[ornith] TTS failed ${response.status}:`, errText.slice(0, 300))
     }
   } catch (error) {
     console.error(`[ornith] Audio chunk error:`, error)
