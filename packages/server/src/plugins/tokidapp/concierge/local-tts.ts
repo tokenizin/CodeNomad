@@ -12,6 +12,7 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { once } from "node:events"
 import { resolve } from "node:path"
+import { resolveLocalVoicePython } from "./resolve-local-voice-python"
 
 // ── Environment Configuration ───────────────────────────────────────────
 
@@ -24,6 +25,9 @@ const LOCAL_TTS_SPEED = parseFloat(process.env.LOCAL_TTS_SPEED || "1.0") || 1.0
 /** Enable sentence-based streaming (default: true). */
 const LOCAL_TTS_SENTENCE_SPLITS =
   process.env.LOCAL_TTS_SENTENCE_SPLITS?.trim().toLowerCase() !== "false"
+
+/** Python with piper — Homebrew python often lacks user packages. */
+const PYTHON_EXECUTABLE = resolveLocalVoicePython(["piper"])
 
 /** Maximum restart attempts before giving up. */
 const MAX_RESTART_ATTEMPTS = 5
@@ -122,12 +126,16 @@ export function createLocalTTSConnection(
   function spawnProcess() {
     if (closed) return
 
-    proc = spawn("python3", [scriptPath], {
+    proc = spawn(PYTHON_EXECUTABLE, [scriptPath], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         LOCAL_TTS_VOICE: resolvedVoice,
         LOCAL_TTS_SPEED: String(LOCAL_TTS_SPEED),
+        // Prefer repo voices, then user cache
+        PIPER_VOICE_DIR:
+          process.env.PIPER_VOICE_DIR?.trim() ||
+          resolve(process.cwd(), "models/piper-voices"),
       },
     })
 

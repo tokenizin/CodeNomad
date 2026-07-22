@@ -31,8 +31,8 @@ import numpy as np
 
 # ── Environment Configuration ───────────────────────────────────────────
 
-MODEL_NAME = os.environ.get("LOCAL_STT_MODEL", "large-v3")
-DEVICE = os.environ.get("LOCAL_STT_DEVICE", "auto")
+MODEL_NAME = os.environ.get("LOCAL_STT_MODEL", "base.en")
+DEVICE = os.environ.get("LOCAL_STT_DEVICE", "cpu")
 LANGUAGE = os.environ.get("LOCAL_STT_LANGUAGE", "en")
 BEAM_SIZE = int(os.environ.get("LOCAL_STT_BEAM_SIZE", "5"))
 VAD_THRESHOLD = float(os.environ.get("LOCAL_STT_VAD_THRESHOLD", "0.5"))
@@ -84,32 +84,45 @@ class LocalSTTServer:
         self.last_heartbeat_ms = int(time.time() * 1000)
 
     def load_model(self):
-        """Load faster-whisper model with Metal GPU acceleration on Apple Silicon."""
+        """Load faster-whisper. Prefer CPU+int8 — device=auto+float16 crashes on Apple Silicon."""
         log(f"Loading model '{MODEL_NAME}' on device '{DEVICE}'...")
         send_json({"type": "status", "message": f"Loading model '{MODEL_NAME}'..."})
 
         try:
             from faster_whisper import WhisperModel
 
-            # Device: auto → tries CUDA then Metal then CPU
-            # compute_type: float16 for GPU, int8 for CPU fallback
-            compute_type = "float16" if DEVICE != "cpu" else "int8"
+            device = DEVICE if DEVICE and DEVICE != "auto" else "cpu"
+            if device.lower() == "cuda":
+                candidates = [("cuda", "float16"), ("cuda", "int8"), ("cpu", "int8")]
+            elif device.lower() in ("metal", "gpu"):
+                candidates = [(device, "float16"), (device, "int8"), ("cpu", "int8")]
+            else:
+                candidates = [("cpu", "int8")]
 
-            self.model = WhisperModel(
-                MODEL_NAME,
-                device=DEVICE,
-                compute_type=compute_type,
-            )
-            self.model_info = {
-                "model": MODEL_NAME,
-                "device": DEVICE,
-                "compute_type": compute_type,
-            }
-            log(f"Model loaded: {MODEL_NAME} (device={DEVICE}, compute_type={compute_type})")
-            send_json({"type": "ready", "model": MODEL_NAME, "device": DEVICE})
+            last_err = None
+            for dev, compute_type in candidates:
+                try:
+                    self.model = WhisperModel(
+                        MODEL_NAME,
+                        device=dev,
+                        compute_type=compute_type,
+                    )
+                    self.model_info = {
+                        "model": MODEL_NAME,
+                        "device": dev,
+                        "compute_type": compute_type,
+                    }
+                    log(f"Model loaded: {MODEL_NAME} (device={dev}, compute_type={compute_type})")
+                    send_json({"type": "ready", "model": MODEL_NAME, "device": dev})
+                    return
+                except Exception as e:
+                    last_err = e
+                    log(f"Load attempt failed device={dev} compute={compute_type}: {e}")
+
+            raise last_err or RuntimeError("All WhisperModel load attempts failed")
         except ImportError as e:
             log(f"Failed to import faster_whisper: {e}")
-            send_json({"type": "error", "message": f"ImportError: {e}. Install: pip install faster-whisper"})
+            send_json({"type": "error", "message": f"ImportError: {e}. Install: /usr/bin/python3 -m pip install --user faster-whisper"})
             sys.exit(1)
         except Exception as e:
             log(f"Failed to load model: {e}")

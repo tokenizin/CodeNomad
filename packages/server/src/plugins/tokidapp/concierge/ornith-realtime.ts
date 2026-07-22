@@ -3,6 +3,18 @@ import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import { executeTool } from "./openai-realtime"
 import { voiceOrchestratorToolDefinitions } from "./voice-orchestrator-tools"
+import {
+  createLocalTTSConnection,
+  type LocalTTSConnection,
+} from "./local-tts"
+import {
+  createLocalSTTConnection,
+  type LocalSTTConnection,
+} from "./local-stt"
+import {
+  createWhisperSTTConnection,
+  type WhisperSTTConnection,
+} from "./whisper-stt"
 
 /** Tracks one active session per user — prevents two sessions for the same
  *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
@@ -75,22 +87,12 @@ const ORNITH_MODEL =
 const ORNITH_API_KEY = process.env.ORNITH_API_KEY || ''
 /** Default voice for Ornith engine. Override with ORNITH_DEFAULT_VOICE. */
 const ORNITH_DEFAULT_VOICE = process.env.ORNITH_DEFAULT_VOICE || 'ornith-default'
-/** STT/TTS use OpenAI — Ollama has no whisper/tts endpoints. */
-const OPENAI_AUDIO_BASE = (
-  process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1'
-).replace(/\/$/, '')
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
+/** Prefer whisper.cpp only when LOCAL_STT_BACKEND=whisper; default is Python faster-whisper. */
+const ORNITH_USE_WHISPER =
+  process.env.LOCAL_STT_BACKEND?.trim() === "whisper"
 
-function mapOrnithVoiceToOpenAi(voice: string): string {
-  switch (voice) {
-    case 'ornith-neutral':
-      return 'sage'
-    case 'ornith-professional':
-      return 'ash'
-    case 'ornith-default':
-    default:
-      return 'alloy'
-  }
+function mapOrnithVoiceToPiper(_voice: string): string {
+  return process.env.LOCAL_TTS_VOICE?.trim() || "en_US-amy-medium"
 }
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
@@ -139,6 +141,10 @@ interface OrnithSession {
   /** Send a message to the frontend client WebSocket (not the Ornith WS).
    *  Used for tool_result, clickflow prompts, and other client-destined messages. */
   sendToClient?: (msg: string) => void
+  /** Local Piper TTS (no OpenAI). */
+  tts?: LocalTTSConnection
+  /** Local STT: whisper.cpp or faster-whisper (no OpenAI). */
+  stt?: LocalSTTConnection | WhisperSTTConnection
 }
 
 const sessions = new Map<string, OrnithSession>()
@@ -624,7 +630,21 @@ function generateSessionId(): string {
 function cleanupSession(sessionId: string): void {
   const session = sessions.get(sessionId)
   if (session) {
-    session.ws.close()
+    try {
+      session.tts?.close()
+    } catch {
+      /* ignore */
+    }
+    try {
+      session.stt?.close()
+    } catch {
+      /* ignore */
+    }
+    try {
+      session.ws.close()
+    } catch {
+      /* ignore */
+    }
     sessions.delete(sessionId)
 
     // Clean up active user sessions
@@ -660,6 +680,68 @@ export function createOrnithSession(
     transcript: [],
     sendToClient,
   }
+
+  // Local Piper TTS — never OpenAI tts-1
+  session.tts = createLocalTTSConnection(mapOrnithVoiceToPiper(voiceId), {
+    onAudio: (base64Chunk) => {
+      try {
+        ws.send(JSON.stringify({ type: "response.audio.delta", delta: base64Chunk }))
+        session.audioBytes += Math.floor((base64Chunk.length * 3) / 4)
+      } catch {
+        /* socket closed */
+      }
+    },
+    onError: (err) => {
+      console.error("[ornith] Local TTS error:", err.message)
+    },
+  })
+
+  // Local STT — whisper.cpp preferred, python faster-whisper otherwise
+  const onTranscript = (text: string, isFinal: boolean) => {
+    if (!isFinal) return
+    const sanitized = sanitizeAsrText(text)
+    if (!sanitized.trim()) return
+    session.transcript.push(`User: ${sanitized}`)
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "conversation.item.created",
+          item: {
+            id: `item_${Date.now()}`,
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: sanitized }],
+          },
+        }),
+      )
+    } catch {
+      /* ignore */
+    }
+    void handleResponseCreate(session, {})
+  }
+
+  if (ORNITH_USE_WHISPER) {
+    session.stt = createWhisperSTTConnection({
+      onTranscript,
+      onError: (err) => console.error("[ornith] whisper STT error:", err.message),
+      onReady: () => {
+        session.connected = true
+      },
+    })
+  } else {
+    session.stt = createLocalSTTConnection({
+      onTranscript,
+      onError: (err) => console.error("[ornith] local STT error:", err.message),
+      onReady: () => {
+        session.connected = true
+      },
+    })
+  }
+
+  // Mark connected once Piper is warm even if STT is still loading
+  setTimeout(() => {
+    session.connected = true
+  }, 800)
 
   sessions.set(sessionId, session)
 
@@ -792,58 +874,20 @@ async function handleAudioBuffer(
   session: OrnithSession,
   audioBase64: string
 ): Promise<void> {
-  // Buffer audio data
   session.pendingChunks.push(audioBase64)
+  session.stt?.sendAudio(audioBase64)
 }
 
 async function handleAudioCommit(session: OrnithSession): Promise<void> {
-  // Process buffered audio
-  const audioData = session.pendingChunks.join('')
+  // Local STT uses VAD / streaming — flush forces a final transcript when available.
   session.pendingChunks = []
-
-  if (!OPENAI_API_KEY) {
-    console.error('[ornith] OPENAI_API_KEY required for STT (Ollama has no whisper)')
-    return
-  }
-
   try {
-    const audioBuf = Buffer.from(audioData, 'base64')
-    const form = new FormData()
-    form.append('file', new Blob([audioBuf], { type: 'audio/wav' }), 'audio.wav')
-    form.append('model', 'whisper-1')
-
-    const response = await fetch(`${OPENAI_AUDIO_BASE}/audio/transcriptions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: form,
-    })
-
-    const result = (await response.json()) as { text?: string; error?: unknown }
-    if (!response.ok) {
-      console.error('[ornith] Audio transcription failed:', result)
-      return
-    }
-
-    if (result.text) {
-      const text = sanitizeAsrText(result.text)
-      session.ws.send(
-        JSON.stringify({
-          type: 'conversation.item.created',
-          item: {
-            id: `item_${Date.now()}`,
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text }],
-          },
-        }),
-      )
-
-      session.transcript.push(`User: ${text}`)
+    const stt = session.stt as LocalSTTConnection | undefined
+    if (stt && typeof stt.flush === "function") {
+      stt.flush()
     }
   } catch (error) {
-    console.error(`[ornith] Audio transcription error:`, error)
+    console.error(`[ornith] Audio commit/flush error:`, error)
   }
 }
 
@@ -988,47 +1032,17 @@ async function sendAudioChunk(
   const spoken = sanitizeSpeechText(text)
   if (!spoken.trim()) return
 
-  if (!OPENAI_API_KEY) {
-    console.error('[ornith] OPENAI_API_KEY required for TTS (Ollama has no /audio/speech)')
+  if (!session.tts) {
+    console.error('[ornith] Local Piper TTS not initialized')
     return
   }
 
   try {
-    const response = await fetch(`${OPENAI_AUDIO_BASE}/audio/speech`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: spoken,
-        voice: mapOrnithVoiceToOpenAi(String(session.outputVoice || ORNITH_DEFAULT_VOICE)),
-        response_format: 'pcm',
-      }),
-    })
-
-    if (response.ok) {
-      const audioBuffer = await response.arrayBuffer()
-      const base64Audio = Buffer.from(audioBuffer).toString('base64')
-
-      // Track first audio latency
-      const firstAudioMs = Date.now() - chunkStart
-      if (getOrnithLatency(session.sessionId).firstAudioMs === 0) {
-        setLatencyMetric(session.sessionId, 'firstAudioMs', firstAudioMs)
-      }
-
-      // Send audio chunk to client
-      session.ws.send(JSON.stringify({
-        type: "response.audio.delta",
-        delta: base64Audio
-      }))
-
-      session.audioBytes += audioBuffer.byteLength
-    } else {
-      const errText = await response.text().catch(() => '')
-      console.error(`[ornith] TTS failed ${response.status}:`, errText.slice(0, 300))
+    if (getOrnithLatency(session.sessionId).firstAudioMs === 0) {
+      setLatencyMetric(session.sessionId, 'firstAudioMs', Date.now() - chunkStart)
     }
+    session.tts.speak(spoken)
+    session.tts.flush()
   } catch (error) {
     console.error(`[ornith] Audio chunk error:`, error)
   }

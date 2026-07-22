@@ -18,13 +18,14 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { resolve } from "node:path"
+import { resolveLocalVoicePython } from "./resolve-local-voice-python"
 
 // ── Environment Configuration ───────────────────────────────────────────
 
-/** faster-whisper model name. Default: large-v3. */
-const LOCAL_STT_MODEL = process.env.LOCAL_STT_MODEL?.trim() || "large-v3"
-/** Device: auto, cpu, metal. Default: auto. */
-const LOCAL_STT_DEVICE = process.env.LOCAL_STT_DEVICE?.trim() || "auto"
+/** faster-whisper model name. Default: base.en (fast local fallback). Override with large-v3 for quality. */
+const LOCAL_STT_MODEL = process.env.LOCAL_STT_MODEL?.trim() || "base.en"
+/** Device: cpu (default — reliable), cuda, metal. Avoid "auto" (float16 crash on Apple Silicon). */
+const LOCAL_STT_DEVICE = process.env.LOCAL_STT_DEVICE?.trim() || "cpu"
 /** Language code. Default: en. */
 const LOCAL_STT_LANGUAGE = process.env.LOCAL_STT_LANGUAGE?.trim() || "en"
 /** Beam search size. Default: 5. */
@@ -32,8 +33,8 @@ const LOCAL_STT_BEAM_SIZE = process.env.LOCAL_STT_BEAM_SIZE?.trim() || "5"
 /** VAD threshold (0-1). Default: 0.5. */
 const LOCAL_STT_VAD_THRESHOLD = process.env.LOCAL_STT_VAD_THRESHOLD?.trim() || "0.5"
 
-/** Python executable — allow override via PYTHON_PATH env. */
-const PYTHON_EXECUTABLE = process.env.PYTHON_PATH?.trim() || "python3"
+/** Python with faster-whisper — see resolve-local-voice-python.ts */
+const PYTHON_EXECUTABLE = resolveLocalVoicePython(["faster_whisper", "numpy"])
 
 /** Max restart attempts before giving up. */
 const MAX_RESTART_ATTEMPTS = 5

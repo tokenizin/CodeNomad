@@ -442,29 +442,37 @@ export async function batchTranscribe(
  * @returns Health status object
  */
 export async function checkHealth(serverUrl: string): Promise<WhisperHealthStatus> {
-  const url = `${normalizeServerUrl(serverUrl)}/health`
+  const base = normalizeServerUrl(serverUrl)
+  const candidates = [`${base}/v1/status`, `${base}/health`, `${base}/`]
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 5_000)
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(`Health check failed: HTTP ${response.status}`)
+    let lastError: Error | null = null
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          lastError = new Error(`Health check failed: HTTP ${response.status}`)
+          continue
+        }
+        const data = (await response.json().catch(() => ({}))) as any
+        return {
+          status: data?.status || "ok",
+          model: data?.model,
+          cores: data?.cores,
+          threads: data?.threads,
+          ...data,
+        }
+      } catch (err) {
+        lastError = err as Error
+      }
     }
-
-    const data = await response.json() as any
-    return {
-      status: data?.status || "unknown",
-      model: data?.model,
-      cores: data?.cores,
-      threads: data?.threads,
-      ...data,
-    }
+    throw lastError || new Error("whisper health check failed")
   } finally {
     clearTimeout(timeout)
   }

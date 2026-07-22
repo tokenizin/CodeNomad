@@ -35,8 +35,13 @@ import {
   cleanupAllOrnithSessions,
 } from "../../plugins/tokidapp/concierge/ornith-realtime"
 import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
+import {
+  isOpenAiVoiceFallbackError,
+  LOCAL_VOICE_FALLBACK_ENGINE,
+} from "../../plugins/tokidapp/concierge/voice-fallback"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
+import { buildVaultSessionContext } from "../../plugins/tokidapp/concierge/codebase-tools"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
 import { AGENT_REGISTRY, getCommandsByCategory } from "../../plugins/tokidapp/concierge/command-registry"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
@@ -406,6 +411,163 @@ interface VoiceRealtimeSocket {
   close: (code?: number, reason?: string) => void
 }
 
+/** Build digest + session/workspace + Obsidian vault + WikiLint health for voice prompts. */
+async function buildVoiceEnrichedInstructions(userId?: string): Promise<string> {
+  const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({
+    digest: "",
+    fetchedAt: new Date(0).toISOString(),
+    isFresh: false,
+    age: 0,
+  }))
+  console.log(
+    `[voice-ws] warm digest: ${digest?.length || 0} chars, fetched ${fetchedAt}, age ${age}s, fresh=${isFresh}`,
+  )
+
+  const enrichedCtxParts: string[] = []
+
+  try {
+    const repoRoot = process.env.CLI_WORKSPACE_ROOT || process.cwd()
+    const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
+      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+    }).trim()
+    const changed = execSync("git status --porcelain 2>/dev/null | head -15", {
+      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
+    }).trim()
+    if (branch) enrichedCtxParts.push(`## Session Workspace State\n- Branch: ${branch}`)
+    if (changed) {
+      const fileCount = changed.split("\n").length
+      enrichedCtxParts.push(`- Uncommitted files: ${fileCount}`)
+    }
+  } catch { /* non-git workspace */ }
+
+  if (userId) enrichedCtxParts.push(`- User: ${userId}`)
+  enrichedCtxParts.push(`- Cache age: ${age}s, fresh: ${isFresh}`)
+  enrichedCtxParts.push(`- Knowledge snapshot: ${fetchedAt}`)
+
+  // Obsidian vault path/access + inline WikiLint Health for this voice session
+  try {
+    const vaultBlock = await buildVaultSessionContext()
+    if (vaultBlock) enrichedCtxParts.push(vaultBlock)
+  } catch (err) {
+    console.warn("[voice-ws] vault session context failed:", (err as Error).message)
+    enrichedCtxParts.push(
+      "## Obsidian Vault Context\n- Vault context unavailable this session — use wiki tools on demand.",
+    )
+  }
+
+  const sessionContext = enrichedCtxParts.length > 0
+    ? `\n\n## Session Context\n${enrichedCtxParts.join("\n")}`
+    : ""
+
+  return (digest || "") + sessionContext
+}
+
+/** Sessions that already fell back from OpenAI → local (avoid loops). */
+const openaiLocalFallbackDone = new Set<string>()
+
+/**
+ * Start local (no-cloud) voice: whisper.cpp / faster-whisper STT + Piper TTS + Ollama.
+ * Shared by explicit engine=local and OpenAI quota/connect auto-fallback.
+ */
+function startLocalVoiceSession(
+  sessionId: string,
+  requestedVoice: unknown,
+  socketRef: { send: (msg: string) => void },
+  chatSessionId?: string,
+  opts?: { fallbackFrom?: "openai"; notice?: string },
+): void {
+  try {
+    ensureSingleUserSession(sessionId)
+    endOrchestratorVoiceSession(sessionId)
+
+    const session = createAndRegisterVoiceSession({
+      engine: "local",
+      sessionId,
+      voice: typeof requestedVoice === "string" ? requestedVoice : undefined,
+      userId: sessionId.startsWith("voice_") ? sessionId.slice(6) : sessionId,
+      enrichedInstructions: undefined,
+      chatSessionId,
+      sendToClient: (msg: string) => socketRef.send(msg),
+    })
+
+    session.onTranscript = (text, isFinal) => {
+      socketRef.send(
+        JSON.stringify({
+          type: isFinal ? "transcript" : "transcript_partial",
+          transcript: text,
+          engine: "local",
+        }),
+      )
+    }
+    session.onResponse = (text) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "message",
+          content: text,
+          engine: "local",
+        }),
+      )
+    }
+    session.onAudio = (base64Chunk) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "audio",
+          data: base64Chunk,
+          engine: "local",
+        }),
+      )
+    }
+    session.onCommand = (command, confidence) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "command_match",
+          command,
+          confidence,
+          engine: "local",
+        }),
+      )
+    }
+    session.onError = (error) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "error",
+          content: error.message,
+          engine: "local",
+        }),
+      )
+    }
+    session.onStatus((status) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "voice_status",
+          status,
+          engine: "local",
+        }),
+      )
+    })
+
+    socketRef.send(
+      JSON.stringify({
+        type: "voice_ready",
+        voice: typeof requestedVoice === "string" ? requestedVoice : "local",
+        engine: "local",
+        sessionId,
+        ...(opts?.fallbackFrom ? { fallbackFrom: opts.fallbackFrom } : {}),
+        ...(opts?.notice ? { notice: opts.notice } : {}),
+      }),
+    )
+  } catch (err: any) {
+    console.error("[voice-ws] Failed to start local voice session:", err?.message)
+    socketRef.send(
+      JSON.stringify({
+        type: "error",
+        content: `Failed to start local voice session: ${err?.message}`,
+        engine: "local",
+      }),
+    )
+  }
+}
+
 async function startVoiceRealtimeSession(
   sessionId: string,
   requestedVoice: unknown,
@@ -422,11 +584,7 @@ async function startVoiceRealtimeSession(
   resetInputAudio(sessionId)
   const notifyReady = () => {
     console.log("[voice-ws] notifyReady — sending voice_ready to client")
-    socketRef.send(JSON.stringify({ type: "voice_ready", voice }))
-    // No auto-greeting: let the user speak first. The client already sends a
-    // text greeting (see attachTokidappSocket). Injecting a fake "Hi." as a
-    // user message causes the AI to respond to a request the user never made,
-    // potentially calling tools or investigating before the user has spoken.
+    socketRef.send(JSON.stringify({ type: "voice_ready", voice, engine: "openai" }))
   }
   // Ensure only ONE Realtime session per user across voice WS and tokidapp WS
   ensureSingleUserSession(sessionId)
@@ -436,50 +594,7 @@ async function startVoiceRealtimeSession(
   if (!getRealtimeSession(sessionId)) {
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
 
-    // Fetch warm-cached architecture knowledge digest for prompt enrichment
-    // This preloads ecosystem context into the voice session from a shared,
-    // auto-refreshing cache — no API wait time for warm sessions.
-    const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({
-      digest: "",
-      fetchedAt: new Date(0).toISOString(),
-      isFresh: false,
-      age: 0,
-    }))
-    console.log(`[voice-ws] warm digest: ${digest?.length || 0} chars, fetched ${fetchedAt}, age ${age}s, fresh=${isFresh}`)
-
-    // Build enriched instructions with workspace state and session context
-    // This injects real-time project state so the voice assistant knows
-    // which branch, what's changed, and what's active right now.
-    const enrichedCtxParts: string[] = []
-
-    // Inject current workspace state (git branch, changes)
-    try {
-      const repoRoot = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-      const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
-        cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
-      }).trim()
-      const changed = execSync("git status --porcelain 2>/dev/null | head -15", {
-        cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
-      }).trim()
-      if (branch) enrichedCtxParts.push(`## Session Workspace State\n- Branch: ${branch}`)
-      if (changed) {
-        const fileCount = changed.split("\n").length
-        enrichedCtxParts.push(`- Uncommitted files: ${fileCount}`)
-      }
-    } catch { /* non-git workspace */ }
-
-    // Inject user context if available
-    if (userId) {
-      enrichedCtxParts.push(`- User: ${userId}`)
-    }
-    enrichedCtxParts.push(`- Cache age: ${age}s, fresh: ${isFresh}`)
-    enrichedCtxParts.push(`- Knowledge snapshot: ${fetchedAt}`)
-
-    const sessionContext = enrichedCtxParts.length > 0
-      ? `\n\n## Session Context\n${enrichedCtxParts.join("\n")}`
-      : ""
-
-    const enrichedInstructions = (digest || "") + sessionContext
+    const enrichedInstructions = await buildVoiceEnrichedInstructions(userId)
 
     createRealtimeSession(
       sessionId,
@@ -487,7 +602,36 @@ async function startVoiceRealtimeSession(
       (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
       (error) => {
         console.log("[voice-ws] OpenAI Realtime error:", error)
-        socketRef.send(JSON.stringify({ type: "error", content: error }))
+        if (
+          isOpenAiVoiceFallbackError(error) &&
+          !openaiLocalFallbackDone.has(sessionId)
+        ) {
+          openaiLocalFallbackDone.add(sessionId)
+          console.warn(
+            "[voice-ws] OpenAI voice failed — falling back to local STT/TTS/LLM:",
+            error.slice(0, 160),
+          )
+          try {
+            endVoiceSession(sessionId)
+          } catch {
+            /* ignore */
+          }
+          startLocalVoiceSession(sessionId, "local", socketRef, chatSessionId, {
+            fallbackFrom: "openai",
+            notice:
+              "OpenAI Realtime unavailable (quota/billing/connect) — switched to local Whisper + Piper + Ollama",
+          })
+          socketRef.send(
+            JSON.stringify({
+              type: "message",
+              content:
+                "⚠️ OpenAI voice quota/connect failed — continuing on local voice (Whisper + Piper + Ollama).",
+              engine: LOCAL_VOICE_FALLBACK_ENGINE,
+            }),
+          )
+          return
+        }
+        socketRef.send(JSON.stringify({ type: "error", content: error, engine: "openai" }))
       },
       notifyReady,
       (transcript) =>
@@ -535,41 +679,7 @@ async function startDeepgramVoiceSession(
   // Extract userId from sessionId (format: "voice_${userId}")
   const userId = sessionId.startsWith("voice_") ? sessionId.slice(6) : undefined
 
-  // Fetch warm-cached architecture knowledge digest for prompt enrichment
-  const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({
-    digest: "",
-    fetchedAt: new Date(0).toISOString(),
-    isFresh: false,
-    age: 0,
-  }))
-  console.log(`[voice-ws] Deepgram warm digest: ${digest?.length || 0} chars, age ${age}s, fresh=${isFresh}`)
-
-  // Build enriched instructions
-  const enrichedCtxParts: string[] = []
-  try {
-    const repoRoot = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-    const branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
-      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
-    }).trim()
-    const changed = execSync("git status --porcelain 2>/dev/null | head -15", {
-      cwd: repoRoot, encoding: "utf-8", maxBuffer: 1024 * 16,
-    }).trim()
-    if (branch) enrichedCtxParts.push(`## Session Workspace State\n- Branch: ${branch}`)
-    if (changed) {
-      const fileCount = changed.split("\n").length
-      enrichedCtxParts.push(`- Uncommitted files: ${fileCount}`)
-    }
-  } catch { /* non-git workspace */ }
-
-  if (userId) enrichedCtxParts.push(`- User: ${userId}`)
-  enrichedCtxParts.push(`- Cache age: ${age}s, fresh: ${isFresh}`)
-  enrichedCtxParts.push(`- Knowledge snapshot: ${fetchedAt}`)
-
-  const sessionContext = enrichedCtxParts.length > 0
-    ? `\n\n## Session Context\n${enrichedCtxParts.join("\n")}`
-    : ""
-
-  const enrichedInstructions = (digest || "") + sessionContext
+  const enrichedInstructions = await buildVoiceEnrichedInstructions(userId)
 
   // Create Deepgram session
   createDeepgramSession({
@@ -673,79 +783,13 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
           )
         } else if (engine === "local") {
-          // Local engine — whisper.cpp STT + Piper TTS + Ollama LLM
-          // Uses the unified orchestrator to create and register the session,
-          // then wires event callbacks to the client WebSocket.
-          try {
-            const session = createAndRegisterVoiceSession({
-              engine: "local",
-              sessionId,
-              voice: msg.voice,
-              userId: sessionId.replace(/^voice_/, ""),
-              enrichedInstructions: undefined,
-              chatSessionId: typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
-              sendToClient: (msg: string) => socketRef.send(msg),
-            })
-
-            // Wire up event callbacks to the client WebSocket
-            session.onTranscript = (text, isFinal) => {
-              socketRef.send(JSON.stringify({
-                type: isFinal ? "transcript" : "transcript_partial",
-                transcript: text,
-                engine: "local",
-              }))
-            }
-            session.onResponse = (text) => {
-              socketRef.send(JSON.stringify({
-                type: "message",
-                content: text,
-                engine: "local",
-              }))
-            }
-            session.onAudio = (base64Chunk) => {
-              socketRef.send(JSON.stringify({
-                type: "audio",
-                data: base64Chunk,
-                engine: "local",
-              }))
-            }
-            session.onCommand = (command, confidence) => {
-              socketRef.send(JSON.stringify({
-                type: "command_match",
-                command,
-                confidence,
-                engine: "local",
-              }))
-            }
-            session.onError = (error) => {
-              socketRef.send(JSON.stringify({
-                type: "error",
-                content: error.message,
-                engine: "local",
-              }))
-            }
-            session.onStatus((status) => {
-              socketRef.send(JSON.stringify({
-                type: "voice_status",
-                status,
-                engine: "local",
-              }))
-            })
-
-            socketRef.send(JSON.stringify({
-              type: "voice_ready",
-              voice: msg.voice || "local",
-              engine: "local",
-              sessionId,
-            }))
-          } catch (err: any) {
-            console.error("[voice-ws] Failed to start local voice session:", err?.message)
-            socketRef.send(JSON.stringify({
-              type: "error",
-              content: `Failed to start local voice session: ${err?.message}`,
-              engine: "local",
-            }))
-          }
+          // Local engine — whisper.cpp / faster-whisper STT + Piper TTS + Ollama LLM
+          startLocalVoiceSession(
+            sessionId,
+            msg.voice,
+            socketRef,
+            typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+          )
         } else if (engine === "ornith") {
           // Ornith 31B-dense engine — self-hosted realtime model
           try {
@@ -785,8 +829,17 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
             )
           } else {
-            console.log("[voice-ws] REALTIME_ENABLED is false — OPENAI_API_KEY not set")
-            socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+            console.log("[voice-ws] REALTIME_ENABLED is false — falling back to local voice")
+            startLocalVoiceSession(
+              sessionId,
+              msg.voice || "local",
+              socketRef,
+              typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+              {
+                fallbackFrom: "openai",
+                notice: "OPENAI_API_KEY missing — using local Whisper + Piper + Ollama",
+              },
+            )
           }
         }
         return
@@ -2613,81 +2666,14 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   : dbSessionId ?? undefined,
               )
             } else if (engine === "local") {
-              // Local engine — whisper.cpp STT + Piper TTS + Ollama LLM
-              // Uses the unified orchestrator to create and register the session,
-              // then wires event callbacks to the client WebSocket.
-              try {
-                const session = createAndRegisterVoiceSession({
-                  engine: "local",
-                  sessionId,
-                  voice: msg.voice,
-                  userId: sessionId.replace(/^voice_/, ""),
-                  enrichedInstructions: undefined,
-                  chatSessionId: typeof msg.tokidappSessionId === "string"
-                    ? msg.tokidappSessionId
-                    : dbSessionId ?? undefined,
-                  sendToClient: (msg: string) => socketRef.send(msg),
-                })
-
-                // Wire up event callbacks to the client WebSocket
-                session.onTranscript = (text: string, isFinal: boolean) => {
-                  socketRef.send(JSON.stringify({
-                    type: isFinal ? "transcript" : "transcript_partial",
-                    transcript: text,
-                    engine: "local",
-                  }))
-                }
-                session.onResponse = (text: string) => {
-                  socketRef.send(JSON.stringify({
-                    type: "message",
-                    content: text,
-                    engine: "local",
-                  }))
-                }
-                session.onAudio = (base64Chunk: string) => {
-                  socketRef.send(JSON.stringify({
-                    type: "audio",
-                    data: base64Chunk,
-                    engine: "local",
-                  }))
-                }
-                session.onCommand = (command: string, confidence: number) => {
-                  socketRef.send(JSON.stringify({
-                    type: "command_match",
-                    command,
-                    confidence,
-                    engine: "local",
-                  }))
-                }
-                session.onError = (error: Error) => {
-                  socketRef.send(JSON.stringify({
-                    type: "error",
-                    content: error.message,
-                    engine: "local",
-                  }))
-                }
-                session.onStatus((status: string) => {
-                  socketRef.send(JSON.stringify({
-                    type: "voice_status",
-                    status,
-                    engine: "local",
-                  }))
-                })
-
-                socketRef.send(JSON.stringify({
-                  type: "voice_ready",
-                  voice: msg.voice || "local",
-                  engine: "local",
-                  sessionId,
-                }))
-              } catch (err: any) {
-                console.error("[tokidapp-ws] Failed to start local voice session:", err?.message)
-                socketRef.send(JSON.stringify({
-                  type: "error",
-                  content: `Failed to start local voice session: ${err?.message}`,
-                  engine: "local",
-                }))
-              }
+              startLocalVoiceSession(
+                sessionId,
+                msg.voice,
+                socketRef,
+                typeof msg.tokidappSessionId === "string"
+                  ? msg.tokidappSessionId
+                  : dbSessionId ?? undefined,
+              )
             } else if (engine === "ornith") {
               // Ornith 31B-dense engine — self-hosted realtime model
               try {
@@ -2724,7 +2710,19 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                     : dbSessionId ?? undefined,
                 )
               } else {
-                socketRef.send(JSON.stringify({ type: "message", content: "Voice mode requires OPENAI_API_KEY." }))
+                console.log("[tokidapp-ws] REALTIME_ENABLED is false — falling back to local voice")
+                startLocalVoiceSession(
+                  sessionId,
+                  msg.voice || "local",
+                  socketRef,
+                  typeof msg.tokidappSessionId === "string"
+                    ? msg.tokidappSessionId
+                    : dbSessionId ?? undefined,
+                  {
+                    fallbackFrom: "openai",
+                    notice: "OPENAI_API_KEY missing — using local Whisper + Piper + Ollama",
+                  },
+                )
               }
             }
             return

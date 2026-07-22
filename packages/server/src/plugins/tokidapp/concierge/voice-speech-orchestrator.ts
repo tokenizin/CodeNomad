@@ -33,6 +33,11 @@ import {
   type LocalSTTCallbacks,
 } from "./local-stt"
 import {
+  createWhisperSTTConnection,
+  checkHealth as checkWhisperHealth,
+  type WhisperSTTConnection,
+} from "./whisper-stt"
+import {
   createLocalTTSConnection,
   type LocalTTSConnection,
   type LocalTTSCallbacks,
@@ -169,10 +174,18 @@ interface LLMResponse {
 // ── Environment Configuration ──────────────────────────────────────────
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434"
-const OLLAMA_PRIMARY_MODEL = process.env.OLLAMA_PRIMARY_MODEL?.trim() || "llama3.1:8b"
+/** Prefer Ornith when enabled — local voice fallback should use the same local chat model. */
+const OLLAMA_PRIMARY_MODEL =
+  process.env.OLLAMA_PRIMARY_MODEL?.trim() ||
+  (process.env.ORNITH_ENABLED?.trim() === "true"
+    ? process.env.ORNITH_MODEL_ID?.trim() || "ornith-31b-dense:latest"
+    : "llama3.1:8b")
 const OLLAMA_FALLBACK_MODEL = process.env.OLLAMA_FALLBACK_MODEL?.trim() || "qwen3:8b"
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 const CLOUD_MODEL = "gpt-4o-mini"
+/** When true, local voice never calls OpenAI for LLM (default). */
+const LOCAL_VOICE_NO_CLOUD =
+  process.env.VOICE_LOCAL_NO_CLOUD?.trim().toLowerCase() !== "false"
 
 const PRIMARY_MODEL_TIMEOUT = parseInt(process.env.PRIMARY_MODEL_TIMEOUT || "15000", 10)
 const FAST_FALLBACK_TIMEOUT = parseInt(process.env.FAST_FALLBACK_TIMEOUT || "10000", 10)
@@ -187,11 +200,17 @@ export const preSessionAudio = new PreSessionAudioManager(256)
 
 // ── LLM Provider Chain Builder ─────────────────────────────────────────
 
+export interface BuildProviderChainOptions {
+  /** When false, never append cloud OpenAI (used by local / no-cloud voice). Default true for Deepgram. */
+  allowCloud?: boolean
+}
+
 /**
- * Build the LLM fallback chain: Ollama primary → Ollama fast → Cloud GPT-4o mini.
- * Cloud fallback is only included when OPENAI_API_KEY is set.
+ * Build the LLM fallback chain: Ollama primary → Ollama fast → optional Cloud GPT-4o mini.
+ * Cloud is omitted when allowCloud=false or OPENAI_API_KEY is unset.
  */
-export function buildProviderChain(): LLMProvider[] {
+export function buildProviderChain(options: BuildProviderChainOptions = {}): LLMProvider[] {
+  const allowCloud = options.allowCloud !== false
   const chain: LLMProvider[] = [
     {
       name: "ollama-primary",
@@ -207,7 +226,7 @@ export function buildProviderChain(): LLMProvider[] {
     },
   ]
 
-  if (OPENAI_API_KEY) {
+  if (allowCloud && OPENAI_API_KEY) {
     chain.push({
       name: "cloud-openai",
       baseUrl: "https://api.openai.com",
@@ -313,8 +332,9 @@ async function callLLMProvider(
 export async function callLLMWithFallback(
   messages: ChatMessage[],
   toolDefs: unknown[] = [],
+  options: BuildProviderChainOptions = {},
 ): Promise<LLMResponse> {
-  const chain = buildProviderChain()
+  const chain = buildProviderChain(options)
   let lastError: Error | null = null
 
   for (const provider of chain) {
@@ -466,19 +486,20 @@ function createOpenAISession(params: CreateVoiceSessionParams): VoiceSession {
 // ── Local Engine Adapter ───────────────────────────────────────────────
 
 /**
- * Create a unified VoiceSession backed by whisper-stt + local-tts + Ollama LLM.
+ * Create a unified VoiceSession backed by local STT + Piper TTS + Ollama LLM.
  *
- * Pipeline: Browser Audio → whisper-stt (transcription) → Ollama LLM fallback chain
- *           → local-tts (Piper) → Audio back to browser.
+ * Pipeline: Browser Audio → whisper.cpp (preferred) or faster-whisper → Ollama
+ *           (no cloud) → Piper TTS → Audio back to browser.
+ *
+ * STT backend: WHISPER_SERVER healthy → whisper-stt; else Python local-stt.
  */
 function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const {
     sessionId,
-    userId,
     localTtsVoice,
     enrichedInstructions,
     chatSessionId,
-    sendToClient,
+    whisperServerUrl,
   } = params
 
   // Status management
@@ -486,7 +507,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const statusCallbacks: StatusCallback[] = []
   const commandCallbacks: Array<(cmd: string, conf: number) => void> = []
 
-  // Event callback slots (set by caller via VoiceSession properties)
+  // Event callback slots — route assigns session.onTranscript = … (setters)
   let transcriptCb: (text: string, isFinal: boolean) => void = () => {}
   let responseCb: (text: string) => void = () => {}
   let audioCb: (chunk: string) => void = () => {}
@@ -512,6 +533,11 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const systemPrompt = enrichedInstructions
     ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions
     : "You are Star World Assistant. Greet the user briefly and ask what they need."
+  conversation.push({
+    role: "system",
+    content: systemPrompt,
+    timestamp: Date.now(),
+  })
 
   // Audio buffer for incoming chunks
   const audioBuffer = new AudioBuffer({
@@ -543,7 +569,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     ttsCallbacks,
   )
 
-  // ── STT (Whisper) ────────────────────────────────────────────────
+  // ── STT (whisper.cpp preferred, Python faster-whisper fallback) ──
 
   const sttCallbacks: LocalSTTCallbacks = {
     onTranscript: (text, isFinal) => {
@@ -556,14 +582,12 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       transcriptCb(sanitized, true)
       transcript.push(`[user] ${sanitized}`)
 
-      // Add to conversation context
       conversation.push({
         role: "user",
         content: sanitized,
         timestamp: Date.now(),
       })
 
-      // Process through LLM
       if (!responseInProgress) {
         processLocalMessage(sanitized)
       }
@@ -584,9 +608,33 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     },
   }
 
-  const stt: LocalSTTConnection = createLocalSTTConnection(sttCallbacks)
+  const preferWhisper = process.env.LOCAL_STT_BACKEND?.trim() === "whisper"
 
-  // ── LLM Processing ───────────────────────────────────────────────
+  let stt: LocalSTTConnection | WhisperSTTConnection
+  let sttBackend: "whisper" | "python" = "python"
+
+  if (preferWhisper) {
+    // Explicit opt-in — whisper.cpp may segfault on some Homebrew builds.
+    sttBackend = "whisper"
+    stt = createWhisperSTTConnection({
+      serverUrl: whisperServerUrl,
+      ...sttCallbacks,
+    })
+    console.log(`${LOG_PREFIX} Local STT backend: whisper.cpp`)
+  } else {
+    stt = createLocalSTTConnection(sttCallbacks)
+    console.log(`${LOG_PREFIX} Local STT backend: python faster-whisper`)
+  }
+
+  // Mark connected when Piper is ready even if STT is still warming (mic can buffer).
+  setTimeout(() => {
+    if (!connected && tts.ready) {
+      connected = true
+      emitStatus("connected")
+    }
+  }, 1500)
+
+  // ── LLM Processing (local only — no OpenAI) ─────────────────────
 
   async function processLocalMessage(userText: string) {
     if (responseInProgress) return
@@ -594,7 +642,6 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     emitStatus("processing")
 
     try {
-      // Build messages for LLM (last 30 messages for context)
       const maxContext = 30
       const recentConversation = conversation.slice(-maxContext)
       const llmMessages: ChatMessage[] = recentConversation.map((m) => ({
@@ -602,7 +649,9 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
         content: m.content,
       }))
 
-      const llmResponse = await callLLMWithFallback(llmMessages)
+      const llmResponse = await callLLMWithFallback(llmMessages, [], {
+        allowCloud: !LOCAL_VOICE_NO_CLOUD ? true : false,
+      })
 
       if (llmResponse.content) {
         conversation.push({
@@ -614,7 +663,6 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
         responseCb(llmResponse.content)
 
-        // Synthesize speech via Piper TTS
         tts.speak(llmResponse.content)
         tts.flush()
       }
@@ -638,34 +686,43 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   // ── Play greeting ─────────────────────────────────────────────────
 
   const greetKey = (chatSessionId || "").trim() || sessionId
-  // Simple greeting dedup via module-level set
   if (!localGreetingPlayed.has(greetKey)) {
     localGreetingPlayed.add(greetKey)
-    const greetingText = "Hello! I'm your local voice assistant. How can I help?"
+    const greetingText =
+      "Hello! I'm your local voice assistant on this machine. How can I help?"
     conversation.push({
       role: "assistant",
       content: greetingText,
       timestamp: Date.now(),
     })
     transcript.push(`[assistant] ${sanitizeSpeechText(greetingText)}`)
-    responseCb(greetingText)
-    tts.speak(greetingText)
-    tts.flush()
-    setTimeout(() => emitStatus("connected"), 200)
+    // Defer greeting so route can assign onAudio/onResponse first
+    setTimeout(() => {
+      responseCb(greetingText)
+      tts.speak(greetingText)
+      tts.flush()
+      emitStatus("connected")
+      connected = true
+    }, 250)
   } else {
     emitStatus("connected")
+    connected = true
   }
 
-  // ── Return unified session ────────────────────────────────────────
+  // ── Return unified session (property setters for route wiring) ──
 
-  return {
+  const session: VoiceSession = {
     engine: "local",
     sessionId,
-    connected,
+    get connected() {
+      return connected
+    },
 
     sendAudio(chunk: string) {
       if (!connected) {
-        console.warn(`${LOG_PREFIX} sendAudio dropped — local session not connected`)
+        // Still accept early mic chunks into STT while warming up
+        audioBuffer.addChunk(chunk)
+        stt.sendAudio(chunk)
         return
       }
       audioBuffer.addChunk(chunk)
@@ -692,30 +749,65 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       emitStatus("error")
     },
 
-    onTranscript: (text, isFinal) => {
-      transcriptCb(text, isFinal)
-    },
-
-    onResponse: (text) => {
-      responseCb(text)
-    },
-
-    onAudio: (chunk) => {
-      audioCb(chunk)
-    },
-
+    onTranscript: () => {},
+    onResponse: () => {},
+    onAudio: () => {},
     onCommand: (command, confidence) => {
       for (const cb of commandCallbacks) cb(command, confidence)
     },
-
     onStatus: (cb: StatusCallback) => {
       statusCallbacks.push(cb)
+      cb(currentStatus)
     },
-
-    onError: (err) => {
-      errorCb(err)
-    },
+    onError: () => {},
   }
+
+  Object.defineProperty(session, "onTranscript", {
+    get: () => transcriptCb,
+    set: (cb: (text: string, isFinal: boolean) => void) => {
+      transcriptCb = cb
+    },
+    enumerable: true,
+    configurable: true,
+  })
+  Object.defineProperty(session, "onResponse", {
+    get: () => responseCb,
+    set: (cb: (text: string) => void) => {
+      responseCb = cb
+    },
+    enumerable: true,
+    configurable: true,
+  })
+  Object.defineProperty(session, "onAudio", {
+    get: () => audioCb,
+    set: (cb: (chunk: string) => void) => {
+      audioCb = cb
+    },
+    enumerable: true,
+    configurable: true,
+  })
+  Object.defineProperty(session, "onError", {
+    get: () => errorCb,
+    set: (cb: (err: Error) => void) => {
+      errorCb = cb
+    },
+    enumerable: true,
+    configurable: true,
+  })
+
+  void checkWhisperHealth(whisperServerUrl || process.env.WHISPER_SERVER_URL || "http://127.0.0.1:8090")
+    .then(() => {
+      console.log(`${LOG_PREFIX} whisper.cpp healthy (sttBackend=${sttBackend})`)
+    })
+    .catch(() => {
+      if (sttBackend === "whisper") {
+        console.warn(
+          `${LOG_PREFIX} whisper.cpp not reachable — start with: LOCAL_STT_MODEL=base.en bun run whisper:start`,
+        )
+      }
+    })
+
+  return session
 }
 
 /** Module-level greeting dedup for local engine. */

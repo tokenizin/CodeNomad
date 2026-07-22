@@ -1,5 +1,6 @@
 import { execSync } from "child_process"
 import * as fs from "fs"
+import * as os from "os"
 import * as path from "path"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback.js"
 import { apiGet } from "../orchestrator/starguard-client.js"
@@ -1637,8 +1638,50 @@ export async function googleSearch(
 
 // ── Wiki Tools ──────────────────────────────────────────────
 
-// Server cwd is CodeNomad/; wiki lives in parent contracts/docs/starworld/
-const WIKI_ROOT = path.resolve(process.cwd(), "../docs/starworld")
+/** Resolve the StarWORLD monorepo root (parent of docs/starworld). */
+export function resolveStarworldRepoRoot(): string {
+  if (process.env.STARWORLD_REPO_ROOT?.trim()) {
+    return path.resolve(process.env.STARWORLD_REPO_ROOT.trim())
+  }
+  if (process.env.CLI_WORKSPACE_ROOT?.trim()) {
+    const ws = path.resolve(process.env.CLI_WORKSPACE_ROOT.trim())
+    if (fs.existsSync(path.join(ws, "docs", "starworld"))) return ws
+  }
+  const cwd = process.cwd()
+  if (fs.existsSync(path.join(cwd, "docs", "starworld"))) return cwd
+  const parent = path.resolve(cwd, "..")
+  if (fs.existsSync(path.join(parent, "docs", "starworld"))) return parent
+  // Fallback: CodeNomad/ server cwd → parent is repo
+  return parent
+}
+
+/**
+ * Primary architecture Obsidian vault (lint / write / wiki_health).
+ * Override with OBSIDIAN_VAULT_ROOT (same env as the MCP server).
+ */
+export function resolveWikiRoot(): string {
+  if (process.env.OBSIDIAN_VAULT_ROOT?.trim()) {
+    return path.resolve(process.env.OBSIDIAN_VAULT_ROOT.trim())
+  }
+  return path.join(resolveStarworldRepoRoot(), "docs", "starworld")
+}
+
+/** Optional secondary Documents vault for expanded search_wiki roots. */
+export function resolveDocumentsVaultRoot(): string | null {
+  const fromEnv = process.env.OBSIDIAN_DOCUMENTS_VAULT?.trim()
+  if (fromEnv) {
+    const resolved = path.resolve(fromEnv)
+    return fs.existsSync(resolved) ? resolved : null
+  }
+  const homeDefault = path.join(os.homedir(), "Documents", "Obsidian Vault")
+  return fs.existsSync(homeDefault) ? homeDefault : null
+}
+
+export function resolveObsidianMcpBaseUrl(): string {
+  return (process.env.OBSIDIAN_MCP_URL || "http://127.0.0.1:5100").replace(/\/$/, "")
+}
+
+const WIKI_ROOT = resolveWikiRoot()
 const WIKI_ENTITIES = path.join(WIKI_ROOT, "entities")
 
 // Additional knowledge roots for expanded Realtime KB.
@@ -1646,9 +1689,9 @@ const WIKI_ENTITIES = path.join(WIKI_ROOT, "entities")
 // Write/lint/health flows use ONLY WIKI_ROOT (primary vault).
 const WIKI_ROOTS = [
   WIKI_ROOT,
-  path.resolve(process.cwd(), "../.opencode/context/project-intelligence"),
-  path.resolve(process.cwd(), "../docs/architecture/ecosystem"),
-  "/Users/alexshapiro/Documents/Obsidian Vault",
+  path.join(resolveStarworldRepoRoot(), ".opencode", "context", "project-intelligence"),
+  path.join(resolveStarworldRepoRoot(), "docs", "architecture", "ecosystem"),
+  ...(resolveDocumentsVaultRoot() ? [resolveDocumentsVaultRoot()!] : []),
 ]
 
 /** Read a wiki entity page by name. Returns full markdown content.
@@ -1789,13 +1832,14 @@ export async function searchWiki(query: string): Promise<string> {
   }
 }
 
-/** Search the Obsidian vault via the local MCP server (http://127.0.0.1:5100).
+/** Search the Obsidian vault via the local MCP server.
  *  Falls back gracefully if the MCP server is not running. */
 export async function searchObsidianVault(query: string): Promise<string> {
   if (!query?.trim()) return "Please provide a search term."
 
+  const mcpBase = resolveObsidianMcpBaseUrl()
   try {
-    const res = await fetch(`http://127.0.0.1:5100/vault/search/${encodeURIComponent(query.trim())}`, {
+    const res = await fetch(`${mcpBase}/vault/search/${encodeURIComponent(query.trim())}`, {
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
@@ -1822,8 +1866,9 @@ export async function searchObsidianVault(query: string): Promise<string> {
 export async function readObsidianNote(notePath: string): Promise<string> {
   if (!notePath?.trim()) return "Please provide a note path (e.g. Dashboard/Live-Context/Live-Context.md)."
 
+  const mcpBase = resolveObsidianMcpBaseUrl()
   try {
-    const res = await fetch(`http://127.0.0.1:5100/vault/${encodeURIComponent(notePath.trim())}`, {
+    const res = await fetch(`${mcpBase}/vault/${encodeURIComponent(notePath.trim())}`, {
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
@@ -1839,6 +1884,96 @@ export async function readObsidianNote(notePath: string): Promise<string> {
   } catch {
     return "Obsidian vault unavailable (MCP server not running)."
   }
+}
+
+/** Probe whether the Obsidian MCP HTTP vault endpoints are reachable. */
+export async function probeObsidianMcpAccess(): Promise<{
+  online: boolean
+  baseUrl: string
+  sampleHits?: number
+  error?: string
+}> {
+  const baseUrl = resolveObsidianMcpBaseUrl()
+  try {
+    const res = await fetch(`${baseUrl}/vault/search/Index`, {
+      signal: AbortSignal.timeout(3_000),
+    })
+    if (!res.ok) {
+      return { online: false, baseUrl, error: `HTTP ${res.status}` }
+    }
+    const results = await res.json()
+    return {
+      online: true,
+      baseUrl,
+      sampleHits: Array.isArray(results) ? results.length : 0,
+    }
+  } catch (err) {
+    return { online: false, baseUrl, error: (err as Error).message }
+  }
+}
+
+/**
+ * Build the Obsidian vault + WikiLint Health block for voice session context.
+ * Injected into enrichedInstructions so the voice agent knows which vault is
+ * active and the current wiki health score without a tool call.
+ */
+export async function buildVaultSessionContext(): Promise<string> {
+  const wikiRoot = resolveWikiRoot()
+  const docsVault = resolveDocumentsVaultRoot()
+  const wikiAccessible = fs.existsSync(wikiRoot)
+  const entityCount = wikiAccessible && fs.existsSync(path.join(wikiRoot, "entities"))
+    ? fs.readdirSync(path.join(wikiRoot, "entities")).filter((f) => f.endsWith(".md")).length
+    : 0
+
+  const mcp = await probeObsidianMcpAccess()
+
+  let healthLine = "WikiLint Health: unavailable"
+  let healthDetails: string[] = []
+  try {
+    const raw = await getWikiHealth()
+    const health = JSON.parse(raw) as {
+      healthScore?: number
+      summary?: string
+      totalEntities?: number
+      orphanCount?: number
+      brokenLinkCount?: number
+      staleCount?: number
+      lastUpdate?: string
+      topIssues?: string[]
+      error?: string
+    }
+    if (health.error) {
+      healthLine = `WikiLint Health: error — ${health.error}`
+    } else {
+      healthLine = `WikiLint Health: ${health.summary || `${health.healthScore}/100`}`
+      healthDetails = [
+        `- Entities: ${health.totalEntities ?? entityCount} | Orphans: ${health.orphanCount ?? 0} | Broken links: ${health.brokenLinkCount ?? 0} | Stale: ${health.staleCount ?? 0}`,
+        `- Last entity update: ${health.lastUpdate || "unknown"}`,
+      ]
+      if (health.topIssues?.length) {
+        healthDetails.push(`- Top issues: ${health.topIssues.slice(0, 3).join("; ")}`)
+      }
+    }
+  } catch (err) {
+    healthLine = `WikiLint Health: failed — ${(err as Error).message}`
+  }
+
+  const lines = [
+    "## Obsidian Vault Context",
+    `- Architecture vault: \`${wikiRoot}\` (accessible: ${wikiAccessible ? "yes" : "no"}, ${entityCount} entities)`,
+    `- Obsidian MCP: \`${mcp.baseUrl}\` (online: ${mcp.online ? "yes" : "no"}${mcp.error ? `, ${mcp.error}` : ""})`,
+  ]
+  if (docsVault) {
+    lines.push(`- Documents vault (secondary search): \`${docsVault}\` (accessible: yes)`)
+  } else {
+    lines.push("- Documents vault (secondary search): not configured")
+  }
+  lines.push("")
+  lines.push(`## ${healthLine}`)
+  lines.push(...healthDetails)
+  lines.push("- Prefer `read_wiki_page` / `search_wiki` / `wiki_health` for architecture facts; use `search_obsidian_vault` / `read_obsidian_note` when MCP is online.")
+
+  return lines.join("\n")
 }
 
 /** Get entity connections from wiki page wikilinks. */
