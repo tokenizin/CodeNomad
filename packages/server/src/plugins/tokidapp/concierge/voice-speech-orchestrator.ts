@@ -178,7 +178,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1
 const OLLAMA_PRIMARY_MODEL =
   process.env.OLLAMA_PRIMARY_MODEL?.trim() ||
   (process.env.ORNITH_ENABLED?.trim() === "true"
-    ? process.env.ORNITH_MODEL_ID?.trim() || "ornith-31b-dense:latest"
+    ? process.env.ORNITH_MODEL_ID?.trim() || "ornith:latest"
     : "llama3.1:8b")
 const OLLAMA_FALLBACK_MODEL = process.env.OLLAMA_FALLBACK_MODEL?.trim() || "qwen3:8b"
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""

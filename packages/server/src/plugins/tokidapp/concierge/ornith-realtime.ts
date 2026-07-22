@@ -82,7 +82,7 @@ const ORNITH_OLLAMA_ORIGIN = (() => {
 /** @deprecated Prefer ORNITH_OLLAMA_ORIGIN + /api/chat — /v1 leaves Ornith content empty (reasoning-only). */
 const ORNITH_ENDPOINT = `${ORNITH_OLLAMA_ORIGIN}/v1`
 const ORNITH_MODEL =
-  process.env.ORNITH_MODEL_ID?.trim() || 'ornith-31b-dense:latest'
+  process.env.ORNITH_MODEL_ID?.trim() || 'ornith:latest'
 /** Ornith API key (unused by Ollama; kept for future dedicated Ornith HTTP). */
 const ORNITH_API_KEY = process.env.ORNITH_API_KEY || ''
 /** Default voice for Ornith engine. Override with ORNITH_DEFAULT_VOICE. */
