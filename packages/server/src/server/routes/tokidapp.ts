@@ -131,6 +131,11 @@ function parseVoiceEngine(raw: unknown): VoiceEngine {
   return "openai"
 }
 
+function parseVoiceLocale(raw: unknown): "en" | "id" | "auto" {
+  if (raw === "id" || raw === "auto" || raw === "en") return raw
+  return "en"
+}
+
 /** Public tunnel URL for constructing blob proxy URLs that OpenAI can fetch.
  *  The tunnel has the blob proxy route and doesn't require JWT auth. */
 const TUNNEL_PUBLIC_URL = (process.env.TUNNEL_PUBLIC_URL || "https://chat.tokenizin.com").replace(/\/+$/, "")
@@ -474,16 +479,29 @@ function startLocalVoiceSession(
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
   chatSessionId?: string,
-  opts?: { fallbackFrom?: "openai"; notice?: string },
+  opts?: {
+    fallbackFrom?: "openai"
+    notice?: string
+    locale?: "en" | "id" | "auto"
+    interpret?: boolean
+  },
 ): void {
   try {
     ensureSingleUserSession(sessionId)
     endOrchestratorVoiceSession(sessionId)
 
+    const voice =
+      typeof requestedVoice === "string" && requestedVoice !== "local"
+        ? requestedVoice
+        : process.env.LOCAL_TTS_VOICE?.trim() || "piper-en-female-professional"
+
     const session = createAndRegisterVoiceSession({
       engine: "local",
       sessionId,
-      voice: typeof requestedVoice === "string" ? requestedVoice : undefined,
+      voice,
+      localTtsVoice: voice,
+      locale: opts?.locale || "en",
+      interpret: Boolean(opts?.interpret),
       userId: sessionId.startsWith("voice_") ? sessionId.slice(6) : sessionId,
       enrichedInstructions: undefined,
       chatSessionId,
@@ -549,9 +567,11 @@ function startLocalVoiceSession(
     socketRef.send(
       JSON.stringify({
         type: "voice_ready",
-        voice: typeof requestedVoice === "string" ? requestedVoice : "local",
+        voice,
         engine: "local",
         sessionId,
+        locale: opts?.locale || "en",
+        interpret: Boolean(opts?.interpret),
         ...(opts?.fallbackFrom ? { fallbackFrom: opts.fallbackFrom } : {}),
         ...(opts?.notice ? { notice: opts.notice } : {}),
       }),
@@ -789,17 +809,21 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             msg.voice,
             socketRef,
             typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+            {
+              locale: parseVoiceLocale(msg.locale),
+              interpret: Boolean(msg.interpret),
+            },
           )
         } else if (engine === "ornith") {
           // Ornith 31B-dense engine — self-hosted realtime model
           try {
             const sendToClient = (msg: string) => socketRef.send(msg)
-            const ornithSession = createOrnithSession(
-              socketRef as unknown as WebSocket,
-              sessionId,
-              msg.voice || "ornith-default",
+            createOrnithSession(socketRef as unknown as WebSocket, sessionId, {
+              voiceId: typeof msg.voice === "string" ? msg.voice : "ornith-default",
               sendToClient,
-            )
+              locale: parseVoiceLocale(msg.locale),
+              interpret: Boolean(msg.interpret),
+            })
 
             // Send voice_ready confirmation
             socketRef.send(JSON.stringify({
@@ -807,6 +831,8 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               voice: msg.voice || "ornith-default",
               engine: "ornith",
               sessionId,
+              locale: parseVoiceLocale(msg.locale),
+              interpret: Boolean(msg.interpret),
             }))
 
             // Ornith messages arrive on the same WS — dispatch to handler
@@ -2673,23 +2699,29 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 typeof msg.tokidappSessionId === "string"
                   ? msg.tokidappSessionId
                   : dbSessionId ?? undefined,
+                {
+                  locale: parseVoiceLocale(msg.locale),
+                  interpret: Boolean(msg.interpret),
+                },
               )
             } else if (engine === "ornith") {
               // Ornith 31B-dense engine — self-hosted realtime model
               try {
                 const sendToClient = (msg: string) => socketRef.send(msg)
-                const ornithSession = createOrnithSession(
-                  socketRef as unknown as WebSocket,
-                  sessionId,
-                  msg.voice || "ornith-default",
+                createOrnithSession(socketRef as unknown as WebSocket, sessionId, {
+                  voiceId: typeof msg.voice === "string" ? msg.voice : "ornith-default",
                   sendToClient,
-                )
+                  locale: parseVoiceLocale(msg.locale),
+                  interpret: Boolean(msg.interpret),
+                })
 
                 socketRef.send(JSON.stringify({
                   type: "voice_ready",
                   voice: msg.voice || "ornith-default",
                   engine: "ornith",
                   sessionId,
+                  locale: parseVoiceLocale(msg.locale),
+                  interpret: Boolean(msg.interpret),
                 }))
               } catch (err: any) {
                 console.error("[tokidapp-ws] Failed to start ornith voice session:", err?.message)

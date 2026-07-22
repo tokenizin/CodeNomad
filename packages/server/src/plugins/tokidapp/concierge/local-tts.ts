@@ -6,20 +6,27 @@
  * into sentences for low-latency streaming playback — the user hears the first
  * sentence while later sentences are still synthesizing.
  *
+ * Prosody uses Piper SynthesisConfig (length_scale / noise_scale), not crude
+ * PCM sample-skipping.
+ *
  * @module local-tts
  */
 
 import { spawn, type ChildProcess } from "node:child_process"
-import { once } from "node:events"
 import { resolve } from "node:path"
 import { resolveLocalVoicePython } from "./resolve-local-voice-python"
+import {
+  resolvePiperModelAndSynthesis,
+  type PiperSynthesisParams,
+} from "./piper-voice-catalog"
 
 // ── Environment Configuration ───────────────────────────────────────────
 
-/** Piper voice model (default: en_US-amy-medium). */
-const LOCAL_TTS_VOICE = process.env.LOCAL_TTS_VOICE?.trim() || "en_US-amy-medium"
+/** Piper voice model or profile id (default: high-quality Lessac). */
+const LOCAL_TTS_VOICE =
+  process.env.LOCAL_TTS_VOICE?.trim() || "en_US-lessac-high"
 
-/** Speech rate multiplier (0.5–2.0, default 1.0). */
+/** Speech rate multiplier (0.5–2.0). Prefer length_scale on profiles. */
 const LOCAL_TTS_SPEED = parseFloat(process.env.LOCAL_TTS_SPEED || "1.0") || 1.0
 
 /** Enable sentence-based streaming (default: true). */
@@ -49,16 +56,30 @@ export interface LocalTTSCallbacks {
   onClose?: (code: number) => void
 }
 
+export interface LocalTTSOptions {
+  /** Piper model key or profile id. */
+  voice?: string
+  /** Default synthesis calibration for this connection. */
+  synthesis?: PiperSynthesisParams
+}
+
 /** Handle returned by createLocalTTSConnection. */
+export type LocalSpeakOverrides = PiperSynthesisParams & {
+  /** Switch Piper ONNX model for this utterance (e.g. Indonesian). */
+  voice?: string
+}
+
 export interface LocalTTSConnection {
   /** Send text for TTS synthesis. Sentences are streamed individually. */
-  speak(text: string): void
+  speak(text: string, overrides?: LocalSpeakOverrides): void
   /** Flush any buffered audio (signals end of utterance). */
   flush(): void
   /** Gracefully shut down the Python process. */
   close(): void
   /** Whether the underlying process is alive and ready. */
   readonly ready: boolean
+  /** Resolved Piper ONNX model key. */
+  readonly voiceModel: string
 }
 
 /** JSON message types sent by the Python server. */
@@ -86,12 +107,23 @@ export function splitSentences(text: string): string[] {
   return raw.length > 0 ? raw : [text]
 }
 
+function toRequestFields(synthesis?: PiperSynthesisParams): Record<string, unknown> {
+  if (!synthesis) return {}
+  const out: Record<string, unknown> = {}
+  if (synthesis.lengthScale != null) out.length_scale = synthesis.lengthScale
+  else if (synthesis.speed != null && synthesis.speed > 0) {
+    out.length_scale = 1 / synthesis.speed
+  }
+  if (synthesis.noiseScale != null) out.noise_scale = synthesis.noiseScale
+  if (synthesis.noiseWScale != null) out.noise_w_scale = synthesis.noiseWScale
+  if (synthesis.volume != null) out.volume = synthesis.volume
+  if (synthesis.speakerId != null) out.speaker_id = synthesis.speakerId
+  if (synthesis.speed != null) out.speed = synthesis.speed
+  return out
+}
+
 // ── Factory ─────────────────────────────────────────────────────────────
 
-/**
- * Resolve the absolute path to `local_tts_server.py`.
- * Looks in the same directory as this module.
- */
 function resolvePythonScript(): string {
   return resolve(import.meta.dirname, "local_tts_server.py")
 }
@@ -99,20 +131,34 @@ function resolvePythonScript(): string {
 /**
  * Create a connection to the local Piper TTS server.
  *
- * Spawns a Python child process and manages its lifecycle.  Call `speak(text)`
- * to synthesize, receive audio via `onAudio(base64Chunk)`, and call `close()`
- * when done.
- *
- * @param voice - Piper voice name (default from LOCAL_TTS_VOICE env)
- * @param callbacks - Event callbacks
- * @returns A LocalTTSConnection handle
+ * @param voiceOrOptions - Piper voice / profile id, or options bag
+ * @param callbacks - Event callbacks (when first arg is a string)
  */
 export function createLocalTTSConnection(
-  voice?: string,
+  voiceOrOptions?: string | LocalTTSOptions,
   callbacks?: LocalTTSCallbacks,
 ): LocalTTSConnection {
-  const resolvedVoice = voice || LOCAL_TTS_VOICE
-  const { onAudio, onFlushed, onError, onClose } = callbacks || {}
+  let voiceInput: string | undefined
+  let defaultSynthesis: PiperSynthesisParams | undefined
+  let cbs: LocalTTSCallbacks | undefined = callbacks
+
+  if (typeof voiceOrOptions === "string" || voiceOrOptions == null) {
+    voiceInput = voiceOrOptions || undefined
+  } else {
+    voiceInput = voiceOrOptions.voice
+    defaultSynthesis = voiceOrOptions.synthesis
+    cbs = callbacks
+  }
+
+  const resolved = resolvePiperModelAndSynthesis(voiceInput || LOCAL_TTS_VOICE)
+  const resolvedVoice = resolved.model
+  const baseSynthesis: PiperSynthesisParams = {
+    ...resolved.synthesis,
+    ...defaultSynthesis,
+    speed: defaultSynthesis?.speed ?? LOCAL_TTS_SPEED,
+  }
+
+  const { onAudio, onFlushed, onError, onClose } = cbs || {}
   const scriptPath = resolvePythonScript()
 
   let proc: ChildProcess | null = null
@@ -120,8 +166,6 @@ export function createLocalTTSConnection(
   let ready = false
   let restartAttempts = 0
   let lineBuffer = ""
-
-  // ── Process Management ──────────────────────────────────────────────
 
   function spawnProcess() {
     if (closed) return
@@ -132,7 +176,6 @@ export function createLocalTTSConnection(
         ...process.env,
         LOCAL_TTS_VOICE: resolvedVoice,
         LOCAL_TTS_SPEED: String(LOCAL_TTS_SPEED),
-        // Prefer repo voices, then user cache
         PIPER_VOICE_DIR:
           process.env.PIPER_VOICE_DIR?.trim() ||
           resolve(process.cwd(), "models/piper-voices"),
@@ -160,7 +203,7 @@ export function createLocalTTSConnection(
       if (!closed) scheduleRestart()
     })
 
-    console.log("[local-tts] spawned python3 pid:", proc.pid)
+    console.log("[local-tts] spawned python3 pid:", proc.pid, "voice:", resolvedVoice)
   }
 
   function scheduleRestart() {
@@ -174,7 +217,9 @@ export function createLocalTTSConnection(
 
     const delay = RESTART_BACKOFF_BASE_MS * Math.pow(2, restartAttempts)
     restartAttempts++
-    console.log(`[local-tts] restarting in ${delay}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`)
+    console.log(
+      `[local-tts] restarting in ${delay}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`,
+    )
 
     setTimeout(() => {
       if (!closed) spawnProcess()
@@ -185,12 +230,9 @@ export function createLocalTTSConnection(
     restartAttempts = 0
   }
 
-  // ── Stdout Handling ─────────────────────────────────────────────────
-
   function handleStdoutData(chunk: string) {
     lineBuffer += chunk
 
-    // Process complete lines (delimited by newline)
     let newlineIdx: number
     while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
       const line = lineBuffer.slice(0, newlineIdx).trim()
@@ -236,51 +278,58 @@ export function createLocalTTSConnection(
     console.warn("[local-tts] unknown server message:", JSON.stringify(msg).slice(0, 200))
   }
 
-  // ── Lifecycle ───────────────────────────────────────────────────────
-
-  function sendRequest(text: string, voiceOverride?: string, speedOverride?: number) {
+  function sendRequest(
+    text: string,
+    voiceOverride?: string,
+    synthesisOverride?: PiperSynthesisParams,
+  ) {
     if (!proc?.stdin?.writable) {
       onError?.(new Error("Python process not running — cannot send text"))
       return
     }
 
+    const merged: PiperSynthesisParams = {
+      ...baseSynthesis,
+      ...synthesisOverride,
+    }
+
     const request = {
       text,
       voice: voiceOverride || resolvedVoice,
-      speed: speedOverride ?? LOCAL_TTS_SPEED,
+      ...toRequestFields(merged),
     }
 
     proc.stdin.write(JSON.stringify(request) + "\n")
   }
 
-  // Spawn immediately
   spawnProcess()
-
-  // ── Public Interface ────────────────────────────────────────────────
 
   return {
     get ready() {
       return ready
     },
 
-    speak(text: string): void {
+    get voiceModel() {
+      return resolvedVoice
+    },
+
+    speak(text: string, overrides?: LocalSpeakOverrides): void {
       if (closed) {
         onError?.(new Error("Cannot speak — connection is closed"))
         return
       }
       if (!text.trim()) return
 
+      const voiceOverride = overrides?.voice
+      const { voice: _v, ...synthOnly } = overrides || {}
       const sentences = splitSentences(text)
       for (const sentence of sentences) {
-        sendRequest(sentence)
+        sendRequest(sentence, voiceOverride, synthOnly)
       }
     },
 
     flush(): void {
       if (closed || !proc?.stdin?.writable) return
-      // Send an empty text to trigger a flush from the server side
-      // The server naturally flushes after each utterance, but this
-      // provides an explicit flush signal for edge cases.
       proc.stdin.write(JSON.stringify({ text: "", voice: resolvedVoice }) + "\n")
     },
 
@@ -293,20 +342,19 @@ export function createLocalTTSConnection(
         try {
           proc.stdin?.end()
         } catch {
-          // stdin may already be closed
+          /* stdin may already be closed */
         }
         try {
           proc.kill("SIGTERM")
         } catch {
-          // process may already be dead
+          /* process may already be dead */
         }
-        // Force kill after 3s if SIGTERM doesn't work
         setTimeout(() => {
           if (proc && !proc.killed) {
             try {
               proc.kill("SIGKILL")
             } catch {
-              // already dead
+              /* already dead */
             }
           }
         }, 3000)

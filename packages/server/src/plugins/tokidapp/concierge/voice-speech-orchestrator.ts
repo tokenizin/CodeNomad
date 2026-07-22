@@ -42,6 +42,16 @@ import {
   type LocalTTSConnection,
   type LocalTTSCallbacks,
 } from "./local-tts"
+import {
+  pickPiperVoiceForLocale,
+  resolvePiperModelAndSynthesis,
+} from "./piper-voice-catalog"
+import {
+  detectSpeechLanguage,
+  planVoiceLocales,
+  translateSpeechText,
+  type SpeechLang,
+} from "./voice-translate"
 import { AudioBuffer, PreSessionAudioManager } from "./audio-buffer"
 import type { RealtimeVoiceId } from "./realtime-voices"
 import type { DeepgramVoiceId } from "./deepgram-speech"
@@ -126,12 +136,16 @@ export interface CreateVoiceSessionParams {
 
   // ── Engine-Specific Overrides (optional) ─────────────────────
 
-  /** TTS voice (OpenAI: RealtimeVoiceId, Deepgram: DeepgramVoiceId). */
+  /** TTS voice (OpenAI / Deepgram / Piper profile id). */
   voice?: string
   /** Whisper server URL override (local engine). */
   whisperServerUrl?: string
-  /** Piper voice override (local engine). */
+  /** Piper voice / profile override (local engine). */
   localTtsVoice?: string
+  /** Speech locale: en | id | auto. */
+  locale?: "en" | "id" | "auto"
+  /** Interpret mode: STT→EN for LLM, reply TTS in user language. */
+  interpret?: boolean
 }
 
 // ── LLM Fallback Chain (Shared) ───────────────────────────────────────
@@ -496,11 +510,19 @@ function createOpenAISession(params: CreateVoiceSessionParams): VoiceSession {
 function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const {
     sessionId,
+    voice,
     localTtsVoice,
     enrichedInstructions,
     chatSessionId,
     whisperServerUrl,
+    locale = "en",
+    interpret = false,
   } = params
+
+  const voiceKey = localTtsVoice || voice
+  const localePlan = planVoiceLocales({ locale, interpret })
+  const piperProfile = pickPiperVoiceForLocale(voiceKey, locale === "auto" ? "en" : locale)
+  const piperResolved = resolvePiperModelAndSynthesis(piperProfile.id)
 
   // Status management
   let currentStatus: VoiceSessionStatus = "connecting"
@@ -528,11 +550,18 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const transcript: string[] = []
   let responseInProgress = false
   let connected = false
+  let lastUserLang: SpeechLang = locale === "id" ? "id" : "en"
 
   // Build system prompt
+  const interpretHint = interpret
+    ? "\n\nYou receive English transcripts (possibly translated from Indonesian). Reply in clear English; the system will speak the reply in the user's language."
+    : locale === "id"
+      ? "\n\nThe user speaks Indonesian. Reply in Bahasa Indonesia."
+      : ""
   const systemPrompt = enrichedInstructions
-    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions
-    : "You are Star World Assistant. Greet the user briefly and ask what they need."
+    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions + interpretHint
+    : "You are Star World Assistant. Greet the user briefly and ask what they need." +
+      interpretHint
   conversation.push({
     role: "system",
     content: systemPrompt,
@@ -565,9 +594,22 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   }
 
   const tts: LocalTTSConnection = createLocalTTSConnection(
-    localTtsVoice,
+    { voice: piperResolved.model, synthesis: piperResolved.synthesis },
     ttsCallbacks,
   )
+
+  function speakLocalized(text: string, ttsLang: SpeechLang) {
+    const profile = pickPiperVoiceForLocale(
+      voiceKey || piperProfile.id,
+      ttsLang,
+    )
+    const resolved = resolvePiperModelAndSynthesis(profile.id)
+    tts.speak(text, {
+      voice: resolved.model,
+      ...resolved.synthesis,
+    })
+    tts.flush()
+  }
 
   // ── STT (whisper.cpp preferred, Python faster-whisper fallback) ──
 
@@ -582,14 +624,8 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       transcriptCb(sanitized, true)
       transcript.push(`[user] ${sanitized}`)
 
-      conversation.push({
-        role: "user",
-        content: sanitized,
-        timestamp: Date.now(),
-      })
-
       if (!responseInProgress) {
-        processLocalMessage(sanitized)
+        void processLocalMessage(sanitized)
       }
     },
     onUtteranceEnd: () => {
@@ -614,16 +650,24 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   let sttBackend: "whisper" | "python" = "python"
 
   if (preferWhisper) {
-    // Explicit opt-in — whisper.cpp may segfault on some Homebrew builds.
     sttBackend = "whisper"
     stt = createWhisperSTTConnection({
       serverUrl: whisperServerUrl,
+      language: localePlan.sttLanguage ?? undefined,
       ...sttCallbacks,
     })
     console.log(`${LOG_PREFIX} Local STT backend: whisper.cpp`)
   } else {
-    stt = createLocalSTTConnection(sttCallbacks)
-    console.log(`${LOG_PREFIX} Local STT backend: python faster-whisper`)
+    stt = createLocalSTTConnection({
+      language: localePlan.sttLanguage === null ? "auto" : localePlan.sttLanguage,
+      model: localePlan.sttModel,
+      ...sttCallbacks,
+    })
+    console.log(
+      `${LOG_PREFIX} Local STT backend: python faster-whisper`,
+      `lang=${localePlan.sttLanguage ?? "auto"}`,
+      `model=${localePlan.sttModel || "default"}`,
+    )
   }
 
   // Mark connected when Piper is ready even if STT is still warming (mic can buffer).
@@ -642,6 +686,32 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     emitStatus("processing")
 
     try {
+      const detected = detectSpeechLanguage(userText)
+      lastUserLang = locale === "auto" ? detected : locale === "id" ? "id" : "en"
+      const plan = planVoiceLocales({
+        locale,
+        interpret,
+        detectedFromText: detected,
+      })
+
+      let llmUserText = userText
+      if (plan.llmLang !== plan.userLang || (interpret && detected !== "en")) {
+        const fromLang = interpret ? detected : plan.userLang
+        if (fromLang !== plan.llmLang) {
+          llmUserText = await translateSpeechText(userText, fromLang, plan.llmLang)
+          console.log(
+            `${LOG_PREFIX} Translated user ${fromLang}→${plan.llmLang}:`,
+            llmUserText.slice(0, 100),
+          )
+        }
+      }
+
+      conversation.push({
+        role: "user",
+        content: llmUserText,
+        timestamp: Date.now(),
+      })
+
       const maxContext = 30
       const recentConversation = conversation.slice(-maxContext)
       const llmMessages: ChatMessage[] = recentConversation.map((m) => ({
@@ -659,12 +729,24 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
           content: llmResponse.content,
           timestamp: Date.now(),
         })
-        transcript.push(`[assistant] ${sanitizeSpeechText(llmResponse.content)}`)
 
-        responseCb(llmResponse.content)
+        let speakText = llmResponse.content
+        const ttsLang = interpret ? lastUserLang : plan.ttsLang
+        if (ttsLang !== plan.llmLang) {
+          speakText = await translateSpeechText(
+            llmResponse.content,
+            plan.llmLang,
+            ttsLang,
+          )
+          console.log(
+            `${LOG_PREFIX} Translated reply ${plan.llmLang}→${ttsLang}:`,
+            speakText.slice(0, 100),
+          )
+        }
 
-        tts.speak(llmResponse.content)
-        tts.flush()
+        transcript.push(`[assistant] ${sanitizeSpeechText(speakText)}`)
+        responseCb(speakText)
+        speakLocalized(speakText, ttsLang)
       }
     } catch (err) {
       const errorMsg = `Error processing message: ${(err as Error).message}`
@@ -672,8 +754,12 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       errorCb(new Error(errorMsg))
 
       try {
-        tts.speak("I encountered an error processing that. Please try again.")
-        tts.flush()
+        speakLocalized(
+          lastUserLang === "id"
+            ? "Maaf, terjadi kesalahan. Silakan coba lagi."
+            : "I encountered an error processing that. Please try again.",
+          lastUserLang,
+        )
       } catch {
         // Non-critical
       }
@@ -689,18 +775,18 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   if (!localGreetingPlayed.has(greetKey)) {
     localGreetingPlayed.add(greetKey)
     const greetingText =
-      "Hello! I'm your local voice assistant on this machine. How can I help?"
+      locale === "id"
+        ? "Halo! Saya asisten suara lokal di mesin ini. Ada yang bisa dibantu?"
+        : "Hello! I'm your local voice assistant on this machine. How can I help?"
     conversation.push({
       role: "assistant",
       content: greetingText,
       timestamp: Date.now(),
     })
     transcript.push(`[assistant] ${sanitizeSpeechText(greetingText)}`)
-    // Defer greeting so route can assign onAudio/onResponse first
     setTimeout(() => {
       responseCb(greetingText)
-      tts.speak(greetingText)
-      tts.flush()
+      speakLocalized(greetingText, locale === "id" ? "id" : "en")
       emitStatus("connected")
       connected = true
     }, 250)
@@ -720,7 +806,6 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
     sendAudio(chunk: string) {
       if (!connected) {
-        // Still accept early mic chunks into STT while warming up
         audioBuffer.addChunk(chunk)
         stt.sendAudio(chunk)
         return
@@ -732,8 +817,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     speak(text: string) {
       if (!text.trim()) return
       emitStatus("speaking")
-      tts.speak(text)
-      tts.flush()
+      speakLocalized(text, lastUserLang)
     },
 
     stop() {
@@ -954,8 +1038,12 @@ function createOrnithAdapter(params: CreateVoiceSessionParams): VoiceSession {
   const ornithSession = createOrnithSession(
     stubWs,
     sessionId,
-    voice || undefined,
-    sendToClient,
+    {
+      voiceId: voice || undefined,
+      sendToClient,
+      locale: params.locale || "en",
+      interpret: Boolean(params.interpret),
+    },
   )
 
   emitStatus("connected")

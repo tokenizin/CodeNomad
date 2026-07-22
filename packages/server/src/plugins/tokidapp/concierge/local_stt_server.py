@@ -33,7 +33,9 @@ import numpy as np
 
 MODEL_NAME = os.environ.get("LOCAL_STT_MODEL", "base.en")
 DEVICE = os.environ.get("LOCAL_STT_DEVICE", "cpu")
-LANGUAGE = os.environ.get("LOCAL_STT_LANGUAGE", "en")
+LANGUAGE_RAW = os.environ.get("LOCAL_STT_LANGUAGE", "en")
+# Empty / "auto" / "none" → let Whisper detect language (needed for Indonesian)
+LANGUAGE = None if LANGUAGE_RAW.strip().lower() in ("", "auto", "none", "null") else LANGUAGE_RAW.strip()
 BEAM_SIZE = int(os.environ.get("LOCAL_STT_BEAM_SIZE", "5"))
 VAD_THRESHOLD = float(os.environ.get("LOCAL_STT_VAD_THRESHOLD", "0.5"))
 SAMPLE_RATE = 24000

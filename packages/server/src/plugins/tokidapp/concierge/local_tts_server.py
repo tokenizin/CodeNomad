@@ -7,18 +7,24 @@ base64-encoded raw PCM audio (24 kHz mono, 16-bit signed LE) to stdout.
 
 IPC protocol (JSON lines over stdin/stdout):
 
-  stdin:  {"text": "Hello world", "voice": "en_US-amy-medium", "speed": 1.0}
+  stdin:  {
+            "text": "Hello world",
+            "voice": "en_US-lessac-high",
+            "speed": 1.0,                 # optional legacy; prefer length_scale
+            "length_scale": 1.05,
+            "noise_scale": 0.55,
+            "noise_w_scale": 0.75,
+            "volume": 1.0,
+            "speaker_id": null,
+            "normalize_audio": true
+          }
   stdout: {"audio": "<base64-pcm-chunk>"}   — per-sentence audio
           {"type": "flushed"}                — all sentences for utterance sent
           {"type": "error", "message": "..."} — fatal error
           {"type": "ready"}                  — voice loaded, ready for input
 
-Each stdin line triggers synthesis of one text block.  The server splits the
-text into sentences internally and writes one stdout JSON object per sentence,
-followed by a flushed sentinel.
-
-Voice models are cached in $XDG_DATA_HOME/piper-voices (default
-~/.local/share/piper-voices).  First run downloads the model from HuggingFace.
+Use Piper SynthesisConfig for rate/prosody (NOT crude PCM sample-skipping).
+Voice models: $PIPER_VOICE_DIR (default ~/.local/share/piper-voices).
 """
 
 from __future__ import annotations
@@ -44,7 +50,6 @@ _shutdown = False
 def _handle_signal(signum, _frame):
     global _shutdown
     _shutdown = True
-    # Write a final flushed so the Node side doesn't hang waiting
     sys.stdout.write(json.dumps({"type": "flushed"}) + "\n")
     sys.stdout.flush()
 
@@ -96,31 +101,22 @@ def _load_voice(voice_name: str):
         if _current_voice_name == voice_name and _current_voice is not None:
             return _current_voice
 
-    # Import piper here so import errors surface as runtime errors
-    # rather than at module load time.
     try:
         import piper
-        from piper.download_voices import download_voice, VOICE_PATTERN
+        from piper.download_voices import download_voice
     except ImportError:
         raise RuntimeError(
             "piper-tts is not installed.  Install with: pip install piper-tts"
         )
 
     with _voice_lock:
-        # Double-check after acquiring lock
         if _current_voice_name == voice_name and _current_voice is not None:
             return _current_voice
 
-        # Resolve voice name to ONNX model path
-        # The Piper Python API requires a file path, not a voice name.
-        # Voice names like "en_US-amy-medium" map to:
-        #   {download_dir}/{lang_code}-{voice_name}-{voice_quality}.onnx
-        #   {download_dir}/{lang_code}-{voice_name}-{voice_quality}.onnx.json
         model_path = VOICE_CACHE_DIR / f"{voice_name}.onnx"
         config_path = VOICE_CACHE_DIR / f"{voice_name}.onnx.json"
 
         if not model_path.exists() or not config_path.exists():
-            # Download voice model from HuggingFace
             print(
                 f"[local-tts] downloading voice '{voice_name}' to {VOICE_CACHE_DIR}...",
                 file=sys.stderr,
@@ -148,31 +144,61 @@ def _load_voice(voice_name: str):
 SAMPLE_RATE = 24000
 
 
-def synthesize_pcm(voice, text: str, speed: float = 1.0) -> bytes:
+def _build_syn_config(request: dict, speed: float):
+    """Build Piper SynthesisConfig from request knobs + legacy speed."""
+    from piper.config import SynthesisConfig
+
+    length_scale = request.get("length_scale")
+    if length_scale is None:
+        # speed > 1 → speak faster → shorter length_scale
+        if speed and speed > 0:
+            length_scale = 1.0 / float(speed)
+        else:
+            length_scale = 1.0
+
+    noise_scale = request.get("noise_scale")
+    if noise_scale is None:
+        noise_scale = 0.667
+
+    noise_w_scale = request.get("noise_w_scale")
+    if noise_w_scale is None:
+        noise_w_scale = 0.8
+
+    volume = request.get("volume")
+    if volume is None:
+        volume = 1.0
+
+    speaker_id = request.get("speaker_id")
+    normalize = request.get("normalize_audio")
+    if normalize is None:
+        normalize = True
+
+    return SynthesisConfig(
+        speaker_id=int(speaker_id) if speaker_id is not None else None,
+        length_scale=float(length_scale),
+        noise_scale=float(noise_scale),
+        noise_w_scale=float(noise_w_scale),
+        normalize_audio=bool(normalize),
+        volume=float(volume),
+    )
+
+
+def synthesize_pcm(voice, text: str, syn_config) -> bytes:
     """Synthesize *text* to raw PCM bytes (16-bit signed LE, 24 kHz mono).
 
-    Piper's synthesize() returns an iterable of AudioChunk objects.  Each
-    chunk has audio_int16_bytes (raw 16-bit signed LE PCM) at the model's
-    native sample rate.  We concatenate all chunks and resample to 24 kHz.
+    Prosody/rate come from SynthesisConfig (length_scale), not sample-skipping.
     """
-    chunks = list(voice.synthesize(text))
+    chunks = list(voice.synthesize(text, syn_config=syn_config))
 
-    # Concatenate raw PCM from all chunks
     raw_pcm = b"".join(c.audio_int16_bytes for c in chunks)
 
     if not raw_pcm:
         return b""
 
-    # Determine native sample rate from first chunk
     native_rate = chunks[0].sample_rate if chunks else 22050
 
-    # Resample to 24 kHz if the model's sample rate differs
     if native_rate != SAMPLE_RATE:
         raw_pcm = _resample(raw_pcm, native_rate, SAMPLE_RATE)
-
-    # Apply speed adjustment via simple sample skipping
-    if speed != 1.0:
-        raw_pcm = _adjust_speed(raw_pcm, speed)
 
     return raw_pcm
 
@@ -199,32 +225,15 @@ def _resample(pcm: bytes, from_rate: int, to_rate: int) -> bytes:
     return struct.pack(f"<{len(out)}h", *out)
 
 
-def _adjust_speed(pcm: bytes, speed: float) -> bytes:
-    """Adjust speech speed by resampling the PCM buffer."""
-    if speed <= 0 or speed > 4.0:
-        return pcm
-    n_samples = len(pcm) // 2
-    samples = struct.unpack(f"<{n_samples}h", pcm)
-    out_count = int(n_samples / speed)
-    out = []
-    for i in range(out_count):
-        src_pos = i * speed
-        idx = int(src_pos)
-        if idx < n_samples:
-            out.append(samples[idx])
-    return struct.pack(f"<{len(out)}h", *out)
-
-
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
-    # Signal readiness
     sys.stdout.write(json.dumps({"type": "ready"}) + "\n")
     sys.stdout.flush()
 
-    default_voice = os.environ.get("LOCAL_TTS_VOICE", "en_US-amy-medium")
+    default_voice = os.environ.get("LOCAL_TTS_VOICE", "en_US-lessac-high")
     default_speed = float(os.environ.get("LOCAL_TTS_SPEED", "1.0"))
 
     for line in sys.stdin:
@@ -254,21 +263,25 @@ def main():
             _write_error(f"Failed to load voice '{voice_name}': {exc}")
             continue
 
-        # Split into sentences for streaming playback
+        try:
+            syn_config = _build_syn_config(request, speed)
+        except Exception as exc:
+            _write_error(f"Invalid synthesis config: {exc}")
+            continue
+
         sentences = split_sentences(text)
 
         for sentence in sentences:
             if _shutdown:
                 break
             try:
-                pcm_bytes = synthesize_pcm(voice, sentence, speed)
+                pcm_bytes = synthesize_pcm(voice, sentence, syn_config)
                 b64 = base64.b64encode(pcm_bytes).decode("ascii")
                 sys.stdout.write(json.dumps({"audio": b64}) + "\n")
                 sys.stdout.flush()
             except Exception as exc:
                 _write_error(f"Synthesis error: {exc}")
 
-        # Flush sentinel — all sentences for this utterance are done
         if not _shutdown:
             sys.stdout.write(json.dumps({"type": "flushed"}) + "\n")
             sys.stdout.flush()

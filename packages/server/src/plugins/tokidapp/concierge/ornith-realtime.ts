@@ -8,6 +8,17 @@ import {
   type LocalTTSConnection,
 } from "./local-tts"
 import {
+  pickPiperVoiceForLocale,
+  resolvePiperModelAndSynthesis,
+  type PiperSynthesisParams,
+} from "./piper-voice-catalog"
+import {
+  detectSpeechLanguage,
+  planVoiceLocales,
+  translateSpeechText,
+  type SpeechLang,
+} from "./voice-translate"
+import {
   createLocalSTTConnection,
   type LocalSTTConnection,
 } from "./local-stt"
@@ -91,8 +102,15 @@ const ORNITH_DEFAULT_VOICE = process.env.ORNITH_DEFAULT_VOICE || 'ornith-default
 const ORNITH_USE_WHISPER =
   process.env.LOCAL_STT_BACKEND?.trim() === "whisper"
 
-function mapOrnithVoiceToPiper(_voice: string): string {
-  return process.env.LOCAL_TTS_VOICE?.trim() || "en_US-amy-medium"
+function mapOrnithVoiceToPiper(voice: string): {
+  model: string
+  synthesis: PiperSynthesisParams
+} {
+  const key =
+    voice?.trim() ||
+    process.env.LOCAL_TTS_VOICE?.trim() ||
+    "piper-en-female-professional"
+  return resolvePiperModelAndSynthesis(key)
 }
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
@@ -129,6 +147,11 @@ interface OrnithSession {
   sessionId: string
   connected: boolean
   outputVoice: RealtimeVoiceId
+  /** Piper profile / model id requested by client. */
+  piperVoiceId: string
+  locale: "en" | "id" | "auto"
+  interpret: boolean
+  lastUserLang: SpeechLang
   audioBytes: number
   pendingChunks: string[]
   onReady?: () => void
@@ -660,82 +683,126 @@ function cleanupSession(sessionId: string): void {
 
 // ── WebSocket Connection ────────────────────────────────────
 
+export interface CreateOrnithSessionOptions {
+  voiceId?: string
+  sendToClient?: (msg: string) => void
+  locale?: "en" | "id" | "auto"
+  interpret?: boolean
+}
+
 export function createOrnithSession(
   ws: WebSocket,
   sessionId: string,
-  voiceId: string = ORNITH_DEFAULT_VOICE,
-  sendToClient?: (msg: string) => void
+  voiceIdOrOpts: string | CreateOrnithSessionOptions = ORNITH_DEFAULT_VOICE,
+  sendToClient?: (msg: string) => void,
 ): OrnithSession {
   const connectionStart = Date.now()
+
+  const opts: CreateOrnithSessionOptions =
+    typeof voiceIdOrOpts === "string"
+      ? { voiceId: voiceIdOrOpts, sendToClient }
+      : { ...voiceIdOrOpts, sendToClient: voiceIdOrOpts.sendToClient || sendToClient }
+
+  const voiceId = opts.voiceId || ORNITH_DEFAULT_VOICE
+  const locale = opts.locale || "en"
+  const interpret = Boolean(opts.interpret)
+  const localePlan = planVoiceLocales({ locale, interpret })
+  const piper = mapOrnithVoiceToPiper(
+    pickPiperVoiceForLocale(voiceId, locale === "auto" ? "en" : locale).id,
+  )
 
   const session: OrnithSession = {
     ws,
     sessionId,
     connected: false,
     outputVoice: normalizeRealtimeVoice(voiceId),
+    piperVoiceId: voiceId,
+    locale,
+    interpret,
+    lastUserLang: locale === "id" ? "id" : "en",
     audioBytes: 0,
     pendingChunks: [],
     responseInProgress: false,
     pendingResponseQueue: [],
     transcript: [],
-    sendToClient,
+    sendToClient: opts.sendToClient,
   }
 
   // Local Piper TTS — never OpenAI tts-1
-  session.tts = createLocalTTSConnection(mapOrnithVoiceToPiper(voiceId), {
-    onAudio: (base64Chunk) => {
-      try {
-        ws.send(JSON.stringify({ type: "response.audio.delta", delta: base64Chunk }))
-        session.audioBytes += Math.floor((base64Chunk.length * 3) / 4)
-      } catch {
-        /* socket closed */
-      }
+  session.tts = createLocalTTSConnection(
+    { voice: piper.model, synthesis: piper.synthesis },
+    {
+      onAudio: (base64Chunk) => {
+        try {
+          ws.send(JSON.stringify({ type: "response.audio.delta", delta: base64Chunk }))
+          session.audioBytes += Math.floor((base64Chunk.length * 3) / 4)
+        } catch {
+          /* socket closed */
+        }
+      },
+      onError: (err) => {
+        console.error("[ornith] Local TTS error:", err.message)
+      },
     },
-    onError: (err) => {
-      console.error("[ornith] Local TTS error:", err.message)
-    },
-  })
+  )
 
   // Local STT — whisper.cpp preferred, python faster-whisper otherwise
   const onTranscript = (text: string, isFinal: boolean) => {
     if (!isFinal) return
     const sanitized = sanitizeAsrText(text)
     if (!sanitized.trim()) return
-    session.transcript.push(`User: ${sanitized}`)
-    try {
-      ws.send(
-        JSON.stringify({
-          type: "conversation.item.created",
-          item: {
-            id: `item_${Date.now()}`,
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: sanitized }],
-          },
-        }),
-      )
-    } catch {
-      /* ignore */
-    }
-    void handleResponseCreate(session, {})
+
+    void (async () => {
+      const detected = detectSpeechLanguage(sanitized)
+      session.lastUserLang =
+        session.locale === "auto"
+          ? detected
+          : session.locale === "id"
+            ? "id"
+            : "en"
+
+      let forLlm = sanitized
+      if (session.interpret && detected !== "en") {
+        forLlm = await translateSpeechText(sanitized, detected, "en")
+      } else if (session.locale === "id" && !session.interpret) {
+        // keep Indonesian for LLM
+        forLlm = sanitized
+      }
+
+      session.transcript.push(`User: ${forLlm}`)
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "conversation.item.created",
+            item: {
+              id: `item_${Date.now()}`,
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: sanitized }],
+            },
+          }),
+        )
+      } catch {
+        /* ignore */
+      }
+      void handleResponseCreate(session, {})
+    })()
+  }
+
+  const sttOpts = {
+    language: (localePlan.sttLanguage === null ? "auto" : localePlan.sttLanguage) as string | undefined,
+    model: localePlan.sttModel,
+    onTranscript,
+    onError: (err: Error) => console.error("[ornith] STT error:", err.message),
+    onReady: () => {
+      session.connected = true
+    },
   }
 
   if (ORNITH_USE_WHISPER) {
-    session.stt = createWhisperSTTConnection({
-      onTranscript,
-      onError: (err) => console.error("[ornith] whisper STT error:", err.message),
-      onReady: () => {
-        session.connected = true
-      },
-    })
+    session.stt = createWhisperSTTConnection(sttOpts)
   } else {
-    session.stt = createLocalSTTConnection({
-      onTranscript,
-      onError: (err) => console.error("[ornith] local STT error:", err.message),
-      onReady: () => {
-        session.connected = true
-      },
-    })
+    session.stt = createLocalSTTConnection(sttOpts)
   }
 
   // Mark connected once Piper is warm even if STT is still loading
@@ -926,7 +993,16 @@ async function handleResponseCreate(
       body: JSON.stringify({
         model: ORNITH_MODEL,
         messages: [
-          { role: 'system', content: VOICE_INSTRUCTIONS },
+          {
+            role: 'system',
+            content:
+              VOICE_INSTRUCTIONS +
+              (session.interpret
+                ? "\n\nUser speech may be translated from Indonesian. Reply in clear English; the system speaks the reply in the user's language."
+                : session.locale === "id"
+                  ? "\n\nThe user speaks Indonesian. Reply in Bahasa Indonesia."
+                  : ""),
+          },
           { role: 'user', content: lastUserMessage },
         ],
         tools: tools.map((t) => ({
@@ -978,7 +1054,10 @@ async function handleResponseCreate(
           const content = parsed.message?.content
           if (content) {
             fullResponse += content
-            await sendAudioChunk(session, content)
+            // Stream TTS only for monolingual EN — interpret/ID needs full text first
+            if (!session.interpret && session.locale !== "id") {
+              await sendAudioChunk(session, content)
+            }
           }
           const toolCalls = parsed.message?.tool_calls
           if (toolCalls?.length) {
@@ -1004,6 +1083,9 @@ async function handleResponseCreate(
     // Add response to transcript
     if (fullResponse) {
       session.transcript.push(`Assistant: ${fullResponse}`)
+      if (session.interpret || session.locale === "id") {
+        await sendAudioChunk(session, fullResponse)
+      }
     }
     
   } catch (error) {
@@ -1029,7 +1111,7 @@ async function sendAudioChunk(
   text: string
 ): Promise<void> {
   const chunkStart = Date.now()
-  const spoken = sanitizeSpeechText(text)
+  let spoken = sanitizeSpeechText(text)
   if (!spoken.trim()) return
 
   if (!session.tts) {
@@ -1038,10 +1120,28 @@ async function sendAudioChunk(
   }
 
   try {
+    // Interpret: LLM English → user language for speech
+    if (session.interpret && session.lastUserLang !== "en") {
+      spoken = await translateSpeechText(spoken, "en", session.lastUserLang)
+    } else if (session.locale === "id" && !session.interpret) {
+      // monolingual ID — leave as-is (model should reply in ID)
+    }
+
+    const ttsLang = session.interpret
+      ? session.lastUserLang
+      : session.locale === "id"
+        ? "id"
+        : "en"
+    const profile = pickPiperVoiceForLocale(session.piperVoiceId, ttsLang)
+    const resolved = resolvePiperModelAndSynthesis(profile.id)
+
     if (getOrnithLatency(session.sessionId).firstAudioMs === 0) {
       setLatencyMetric(session.sessionId, 'firstAudioMs', Date.now() - chunkStart)
     }
-    session.tts.speak(spoken)
+    session.tts.speak(spoken, {
+      voice: resolved.model,
+      ...resolved.synthesis,
+    })
     session.tts.flush()
   } catch (error) {
     console.error(`[ornith] Audio chunk error:`, error)

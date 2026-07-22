@@ -105,14 +105,21 @@ function findServerScript(): string {
 function buildProcessEnv(
   options?: LocalSTTConnectionOptions,
 ): Record<string, string> {
+  const language =
+    options?.language === undefined || options.language === null
+      ? LOCAL_STT_LANGUAGE
+      : options.language === "" || options.language === "auto"
+        ? "auto"
+        : options.language
+
   return {
     ...process.env,
     LOCAL_STT_MODEL: options?.model || LOCAL_STT_MODEL,
     LOCAL_STT_DEVICE: options?.device || LOCAL_STT_DEVICE,
-    LOCAL_STT_LANGUAGE: options?.language || LOCAL_STT_LANGUAGE,
+    LOCAL_STT_LANGUAGE: language,
     LOCAL_STT_BEAM_SIZE: String(options?.beamSize ?? LOCAL_STT_BEAM_SIZE),
     LOCAL_STT_VAD_THRESHOLD: String(options?.vadThreshold ?? LOCAL_STT_VAD_THRESHOLD),
-    PYTHONUNBUFFERED: "1", // Ensure Python writes to stdout immediately
+    PYTHONUNBUFFERED: "1",
     ...options?.env,
   }
 }
