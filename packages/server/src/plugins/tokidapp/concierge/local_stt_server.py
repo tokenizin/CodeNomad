@@ -229,9 +229,24 @@ class LocalSTTServer:
             send_json({"type": "heartbeat", "ts": now_ms})
             self.last_heartbeat_ms = now_ms
 
+    def _heartbeat_loop(self):
+        """Background heartbeats — stdin is often idle for >30s between utterances.
+        Without this, Node health-check SIGKILLs the process (exit code null)."""
+        while not getattr(self, "_shutdown", False):
+            try:
+                send_json({"type": "heartbeat", "ts": int(time.time() * 1000)})
+                self.last_heartbeat_ms = int(time.time() * 1000)
+            except Exception as e:
+                log(f"Heartbeat failed: {e}")
+                break
+            time.sleep(HEARTBEAT_INTERVAL_MS / 1000.0)
+
     def run(self):
         """Main loop: read JSON lines from stdin, process, emit transcripts."""
         self.load_model()
+        self._shutdown = False
+        hb = threading.Thread(target=self._heartbeat_loop, name="stt-heartbeat", daemon=True)
+        hb.start()
 
         for line in sys.stdin:
             line = line.strip()
@@ -283,6 +298,8 @@ class LocalSTTServer:
                 send_json({"type": "error", "message": f"Invalid JSON: {e}"})
 
             self.send_heartbeat()
+
+        self._shutdown = True
 
     def _handle_config(self, config: dict):
         """Handle runtime config updates (e.g., language, VAD threshold)."""

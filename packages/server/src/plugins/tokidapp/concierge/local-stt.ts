@@ -196,7 +196,11 @@ export function createLocalSTTConnection(
       stopHealthCheck()
 
       if (!closed) {
-        onError?.(new Error(`Python process exited with code ${code}`))
+        const detail =
+          signal != null
+            ? `Python process killed (${signal})`
+            : `Python process exited with code ${code}`
+        onError?.(new Error(detail))
         onClose?.(code)
 
         // Auto-restart with backoff
@@ -279,17 +283,32 @@ export function createLocalSTTConnection(
       if (!ready || closed) return
 
       const elapsed = Date.now() - lastHeartbeatMs
-      if (elapsed > HEALTH_CHECK_TIMEOUT_MS) {
-        log(`No heartbeat for ${elapsed}ms, process may be dead`)
-        onError?.(new Error(`Python process unresponsive (${elapsed}ms since last heartbeat)`))
+      if (elapsed <= HEALTH_CHECK_TIMEOUT_MS) return
 
-        // Kill and restart
-        if (process) {
-          try {
-            process.kill("SIGKILL")
-          } catch {
-            // Process may already be dead
+      // Still alive? Heartbeats only arrive when Python isn't blocked — probe first.
+      if (process?.pid) {
+        try {
+          process.kill(0)
+          // Process exists — send ping and refresh timer instead of SIGKILL.
+          if (process.stdin?.writable) {
+            process.stdin.write(JSON.stringify({ type: "ping" }) + "\n")
           }
+          lastHeartbeatMs = Date.now()
+          log(`No heartbeat for ${elapsed}ms but process alive (pid=${process.pid}) — pinged`)
+          return
+        } catch {
+          // fall through to kill/restart
+        }
+      }
+
+      log(`No heartbeat for ${elapsed}ms, process may be dead`)
+      onError?.(new Error(`Python process unresponsive (${elapsed}ms since last heartbeat)`))
+
+      if (process) {
+        try {
+          process.kill("SIGKILL")
+        } catch {
+          // Process may already be dead
         }
       }
     }, HEALTH_CHECK_TIMEOUT_MS / 2)
