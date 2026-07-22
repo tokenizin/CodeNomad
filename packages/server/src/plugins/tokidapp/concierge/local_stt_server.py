@@ -46,10 +46,15 @@ def log(msg: str):
     print(f"[local-stt] {msg}", file=sys.stderr, flush=True)
 
 
+_stdout_lock = threading.Lock()
+
+
 def send_json(obj: dict):
-    """Write a JSON line to stdout."""
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    """Write a JSON line to stdout (thread-safe — heartbeat runs in background)."""
+    line = json.dumps(obj) + "\n"
+    with _stdout_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def parse_config(raw: str) -> dict:
