@@ -85,6 +85,7 @@ import { parseInput, resolveActions, formatParseSummary } from "./commands-route
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
+import { createMessage, createMessages, createRecording, findMessagesBySession } from "../../../lib/tokidapp-queries"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 // knowledge-cache is used by the caller to build enrichedInstructions — no direct import needed here
 
@@ -958,6 +959,8 @@ interface ConversationMessage {
 export interface DeepgramSession {
   /** Unique session identifier (e.g. "voice_<userId>"). */
   sessionId: string
+  /** Timestamp when the session was created. */
+  createdAt: number
   /** Whether the session is currently active. */
   connected: boolean
   /** Deepgram STT connection. */
@@ -1062,9 +1065,9 @@ export interface CreateDeepgramSessionParams {
  * @param params - Session configuration
  * @returns DeepgramSession handle with sendAudio(), sendMessage(), destroy()
  */
-export function createDeepgramSession(
+export async function createDeepgramSession(
   params: CreateDeepgramSessionParams,
-): DeepgramSession {
+): Promise<DeepgramSession> {
   const {
     sessionId,
     onAudioDelta,
@@ -1100,6 +1103,7 @@ export function createDeepgramSession(
       pendingTextInjections: [],
       llmCallCount: 0,
       lastModelUsed: "none",
+      createdAt: Date.now(),
     }
     return session
   }
@@ -1108,8 +1112,29 @@ export function createDeepgramSession(
   const systemPrompt = buildSystemPrompt(enrichedInstructions)
 
   // Initialize conversation with system message
+  // Load previous conversation for cross-session continuity
+  let previousMessages: Array<{ role: string; content: string }> = []
+  if (chatSessionId) {
+    try {
+      const dbMessages = await findMessagesBySession(sessionId)
+      previousMessages = dbMessages
+        .filter(m => m.role === "user" || m.role === "assistant")
+        .slice(-50) // Last 50 messages for LLM context
+        .map(m => ({ role: m.role, content: m.content }))
+      console.log(`[deepgram-realtime] Loaded ${previousMessages.length} previous messages for session ${sessionId}`)
+    } catch (err) {
+      console.error("[deepgram-realtime] Failed to load previous messages:", err)
+    }
+  }
+
+  // Initialize conversation with system message + previous context
   const conversation: ConversationMessage[] = [
     { role: "system", content: systemPrompt, timestamp: Date.now() },
+    ...previousMessages.map(m => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      timestamp: Date.now(), // Approximate timestamp for historical messages
+    })),
   ]
 
   // Create audio buffer
@@ -1141,6 +1166,14 @@ export function createDeepgramSession(
         content: sanitized,
         timestamp: Date.now(),
       })
+
+      // Persist user message to DB (fire-and-forget)
+      if (session.chatSessionId) {
+        const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "user", content: sanitized }).catch((err) => {
+          console.error("[deepgram-realtime] Failed to persist user transcript:", err.message)
+        })
+      }
 
       // Process through LLM (non-blocking)
       processUserMessage(session, sanitized, onAudioDelta, onTextDelta, onError, onResponseDone)
@@ -1195,6 +1228,7 @@ export function createDeepgramSession(
     sendToClient,
     chatSessionId,
     enrichedInstructions,
+    createdAt: Date.now(),
   }
 
   sessions.set(sessionId, session)
@@ -1290,6 +1324,22 @@ export function createDeepgramSession(
   sessionWithMethods.destroy = () => {
     console.log("[deepgram-realtime] Destroying session:", sessionId)
     session.connected = false
+
+    // Save audio recording metadata to DB (fire-and-forget)
+    if (session.chatSessionId) {
+      const recordingId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      createRecording({
+        id: recordingId,
+        sessionId: session.chatSessionId!,
+        blobUrl: "", // Will be populated when audio blob is uploaded
+        duration: Date.now() - session.createdAt,
+        format: "audio/pcm",
+        status: "voice-session",
+        userId: userId || undefined,
+      }).catch((err) => {
+        console.error("[deepgram-realtime] Failed to save recording:", err.message)
+      })
+    }
 
     // Fire-and-forget: update wiki with session transcript
     const transcriptText = session.transcript?.join("\n") || ""
@@ -1390,6 +1440,15 @@ async function processUserMessage(
           content: assistantContent,
           timestamp: Date.now(),
         })
+
+        // Persist assistant response to DB (fire-and-forget)
+        if (session.chatSessionId) {
+          const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "assistant", content: assistantContent }).catch((err) => {
+            console.error("[deepgram-realtime] Failed to persist assistant response:", err.message)
+          })
+        }
+
         session.transcript.push(`[assistant] ${sanitizeSpeechText(assistantContent)}`)
         onTextDelta(assistantContent)
       }
@@ -1423,6 +1482,14 @@ async function processUserMessage(
           content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 2000)}`,
           timestamp: Date.now(),
         })
+
+        // Persist tool result to DB (fire-and-forget)
+        if (session.chatSessionId) {
+          const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "tool", content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 500)}`, sources: toolCall.id }).catch((err) => {
+            console.error("[deepgram-realtime] Failed to persist tool result:", err.message)
+          })
+        }
 
         // Send tool result to client for UI rendering
         try {
@@ -1489,6 +1556,15 @@ async function processUserMessage(
         content: llmResponse.content,
         timestamp: Date.now(),
       })
+
+      // Persist assistant response to DB (fire-and-forget)
+      if (session.chatSessionId) {
+        const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "assistant", content: llmResponse.content }).catch((err) => {
+          console.error("[deepgram-realtime] Failed to persist assistant text response:", err.message)
+        })
+      }
+
       session.transcript.push(`[assistant] ${sanitizeSpeechText(llmResponse.content)}`)
       onTextDelta(llmResponse.content)
 

@@ -474,7 +474,7 @@ const openaiLocalFallbackDone = new Set<string>()
  * Start local (no-cloud) voice: whisper.cpp / faster-whisper STT + Piper TTS + Ollama.
  * Shared by explicit engine=local and OpenAI quota/connect auto-fallback.
  */
-function startLocalVoiceSession(
+async function startLocalVoiceSession(
   sessionId: string,
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
@@ -485,7 +485,7 @@ function startLocalVoiceSession(
     locale?: "en" | "id" | "auto"
     interpret?: boolean
   },
-): void {
+): Promise<void> {
   try {
     ensureSingleUserSession(sessionId)
     endOrchestratorVoiceSession(sessionId)
@@ -495,7 +495,7 @@ function startLocalVoiceSession(
         ? requestedVoice
         : process.env.LOCAL_TTS_VOICE?.trim() || "piper-en-female-professional"
 
-    const session = createAndRegisterVoiceSession({
+    const session = await createAndRegisterVoiceSession({
       engine: "local",
       sessionId,
       voice,
@@ -509,13 +509,25 @@ function startLocalVoiceSession(
     })
 
     session.onTranscript = (text, isFinal) => {
-      socketRef.send(
-        JSON.stringify({
-          type: isFinal ? "transcript" : "transcript_partial",
-          transcript: text,
-          engine: "local",
-        }),
-      )
+      // Align with OpenAI/Deepgram + chat-html (`user_transcript` + content)
+      if (isFinal) {
+        socketRef.send(
+          JSON.stringify({
+            type: "user_transcript",
+            content: text,
+            engine: "local",
+          }),
+        )
+      } else {
+        socketRef.send(
+          JSON.stringify({
+            type: "transcript_partial",
+            transcript: text,
+            content: text,
+            engine: "local",
+          }),
+        )
+      }
     }
     session.onResponse = (text) => {
       socketRef.send(
@@ -702,7 +714,7 @@ async function startDeepgramVoiceSession(
   const enrichedInstructions = await buildVoiceEnrichedInstructions(userId)
 
   // Create Deepgram session
-  createDeepgramSession({
+  await createDeepgramSession({
     sessionId,
     onAudioDelta: (audioBase64) => socketRef.send(JSON.stringify({ type: "audio", data: audioBase64 })),
     onTextDelta: (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
@@ -931,7 +943,12 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           // Deepgram STT auto-commits on utterance end, so we just acknowledge
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
         } else if (activeEngine === "local") {
-          // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
+          const localSess = getVoiceSession(sessionId)
+          try {
+            localSess?.stop?.()
+          } catch {
+            /* non-critical */
+          }
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
         } else if (activeEngine === "ornith") {
           // Ornith: commit buffered audio for processing
@@ -2587,7 +2604,10 @@ function emitCausalGraphUpdate(
 }
 
 
-export function registerTokidappWebSocket(app: FastifyInstance) {
+export function registerTokidappWebSocket(
+  app: FastifyInstance,
+  starGuardJwtHandler?: StarGuardJwtHandler,
+) {
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
     let parsed: URL
@@ -2606,9 +2626,34 @@ export function registerTokidappWebSocket(app: FastifyInstance) {
       return
     }
 
-    tokidappWss.handleUpgrade(request, socket, head, (ws) => {
-      attachTokidappSocket(ws, token)
-    })
+    const proceed = (userId: string) => {
+      tokidappWss.handleUpgrade(request, socket, head, (ws) => {
+        attachTokidappSocket(ws, userId)
+      })
+    }
+
+    // Prefer StarGuard JWT (chat/portal). Legacy bare userId still accepted
+    // so older clients and loopback probes keep working.
+    const looksLikeJwt = token.length > 50 && token.split(".").length === 3
+    if (starGuardJwtHandler?.isEnabled() && looksLikeJwt) {
+      starGuardJwtHandler.verify(token).then((payload) => {
+        if (!payload?.userId) {
+          console.log("[tokidapp-ws] JWT verification failed — 401")
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
+          socket.destroy()
+          return
+        }
+        console.log("[tokidapp-ws] JWT verified OK, userId:", payload.userId)
+        proceed(payload.userId)
+      }).catch((err) => {
+        console.log("[tokidapp-ws] JWT verification error:", err?.message || err)
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
+        socket.destroy()
+      })
+      return
+    }
+
+    proceed(token)
   })
 }
 
@@ -2805,7 +2850,13 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               }
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else if (activeEngine === "local") {
-              // Local engine: whisper.cpp uses VAD-based auto-commit, just acknowledge
+              // Flush STT buffer + commit any pending utterance before ack
+              const localSess = getVoiceSession(sessionId)
+              try {
+                localSess?.stop?.()
+              } catch {
+                /* non-critical */
+              }
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else if (activeEngine === "ornith") {
               // Ornith: VAD-based auto-commit, just acknowledge

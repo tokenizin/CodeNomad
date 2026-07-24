@@ -30,8 +30,13 @@ const LOCAL_STT_DEVICE = process.env.LOCAL_STT_DEVICE?.trim() || "cpu"
 const LOCAL_STT_LANGUAGE = process.env.LOCAL_STT_LANGUAGE?.trim() || "en"
 /** Beam search size. Default: 5. */
 const LOCAL_STT_BEAM_SIZE = process.env.LOCAL_STT_BEAM_SIZE?.trim() || "5"
-/** VAD threshold (0-1). Default: 0.5. */
-const LOCAL_STT_VAD_THRESHOLD = process.env.LOCAL_STT_VAD_THRESHOLD?.trim() || "0.5"
+/** VAD threshold (0-1). Default: 0.65 (less sensitive than 0.5). */
+const LOCAL_STT_VAD_THRESHOLD = process.env.LOCAL_STT_VAD_THRESHOLD?.trim() || "0.65"
+/** Min speech duration ms before VAD accepts a segment. */
+const LOCAL_STT_MIN_SPEECH_MS = process.env.LOCAL_STT_MIN_SPEECH_MS?.trim() || "450"
+/** Silence ms before VAD ends an utterance. */
+const LOCAL_STT_MIN_SILENCE_MS = process.env.LOCAL_STT_MIN_SILENCE_MS?.trim() || "800"
+const LOCAL_STT_SPEECH_PAD_MS = process.env.LOCAL_STT_SPEECH_PAD_MS?.trim() || "200"
 
 /** Python with faster-whisper — see resolve-local-voice-python.ts */
 const PYTHON_EXECUTABLE = resolveLocalVoicePython(["faster_whisper", "numpy"])
@@ -119,6 +124,9 @@ function buildProcessEnv(
     LOCAL_STT_LANGUAGE: language,
     LOCAL_STT_BEAM_SIZE: String(options?.beamSize ?? LOCAL_STT_BEAM_SIZE),
     LOCAL_STT_VAD_THRESHOLD: String(options?.vadThreshold ?? LOCAL_STT_VAD_THRESHOLD),
+    LOCAL_STT_MIN_SPEECH_MS,
+    LOCAL_STT_MIN_SILENCE_MS,
+    LOCAL_STT_SPEECH_PAD_MS,
     PYTHONUNBUFFERED: "1",
     ...options?.env,
   }

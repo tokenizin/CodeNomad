@@ -37,10 +37,16 @@ LANGUAGE_RAW = os.environ.get("LOCAL_STT_LANGUAGE", "en")
 # Empty / "auto" / "none" → let Whisper detect language (needed for Indonesian)
 LANGUAGE = None if LANGUAGE_RAW.strip().lower() in ("", "auto", "none", "null") else LANGUAGE_RAW.strip()
 BEAM_SIZE = int(os.environ.get("LOCAL_STT_BEAM_SIZE", "5"))
-VAD_THRESHOLD = float(os.environ.get("LOCAL_STT_VAD_THRESHOLD", "0.5"))
+# Higher default threshold = less sensitive (was 0.5 → false triggers on "oh"/noise)
+VAD_THRESHOLD = float(os.environ.get("LOCAL_STT_VAD_THRESHOLD", "0.65"))
+VAD_MIN_SPEECH_MS = int(os.environ.get("LOCAL_STT_MIN_SPEECH_MS", "450"))
+VAD_MIN_SILENCE_MS = int(os.environ.get("LOCAL_STT_MIN_SILENCE_MS", "800"))
+VAD_SPEECH_PAD_MS = int(os.environ.get("LOCAL_STT_SPEECH_PAD_MS", "200"))
 SAMPLE_RATE = 24000
 HEARTBEAT_INTERVAL_MS = 10000
 BUFFER_MAX_SECONDS = 30.0
+# Minimum gap between transcription passes (avoids re-ASR spam on same audio)
+TRANSCRIBE_INTERVAL_MS = int(os.environ.get("LOCAL_STT_TRANSCRIBE_INTERVAL_MS", "750"))
 
 
 def log(msg: str):
@@ -89,6 +95,7 @@ class LocalSTTServer:
         self.is_speaking = False
         self.lock = threading.Lock()
         self.last_heartbeat_ms = int(time.time() * 1000)
+        self.last_transcribe_ms = 0
 
     def load_model(self):
         """Load faster-whisper. Prefer CPU+int8 — device=auto+float16 crashes on Apple Silicon."""
@@ -166,10 +173,15 @@ class LocalSTTServer:
             if len(self.audio_buffer) > max_samples:
                 self.audio_buffer = self.audio_buffer[-max_samples:]
 
-            # Only process if we have enough audio (at least 500ms)
-            min_samples = int(0.5 * SAMPLE_RATE)
+            # Only process if we have enough audio (at least 750ms — longer = less noise)
+            min_samples = int(0.75 * SAMPLE_RATE)
             if len(self.audio_buffer) < min_samples:
                 return
+
+            now_ms = int(time.time() * 1000)
+            if now_ms - self.last_transcribe_ms < TRANSCRIBE_INTERVAL_MS:
+                return
+            self.last_transcribe_ms = now_ms
 
             # Run transcription with VAD filtering
             try:
@@ -191,30 +203,33 @@ class LocalSTTServer:
             vad_filter=True,
             vad_parameters=dict(
                 threshold=VAD_THRESHOLD,
-                min_speech_duration_ms=250,
-                min_silence_duration_ms=500,
-                speech_pad_ms=200,
+                min_speech_duration_ms=VAD_MIN_SPEECH_MS,
+                min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                speech_pad_ms=VAD_SPEECH_PAD_MS,
                 max_speech_duration_s=30.0,
             ),
         )
 
         any_speech = False
+        last_end = 0.0
+        buffer_duration = len(audio) / SAMPLE_RATE
         for segment in segments:
             text = segment.text.strip()
             if not text:
                 continue
 
             any_speech = True
+            last_end = max(last_end, float(segment.end))
 
-            # Determine if this is likely a final transcript based on VAD timing.
-            # If the segment end is close to the buffer end, it's likely partial.
-            buffer_duration = len(audio) / SAMPLE_RATE
-            is_near_end = (buffer_duration - segment.end) < 1.0
+            # Final when the segment is NOT still growing at the buffer tail
+            # (near-end segments are still being spoken → partial).
+            is_near_end = (buffer_duration - segment.end) < 0.6
+            is_final = not is_near_end
 
             send_json({
                 "type": "transcript",
                 "text": text,
-                "is_final": is_near_end,
+                "is_final": is_final,
                 "start": round(segment.start, 3),
                 "end": round(segment.end, 3),
                 "language": info.language if hasattr(info, "language") else LANGUAGE,
@@ -226,8 +241,17 @@ class LocalSTTServer:
             if self.is_speaking:
                 send_json({"type": "utterance_end"})
                 self.is_speaking = False
+            # Decay silence: drop old audio so noise does not accumulate
+            keep = int(0.4 * SAMPLE_RATE)
+            if len(self.audio_buffer) > keep:
+                self.audio_buffer = self.audio_buffer[-keep:]
         else:
             self.is_speaking = True
+            # Advance past completed speech so the same utterance is not re-ASR'd
+            if last_end > 0.4:
+                keep_from = max(0, int((last_end - 0.25) * SAMPLE_RATE))
+                if keep_from > 0 and keep_from < len(self.audio_buffer):
+                    self.audio_buffer = self.audio_buffer[keep_from:]
 
     def send_heartbeat(self):
         """Send periodic heartbeat to keep IPC alive."""

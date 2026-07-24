@@ -404,7 +404,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
   })
-  registerTokidappWebSocket(app)
+  registerTokidappWebSocket(app, deps.starGuardJwtHandler)
   registerVoiceRealtimeWebSocket(app, deps.starGuardJwtHandler)
   registerPluginRoutes(app, {
     workspaceManager: deps.workspaceManager,

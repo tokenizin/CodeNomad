@@ -186,9 +186,57 @@ const ENTITY_ALIASES: Record<string, string> = {
   tokidapp: "TokiDAPP",
 }
 
-export function sanitizeSpeechText(text: string): string {
+/**
+ * Strip model chain-of-thought / thinking blocks before TTS or chat persist.
+ * Ornith/qwen3 often dump `<think>…</think>` into content when `/v1` is used.
+ */
+export function stripThinkingContent(text: string): string {
   if (!text) return text
   let out = text
+  out = out.replace(/<think\b[^>]*>[\s\S]*?<\/(?:think|thinking)>/gi, " ")
+  out = out.replace(/<\/?(?:think|thinking)\b[^>]*>/gi, " ")
+  out = out.replace(/<think\b[^>]*>[\s\S]*$/gi, " ")
+  // Common markdown/XML CoT wrappers
+  out = out.replace(/```(?:thinking|reasoning|thought)[\s\S]*?```/gi, " ")
+  return out.replace(/\s{2,}/g, " ").trim()
+}
+
+/** Drop ASR filler / too-short turns that trip oversensitive VAD. */
+export function isFillerTranscript(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "")
+  if (!t) return true
+  const words = t.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return true
+  if (words.length === 1 && t.length <= 4) return true
+  const fillers = new Set([
+    "oh",
+    "ah",
+    "uh",
+    "um",
+    "erm",
+    "hmm",
+    "mm",
+    "mhm",
+    "yeah",
+    "yep",
+    "yup",
+    "ok",
+    "okay",
+    "right",
+    "huh",
+    "oh yeah",
+    "oh yes",
+    "uh huh",
+    "mm hmm",
+  ])
+  if (fillers.has(t)) return true
+  if (words.length <= 2 && fillers.has(words.join(" "))) return true
+  return false
+}
+
+export function sanitizeSpeechText(text: string): string {
+  if (!text) return text
+  let out = stripThinkingContent(text)
   for (const [key, label] of Object.entries(ENTITY_ALIASES)) {
     out = out.replace(new RegExp(key, "gi"), label)
   }

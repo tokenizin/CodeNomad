@@ -55,7 +55,7 @@ import {
 import { AudioBuffer, PreSessionAudioManager } from "./audio-buffer"
 import type { RealtimeVoiceId } from "./realtime-voices"
 import type { DeepgramVoiceId } from "./deepgram-speech"
-import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import { sanitizeAsrText, sanitizeSpeechText, stripThinkingContent, isFillerTranscript, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import type WebSocket from "ws"
 
 // ── Engine Types ───────────────────────────────────────────────────────
@@ -256,8 +256,9 @@ export function buildProviderChain(options: BuildProviderChainOptions = {}): LLM
 // ── Single-Provider LLM Call ───────────────────────────────────────────
 
 /**
- * Call a single LLM provider with OpenAI-compatible chat/completions API.
- * Returns parsed response with content and optional tool calls.
+ * Call a single LLM provider.
+ * Ollama/Ornith: native `/api/chat` with `think: false` (avoids CoT in content).
+ * Others: OpenAI-compatible `/v1/chat/completions`.
  */
 async function callLLMProvider(
   provider: LLMProvider,
@@ -269,6 +270,36 @@ async function callLLMProvider(
   const timeoutId = setTimeout(() => controller.abort(), provider.timeoutMs)
 
   try {
+    const useOllamaNative = provider.name.startsWith("ollama")
+
+    if (useOllamaNative) {
+      const body = {
+        model: provider.model,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        stream: false,
+        think: false,
+      }
+      const res = await fetch(`${provider.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => "unknown error")
+        throw new Error(`HTTP ${res.status}: ${errorText.slice(0, 200)}`)
+      }
+      const data = (await res.json()) as any
+      const raw =
+        typeof data?.message?.content === "string" ? data.message.content : ""
+      return {
+        content: stripThinkingContent(raw),
+        toolCalls: [],
+        model: provider.model,
+        latencyMs: Date.now() - startTime,
+      }
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     }
@@ -301,7 +332,9 @@ async function callLLMProvider(
     if (!choice) throw new Error("No choices in response")
 
     const message = choice.message
-    const content = typeof message?.content === "string" ? message.content : ""
+    const content = stripThinkingContent(
+      typeof message?.content === "string" ? message.content : "",
+    )
 
     const toolCalls: ToolCall[] = []
     if (Array.isArray(message?.tool_calls)) {
@@ -613,23 +646,43 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
   // ── STT (whisper.cpp preferred, Python faster-whisper fallback) ──
 
+  /** Accumulate finals; commit only on utterance_end (avoids re-ASR spam). */
+  let pendingUtterance = ""
+
+  function commitPendingUtterance() {
+    const sanitized = sanitizeAsrText(pendingUtterance)
+    pendingUtterance = ""
+    if (!sanitized.trim()) return
+    if (isFillerTranscript(sanitized)) {
+      console.log(`${LOG_PREFIX} Ignoring filler transcript:`, sanitized.slice(0, 40))
+      return
+    }
+
+    console.log(`${LOG_PREFIX} Local STT transcript:`, sanitized.slice(0, 120))
+
+    transcriptCb(sanitized, true)
+    transcript.push(`[user] ${sanitized}`)
+
+    if (!responseInProgress) {
+      void processLocalMessage(sanitized)
+    }
+  }
+
   const sttCallbacks: LocalSTTCallbacks = {
     onTranscript: (text, isFinal) => {
-      if (!isFinal) return
       const sanitized = sanitizeAsrText(text)
       if (!sanitized.trim()) return
-
-      console.log(`${LOG_PREFIX} Local STT transcript:`, sanitized.slice(0, 120))
-
-      transcriptCb(sanitized, true)
-      transcript.push(`[user] ${sanitized}`)
-
-      if (!responseInProgress) {
-        void processLocalMessage(sanitized)
+      if (isFinal) {
+        // Keep latest final segment until silence ends the turn
+        pendingUtterance = sanitized
+        transcriptCb(sanitized, false)
+      } else {
+        transcriptCb(sanitized, false)
       }
     },
     onUtteranceEnd: () => {
       console.log(`${LOG_PREFIX} Utterance end for local session:`, sessionId)
+      commitPendingUtterance()
     },
     onError: (err) => {
       console.error(`${LOG_PREFIX} Local STT error:`, err.message)
@@ -724,17 +777,22 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       })
 
       if (llmResponse.content) {
+        const cleanContent = stripThinkingContent(llmResponse.content)
+        if (!cleanContent.trim()) {
+          console.warn(`${LOG_PREFIX} Empty content after stripping think blocks`)
+          return
+        }
         conversation.push({
           role: "assistant",
-          content: llmResponse.content,
+          content: cleanContent,
           timestamp: Date.now(),
         })
 
-        let speakText = llmResponse.content
+        let speakText = cleanContent
         const ttsLang = interpret ? lastUserLang : plan.ttsLang
         if (ttsLang !== plan.llmLang) {
           speakText = await translateSpeechText(
-            llmResponse.content,
+            cleanContent,
             plan.llmLang,
             ttsLang,
           )
@@ -744,7 +802,8 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
           )
         }
 
-        transcript.push(`[assistant] ${sanitizeSpeechText(speakText)}`)
+        speakText = sanitizeSpeechText(speakText)
+        transcript.push(`[assistant] ${speakText}`)
         responseCb(speakText)
         speakLocalized(speakText, ttsLang)
       }
@@ -821,6 +880,16 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     },
 
     stop() {
+      try {
+        if (sttBackend === "whisper") {
+          ;(stt as unknown as LocalSTTConnection).flush()
+        } else if (sttBackend === "python") {
+          (stt as LocalSTTConnection).flush()
+        }
+      } catch {
+        /* non-critical */
+      }
+      commitPendingUtterance()
       tts.flush()
       emitStatus("idle")
     },
@@ -903,7 +972,7 @@ const localGreetingPlayed = new Set<string>()
  * Create a unified VoiceSession backed by deepgram-realtime.ts.
  * Thin adapter: wraps DeepgramSession in the unified VoiceSession interface.
  */
-function createDeepgramAdapter(params: CreateVoiceSessionParams): VoiceSession {
+async function createDeepgramAdapter(params: CreateVoiceSessionParams): Promise<VoiceSession> {
   const {
     sessionId,
     userId,
@@ -928,7 +997,7 @@ function createDeepgramAdapter(params: CreateVoiceSessionParams): VoiceSession {
   emitStatus("connecting")
 
   // Delegate to the existing createDeepgramSession factory
-  const deepgramSession: DeepgramSession = createDeepgramSession({
+  const deepgramSession: DeepgramSession = await createDeepgramSession({
     sessionId,
     onAudioDelta: (base64) => audioCb(base64),
     onTextDelta: (text) => responseCb(text),
@@ -1114,9 +1183,9 @@ function createOrnithAdapter(params: CreateVoiceSessionParams): VoiceSession {
  * @param params - Session configuration including engine selection
  * @returns A VoiceSession handle
  */
-export function createVoiceSession(
+export async function createVoiceSession(
   params: CreateVoiceSessionParams,
-): VoiceSession {
+): Promise<VoiceSession> {
   const { engine, sessionId } = params
 
   console.log(`${LOG_PREFIX} Creating session: engine=${engine}, sessionId=${sessionId}`)
@@ -1129,7 +1198,7 @@ export function createVoiceSession(
       return createLocalSession(params)
 
     case "deepgram":
-      return createDeepgramAdapter(params)
+      return await createDeepgramAdapter(params)
 
     case "ornith":
       return createOrnithAdapter(params)
@@ -1150,9 +1219,9 @@ const activeSessions = new Map<string, VoiceSession>()
  * Create a voice session and register it in the active sessions map.
  * Prevents duplicate sessions for the same sessionId.
  */
-export function createAndRegisterVoiceSession(
+export async function createAndRegisterVoiceSession(
   params: CreateVoiceSessionParams,
-): VoiceSession {
+): Promise<VoiceSession> {
   // Destroy any existing session with the same ID
   const existing = activeSessions.get(params.sessionId)
   if (existing) {
@@ -1162,7 +1231,7 @@ export function createAndRegisterVoiceSession(
     existing.destroy()
   }
 
-  const session = createVoiceSession(params)
+  const session = await createVoiceSession(params)
   activeSessions.set(params.sessionId, session)
   return session
 }
