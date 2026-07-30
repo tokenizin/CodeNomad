@@ -1,0 +1,64 @@
+/**
+ * Level C — glass + gold mesh ONLY on empty / loading / folder-home surfaces.
+ * Dense session panels stay flat Level B tokens.
+ */
+
+.empty-state,
+.loading-state,
+.folder-home-root {
+  position: relative;
+  background-color: var(--sw-bg, var(--surface-base));
+  background-image: var(--sw-mesh);
+  background-size: var(--sw-mesh-size);
+  background-repeat: no-repeat, repeat;
+  background-position: center, 0 0;
+}
+
+.empty-state-content,
+.message-load-error-card {
+  background-color: var(--sw-glass-bg);
+  background-image: var(--sw-pill-fill);
+  border: var(--sw-pill-border);
+  border-radius: var(--sw-pill-radius);
+  box-shadow: var(--sw-pill-shadow);
+  -webkit-backdrop-filter: var(--sw-glass-blur);
+  backdrop-filter: var(--sw-glass-blur);
+  padding: 1.5rem 1.25rem;
+}
+
+.empty-state-brand-title,
+.folder-home-brand-title,
+.folder-home-hero h1 {
+  color: var(--sw-brand, var(--accent-primary));
+}
+
+.folder-home-tagline {
+  color: var(--text-secondary, var(--sw-text-muted));
+}
+
+.empty-state-logo,
+.folder-home-logo,
+.loading-logo {
+  filter: drop-shadow(0 12px 28px rgba(212, 175, 55, 0.22));
+}
+
+.folder-home-shell .folder-home-list-panel.panel,
+.folder-home-actions-column > .panel {
+  background-color: var(--sw-glass-bg);
+  background-image: var(--sw-pill-fill);
+  border: var(--sw-pill-border);
+  border-radius: var(--sw-pill-radius);
+  box-shadow: var(--sw-pill-shadow);
+  -webkit-backdrop-filter: var(--sw-glass-blur);
+  backdrop-filter: var(--sw-glass-blur);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-state-content,
+  .message-load-error-card,
+  .folder-home-shell .folder-home-list-panel.panel,
+  .folder-home-actions-column > .panel {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

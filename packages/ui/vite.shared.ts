@@ -57,7 +57,7 @@ export async function pwaPlugins(): Promise<PluginOption[]> {
       name: "prepare-pwa-source-icon",
       apply: "build",
       buildStart() {
-        const source = resolve(__dirname, "src/images/CodeNomad-Icon.png")
+        const source = resolve(__dirname, "src/images/Tokenizin-Logo.png")
         const publicDir = resolve(__dirname, "src/renderer/public")
         const dest = resolve(publicDir, "logo.png")
         fs.mkdirSync(publicDir, { recursive: true })
@@ -72,14 +72,14 @@ export async function pwaPlugins(): Promise<PluginOption[]> {
         image: "public/logo.png",
       },
       manifest: {
-        name: "CodeNomad",
-        short_name: "CodeNomad",
+        name: "Tokenizin",
+        short_name: "Tokenizin",
         id: "/",
         start_url: "/",
         display: "standalone",
         display_override: ["window-controls-overlay", "standalone"],
-        background_color: "#1a1a1a",
-        theme_color: "#1a1a1a",
+        background_color: "#090a11",
+        theme_color: "#d4af37",
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,

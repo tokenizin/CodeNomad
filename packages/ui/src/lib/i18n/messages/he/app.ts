@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "המשך להריץ",
   "app.stopInstance.toast.error": "עצירת סביבת העבודה נכשלה.",
 
-  "emptyState.logoAlt": "לוגו CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "בחר תיקייה כדי להתחיל לתכנת עם AI",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "בחר תיקייה",
   "emptyState.actions.selecting": "בוחר...",
   "emptyState.keyboardShortcut": "קיצור מקלדת: {shortcut}",

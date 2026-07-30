@@ -1,8 +1,9 @@
 export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Sprache",
 
-  "folderSelection.logoAlt": "CodeNomad Logo",
-  "folderSelection.tagline": "Wählen Sie einen Ordner aus, um mit dem AI-Coding zu beginnen",
+  "folderSelection.logoAlt": "Tokenizin logo",
+  "folderSelection.brandTitle": "Tokenizin",
+  "folderSelection.tagline": "Strategic partnership with StarWorld — open a workspace to continue building the hospitality OS.",
 
   "folderSelection.links.github": "CodeNomad GitHub",
   "folderSelection.links.githubStars": "CodeNomad GitHub Sterne",

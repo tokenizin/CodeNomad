@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
-import iconUrl from "../../images/CodeNomad-Icon.png"
+import { TOKENIZIN_LOGO_URL } from "../../lib/brand-assets"
 import { tGlobal } from "../../lib/i18n"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
 import "../../index.css"
@@ -120,9 +120,10 @@ function LoadingApp() {
 
   return (
     <div class="loading-wrapper" role="status" aria-live="polite">
-      <img src={iconUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="180" height="180" />
+      <img src={TOKENIZIN_LOGO_URL} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="180" height="180" />
       <div class="loading-heading">
-        <h1 class="loading-title">CodeNomad</h1>
+        <h1 class="loading-title">{tGlobal("loadingScreen.brandTitle")}</h1>
+        <p class="loading-tagline">{tGlobal("loadingScreen.tagline")}</p>
         <Show when={statusKey()}>
           {(key) => <p class="loading-status">{tGlobal(key())}</p>}
         </Show>

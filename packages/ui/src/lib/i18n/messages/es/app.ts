@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "Seguir ejecutándose",
   "app.stopInstance.toast.error": "No se pudo detener el workspace.",
 
-  "emptyState.logoAlt": "Logo de CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Selecciona una carpeta para empezar a programar con IA",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "Seleccionar carpeta",
   "emptyState.actions.selecting": "Seleccionando...",
   "emptyState.keyboardShortcut": "Atajo de teclado: {shortcut}",

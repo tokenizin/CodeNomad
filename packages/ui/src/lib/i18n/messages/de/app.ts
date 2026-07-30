@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "Weiterlaufen lassen",
   "app.stopInstance.toast.error": "Arbeitsbereich konnte nicht gestoppt werden.",
 
-  "emptyState.logoAlt": "CodeNomad Logo",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Wählen Sie einen Ordner aus, um mit dem AI-Coding zu beginnen",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "Ordner auswählen",
   "emptyState.actions.selecting": "Wird ausgewählt...",
   "emptyState.keyboardShortcut": "Tastenkombination: {shortcut}",

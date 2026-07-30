@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "実行を続ける",
   "app.stopInstance.toast.error": "ワークスペースの停止に失敗しました。",
 
-  "emptyState.logoAlt": "CodeNomad ロゴ",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "フォルダを選択して AI でコーディングを開始",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "フォルダを選択",
   "emptyState.actions.selecting": "選択中...",
   "emptyState.keyboardShortcut": "キーボードショートカット: {shortcut}",

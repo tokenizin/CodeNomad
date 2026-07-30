@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="tokenizin-palace-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 288 288" role="img" aria-label="Tokenizin">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fbe563"/>
+      <stop offset="45%" stop-color="#f2c858"/>
+      <stop offset="100%" stop-color="#d4af37"/>
+    </linearGradient>
+    <linearGradient id="goldGradR" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffc713"/>
+      <stop offset="50%" stop-color="#e3a82a"/>
+      <stop offset="100%" stop-color="#c9a227"/>
+    </linearGradient>
+  </defs>
+  <!-- Silver wings (behind) -->
+  <polygon fill="#c8c9cb" points="102,128 102,152 86,152 96,132"/>
+  <polygon fill="#c8c9cb" points="186,128 192,132 202,152 186,152"/>
+  <!-- Gold mirrored L shapes -->
+  <path fill="url(#goldGrad)" d="M128 76 L134 82 L134 185 L70 185 L70 175 L123 175 L123 82 Z"/>
+  <path fill="url(#goldGradR)" d="M155 82 L160 76 L166 82 L166 175 L221 175 L221 185 L155 185 Z"/>
+  <!-- Silver pedestal -->
+  <polygon fill="#d0d1d3" points="56,206 226,206 239,216 49,216"/>
+</svg>

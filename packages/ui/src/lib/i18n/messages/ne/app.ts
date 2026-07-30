@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "चालु राख्नुहोस्",
   "app.stopInstance.toast.error": "कार्यस्थान रोक्न असफल भयो।",
 
-  "emptyState.logoAlt": "CodeNomad लोगो",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "AI सँग कोडिङ सुरु गर्न फोल्डर चयन गर्नुहोस्",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "फोल्डर चयन गर्नुहोस्",
   "emptyState.actions.selecting": "चयन गर्दै...",
   "emptyState.keyboardShortcut": "किबोर्ड सर्टकट: {shortcut}",

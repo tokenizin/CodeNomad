@@ -1,8 +1,9 @@
 export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Language",
 
-  "folderSelection.logoAlt": "CodeNomad logo",
-  "folderSelection.tagline": "Select a folder to start coding with AI",
+  "folderSelection.logoAlt": "Tokenizin logo",
+  "folderSelection.brandTitle": "Tokenizin",
+  "folderSelection.tagline": "Strategic partnership with StarWorld — open a workspace to continue building the hospitality OS.",
 
   "folderSelection.links.github": "CodeNomad GitHub",
   "folderSelection.links.githubStars": "CodeNomad GitHub Stars",
@@ -53,8 +54,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.remove": "Remove",
   "folderSelection.hints.browse": "Browse",
 
-  "folderSelection.loading.title": "Starting instance...",
-  "folderSelection.loading.subtitle": "Hang tight while we prepare your workspace.",
+  "folderSelection.loading.title": "Starting instance…",
+  "folderSelection.loading.subtitle": "Preparing your Tokenizin × StarWorld workspace.",
 
   "folderSelection.drop.title": "Drop a folder to open it",
   "folderSelection.drop.subtitle": "Start a new instance in the dropped folder.",

@@ -10,6 +10,7 @@ import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
 const log = getLogger("actions")
 
 type DraftFields = {
+  provider: SpeechProviderPreference
   apiKey: string
   baseUrl: string
   sttModel: string
@@ -21,6 +22,7 @@ type DraftFields = {
 
 function createDraftFields(speech: SpeechSettings): DraftFields {
   return {
+    provider: speech.provider,
     apiKey: "",
     baseUrl: speech.baseUrl ?? "",
     sttModel: speech.sttModel,
@@ -33,6 +35,7 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
 
 function isDraftEqual(a: DraftFields, b: DraftFields): boolean {
   return (
+    a.provider === b.provider &&
     a.apiKey === b.apiKey &&
     a.baseUrl === b.baseUrl &&
     a.sttModel === b.sttModel &&
@@ -124,6 +127,7 @@ export const SpeechSettingsCard: Component = () => {
     const current = drafts()
     return (
       apiKeyDirty() ||
+      current.provider !== speech.provider ||
       (current.baseUrl || "") !== (speech.baseUrl || "") ||
       current.sttModel !== speech.sttModel ||
       current.ttsModel !== speech.ttsModel ||
@@ -148,6 +152,7 @@ export const SpeechSettingsCard: Component = () => {
     try {
       const trimmedApiKey = current.apiKey.trim()
       await updateSpeechSettings({
+        provider: current.provider,
         ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
         baseUrl: current.baseUrl.trim() || undefined,
         sttModel: current.sttModel.trim() || undefined,
@@ -158,6 +163,7 @@ export const SpeechSettingsCard: Component = () => {
       })
       await loadSpeechCapabilities(true)
       setDrafts({
+        provider: current.provider,
         apiKey: "",
         baseUrl: current.baseUrl.trim(),
         sttModel: current.sttModel.trim() || serverSettings().speech.sttModel,
@@ -191,15 +197,41 @@ export const SpeechSettingsCard: Component = () => {
       </div>
 
       <div class="settings-stack">
+        <SelectField
+          label={t("settings.speech.provider.title")}
+          caption={t("settings.speech.provider.subtitle")}
+          value={drafts().provider}
+          onInput={(value) => {
+            const provider = value as SpeechProviderPreference
+            updateDraft("provider", provider)
+            if (provider === "deepgram") {
+              const current = drafts()
+              if (!current.baseUrl || current.baseUrl.includes("openai.com")) {
+                updateDraft("baseUrl", "https://api.deepgram.com/v1")
+              }
+              if (!current.sttModel || current.sttModel.includes("gpt-") || current.sttModel.includes("whisper")) {
+                updateDraft("sttModel", "nova-3")
+              }
+              if (!current.ttsModel || current.ttsModel.includes("gpt-")) {
+                updateDraft("ttsModel", "aura-2")
+              }
+              if (!current.ttsVoice || current.ttsVoice === "marin" || current.ttsVoice === "alloy") {
+                updateDraft("ttsVoice", "aura-asteria-en")
+              }
+            }
+          }}
+          options={[
+            { value: "openai-compatible", label: t("settings.speech.provider.openaiCompatible") },
+            { value: "deepgram", label: t("settings.speech.provider.deepgram") },
+          ]}
+        />
         <div class="settings-toggle-row settings-toggle-row-compact">
           <div>
-            <div class="settings-toggle-title">{t("settings.speech.provider.title")}</div>
-            <div class="settings-toggle-caption">{t("settings.speech.provider.subtitle")}</div>
+            <div class="settings-toggle-title">{t("settings.speech.status.configured")}</div>
+            <div class="settings-toggle-caption">{saveStatusLabel()}</div>
           </div>
           <div class="settings-toolbar-inline">
-            <span class="settings-inline-note">{t("settings.speech.provider.openaiCompatible")}</span>
             <span class="settings-inline-note">{capabilityLabel()}</span>
-            <span class="settings-inline-note">{saveStatusLabel()}</span>
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"

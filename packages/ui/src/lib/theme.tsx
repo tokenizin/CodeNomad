@@ -44,13 +44,13 @@ const lightPaletteFallbacks: ResolvedPaletteColors = {
 }
 
 const darkPaletteFallbacks: ResolvedPaletteColors = {
-  backgroundDefault: "#1a1a1a",
-  backgroundPaper: "#2a2a2a",
-  primary: "#0080ff",
-  primaryContrast: "#1a1a1a",
-  textPrimary: "#cfd4dc",
-  textSecondary: "#999999",
-  divider: "#3a3a3a",
+  backgroundDefault: "#090a11",
+  backgroundPaper: "#212936",
+  primary: "#d4af37",
+  primaryContrast: "#090a11",
+  textPrimary: "#f3f4f6",
+  textSecondary: "#9ca3af",
+  divider: "rgba(255, 255, 255, 0.08)",
 }
 
 const readCssVar = (token: string, fallback: string, rootStyle: CSSStyleDeclaration | null) => {

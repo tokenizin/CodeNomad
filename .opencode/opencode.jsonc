@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "ollama/gemma4:latest",
+  "model": "opencode-go/mimo-v2.5",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
@@ -50,6 +50,27 @@
           "name": "MiniMax M2.7 (Ollama cloud)",
           "tool_call": true,
           "reasoning": true
+        }
+      }
+    },
+    "opencode-go": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenCode Go (MiMo V2.5)",
+      "apiKey": "${OPENCODE_GO_API_KEY:-ollama}",
+      "options": {
+        "baseURL": "https://opencode.ai/zen/go"
+      },
+      "models": {
+        "mimo-v2.5": {
+          "id": "mimo-v2.5",
+          "name": "MiMo V2.5",
+          "attachment": false,
+          "reasoning": true,
+          "tool_call": true,
+          "context": {
+            "context": 1000000,
+            "output": 128000
+          }
         }
       }
     }
@@ -171,14 +192,14 @@
       "prompt": "{file:../../.nomadworks/agents/workflow_runner.md}"
     },
     "infra_sme": {
-      "model": "ollama/qwen2.5:14b",
+      "model": "opencode-go/mimo-v2.5",
       "description": "Infrastructure SME — platform topology, CI/CD design, schema migration strategy, release architecture, automation patterns, incident triage, multi-regional scalability, multi-software lifecycle, performance optimization, and FinOps cost efficiency advisory",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/infra_sme.md}",
       "mcp": ["chrome-devtools"]
     },
     "dev_ops": {
-      "model": "ollama/qwen2.5:14b",
+      "model": "opencode-go/mimo-v2.5",
       "description": "DevOps — CI/CD, Vercel deploys, schema push and seeds, release versioning, code revision & quality gates, testing pipeline (vitest/hardhat/playwright), packaging (next build/solidity/CodeNomad/Docker), hosting & deploying (Vercel multi-region/CodeNomad tunnel/contract deploy), publishing, schema ops, multi-software automation, performance optimization, and FinOps cost efficiency",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/dev_ops.md}",

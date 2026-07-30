@@ -7,15 +7,15 @@
 export type PiperLocale = 'en' | 'id'
 export type VoiceSpeechLocale = 'en' | 'id' | 'auto'
 export type PiperGender = 'female' | 'male' | 'neutral'
-export type PiperStyle =
-  | 'calm'
-  | 'professional'
-  | 'certificated'
-  | 'young'
-  | 'enthusiastic'
-  | 'excited'
-  | 'conversational'
-  | 'news'
+
+/** Style presets — synthesis calibration that varies speaking rate and energy. */
+export const PIPER_STYLE_PRESETS: Record<string, Required<Pick<PiperSynthesisParams, 'lengthScale' | 'noiseScale' | 'noiseWScale' | 'volume'>>> = {
+  Professional: { lengthScale: 1.05, noiseScale: 0.55, noiseWScale: 0.75, volume: 1.0 },
+  Calm: { lengthScale: 1.18, noiseScale: 0.45, noiseWScale: 0.65, volume: 0.95 },
+  Enthusiastic: { lengthScale: 0.9, noiseScale: 0.72, noiseWScale: 0.9, volume: 1.05 },
+  Conversational: { lengthScale: 1.0, noiseScale: 0.667, noiseWScale: 0.8, volume: 1.0 },
+  News: { lengthScale: 1.02, noiseScale: 0.5, noiseWScale: 0.72, volume: 1.0 },
+}
 
 /** Piper SynthesisConfig knobs (length_scale ≈ inverse of speaking rate). */
 export interface PiperSynthesisParams {
@@ -28,6 +28,7 @@ export interface PiperSynthesisParams {
   speed?: number
 }
 
+/** One profile per ONNX model — style variants are separate. */
 export interface PiperVoiceProfile {
   id: string
   label: string
@@ -35,7 +36,6 @@ export interface PiperVoiceProfile {
   model: string
   locale: PiperLocale
   gender: PiperGender
-  style: PiperStyle
   demographic: string
   energy: string
   persona: string
@@ -48,176 +48,74 @@ export interface PiperVoiceProfile {
 /** High-quality EN defaults + Indonesian news voice. */
 export const PIPER_VOICE_PROFILES: PiperVoiceProfile[] = [
   {
-    id: 'piper-en-female-professional',
-    label: 'Lessac · Professional',
+    id: 'piper-en-female-lessac',
+    label: 'US Lessac (High)',
     model: 'en_US-lessac-high',
     locale: 'en',
     gender: 'female',
-    style: 'professional',
     demographic: 'Female · US English · High quality',
     energy: 'Clear, authoritative',
     persona: 'Certificated presenter — crisp diction, boardroom-ready',
     synthesis: { lengthScale: 1.05, noiseScale: 0.55, noiseWScale: 0.75, volume: 1.0 },
   },
   {
-    id: 'piper-en-female-certificated',
-    label: 'Lessac · Certificated',
-    model: 'en_US-lessac-high',
-    locale: 'en',
-    gender: 'female',
-    style: 'certificated',
-    demographic: 'Female · US English · High quality',
-    energy: 'Measured, formal',
-    persona: 'Official briefing voice — precise, trustworthy',
-    synthesis: { lengthScale: 1.1, noiseScale: 0.48, noiseWScale: 0.7, volume: 1.0 },
-  },
-  {
-    id: 'piper-en-female-calm',
-    label: 'Lessac · Calm',
-    model: 'en_US-lessac-high',
-    locale: 'en',
-    gender: 'female',
-    style: 'calm',
-    demographic: 'Female · US English · High quality',
-    energy: 'Soft, unhurried',
-    persona: 'Supportive guide — patient explanations',
-    synthesis: { lengthScale: 1.18, noiseScale: 0.45, noiseWScale: 0.65, volume: 0.95 },
-  },
-  {
-    id: 'piper-en-female-young',
-    label: 'Alba · Young',
+    id: 'piper-en-female-alba',
+    label: 'UK Alba (Medium)',
     model: 'en_GB-alba-medium',
     locale: 'en',
     gender: 'female',
-    style: 'young',
-    demographic: 'Female · UK English · Young',
+    demographic: 'Female · UK English · Medium quality',
     energy: 'Bright, clear',
     persona: 'Friendly host — light, approachable',
     synthesis: { lengthScale: 0.97, noiseScale: 0.62, noiseWScale: 0.8, volume: 1.0 },
   },
   {
-    id: 'piper-en-female-enthusiastic',
-    label: 'Amy · Enthusiastic',
+    id: 'piper-en-female-amy',
+    label: 'US Amy (Medium)',
     model: 'en_US-amy-medium',
     locale: 'en',
     gender: 'female',
-    style: 'enthusiastic',
     demographic: 'Female · US English · Conversational',
     energy: 'Upbeat, energetic',
     persona: 'Demo host — product tours, warm encouragement',
     synthesis: { lengthScale: 0.9, noiseScale: 0.72, noiseWScale: 0.9, volume: 1.05 },
   },
   {
-    id: 'piper-en-female-excited',
-    label: 'Amy · Excited',
-    model: 'en_US-amy-medium',
-    locale: 'en',
-    gender: 'female',
-    style: 'excited',
-    demographic: 'Female · US English · Conversational',
-    energy: 'Fast, lively',
-    persona: 'Launch energy — short celebratory updates',
-    synthesis: { lengthScale: 0.84, noiseScale: 0.8, noiseWScale: 0.95, volume: 1.08 },
-  },
-  {
-    id: 'piper-en-female-conversational',
-    label: 'Amy · Conversational',
-    model: 'en_US-amy-medium',
-    locale: 'en',
-    gender: 'female',
-    style: 'conversational',
-    demographic: 'Female · US English · Medium',
-    energy: 'Natural, friendly',
-    persona: 'Everyday chat — balanced cadence',
-    synthesis: { lengthScale: 1.0, noiseScale: 0.667, noiseWScale: 0.8, volume: 1.0 },
-  },
-  {
-    id: 'piper-en-male-professional',
-    label: 'Ryan · Professional',
+    id: 'piper-en-male-ryan',
+    label: 'US Ryan (High)',
     model: 'en_US-ryan-high',
     locale: 'en',
     gender: 'male',
-    style: 'professional',
     demographic: 'Male · US English · High quality',
     energy: 'Confident, direct',
     persona: 'Briefing lead — clear decisions, low drama',
     synthesis: { lengthScale: 1.05, noiseScale: 0.55, noiseWScale: 0.75, volume: 1.0 },
   },
   {
-    id: 'piper-en-male-certificated',
-    label: 'Ryan · Certificated',
-    model: 'en_US-ryan-high',
+    id: 'piper-en-female-libritts',
+    label: 'US LibriTTS (Medium)',
+    model: 'en_US-libritts_r-medium',
     locale: 'en',
-    gender: 'male',
-    style: 'certificated',
-    demographic: 'Male · US English · High quality',
-    energy: 'Formal, steady',
-    persona: 'Compliance narrator — authoritative delivery',
-    synthesis: { lengthScale: 1.1, noiseScale: 0.5, noiseWScale: 0.7, volume: 1.0 },
+    gender: 'female',
+    demographic: 'Female · US English · Medium quality',
+    energy: 'Natural, measured',
+    persona: 'Narrative reader — calm storytelling voice',
+    synthesis: { lengthScale: 1.08, noiseScale: 0.52, noiseWScale: 0.73, volume: 0.98 },
   },
   {
-    id: 'piper-en-male-calm',
-    label: 'Ryan · Calm',
-    model: 'en_US-ryan-high',
-    locale: 'en',
-    gender: 'male',
-    style: 'calm',
-    demographic: 'Male · US English · High quality',
-    energy: 'Low, measured',
-    persona: 'Technical explainer — unhurried steps',
-    synthesis: { lengthScale: 1.16, noiseScale: 0.48, noiseWScale: 0.68, volume: 0.95 },
-  },
-  {
-    id: 'piper-en-male-enthusiastic',
-    label: 'Ryan · Enthusiastic',
-    model: 'en_US-ryan-high',
-    locale: 'en',
-    gender: 'male',
-    style: 'enthusiastic',
-    demographic: 'Male · US English · High quality',
-    energy: 'Dynamic, upbeat',
-    persona: 'Pitch presenter — emphasis on milestones',
-    synthesis: { lengthScale: 0.9, noiseScale: 0.7, noiseWScale: 0.88, volume: 1.05 },
-  },
-  {
-    id: 'piper-id-news-calm',
-    label: 'ID News · Calm',
+    id: 'piper-id-news',
+    label: 'ID News TTS (Medium)',
     model: 'id_ID-news_tts-medium',
     locale: 'id',
     gender: 'neutral',
-    style: 'news',
     demographic: 'Indonesian · News TTS',
     energy: 'Clear, broadcast',
     persona: 'Bahasa Indonesia — calm news-style delivery',
     synthesis: { lengthScale: 1.08, noiseScale: 0.55, noiseWScale: 0.75, volume: 1.0 },
   },
-  {
-    id: 'piper-id-news-professional',
-    label: 'ID News · Professional',
-    model: 'id_ID-news_tts-medium',
-    locale: 'id',
-    gender: 'neutral',
-    style: 'professional',
-    demographic: 'Indonesian · News TTS',
-    energy: 'Formal, crisp',
-    persona: 'Bahasa Indonesia — certificated / formal tone',
-    synthesis: { lengthScale: 1.02, noiseScale: 0.5, noiseWScale: 0.72, volume: 1.0 },
-  },
-  {
-    id: 'piper-id-news-enthusiastic',
-    label: 'ID News · Enthusiastic',
-    model: 'id_ID-news_tts-medium',
-    locale: 'id',
-    gender: 'neutral',
-    style: 'enthusiastic',
-    demographic: 'Indonesian · News TTS',
-    energy: 'Brighter, faster',
-    persona: 'Bahasa Indonesia — warmer product-tour cadence',
-    synthesis: { lengthScale: 0.92, noiseScale: 0.68, noiseWScale: 0.85, volume: 1.05 },
-  },
 ]
 
-export const DEFAULT_PIPER_VOICE_ID = 'piper-en-female-professional'
+export const DEFAULT_PIPER_VOICE_ID = 'piper-en-female-lessac'
 
 export const PIPER_VOICE_IDS = PIPER_VOICE_PROFILES.map((p) => p.id)
 
@@ -236,12 +134,20 @@ export function getPiperVoiceProfile(id: string | undefined | null): PiperVoiceP
   return PIPER_VOICE_PROFILES.find((p) => p.id === DEFAULT_PIPER_VOICE_ID)!
 }
 
-export function resolvePiperModelAndSynthesis(id: string | undefined | null): {
+export function resolvePiperModelAndSynthesis(id: string | undefined | null, style?: string): {
   model: string
   synthesis: PiperSynthesisParams
   profile: PiperVoiceProfile
 } {
   const profile = getPiperVoiceProfile(id)
+  // Merge style preset over base profile's synthesis if provided
+  if (style && PIPER_STYLE_PRESETS[style]) {
+    return {
+      model: profile.model,
+      synthesis: { ...profile.synthesis, ...(PIPER_STYLE_PRESETS[style] as PiperSynthesisParams) },
+      profile,
+    }
+  }
   // Raw model key not in catalog — use defaults with that model
   if (id && !isPiperVoiceId(id) && !PIPER_VOICE_PROFILES.some((p) => p.model === id)) {
     return {
@@ -265,10 +171,13 @@ export function pickPiperVoiceForLocale(
 ): PiperVoiceProfile {
   const preferred = getPiperVoiceProfile(preferredId)
   if (locale === 'id' && preferred.locale !== 'id') {
-    return getPiperVoiceProfile('piper-id-news-professional')
+    return PIPER_VOICE_PROFILES.find((p) => p.model === 'id_ID-news_tts-medium')!
   }
   if (locale === 'en' && preferred.locale !== 'en') {
-    return getPiperVoiceProfile(DEFAULT_PIPER_VOICE_ID)
+    return getPiperVoiceProfile('piper-en-female-lessac')
   }
   return preferred
 }
+
+/** Style presets for synthesis calibration. */
+export type PiperStylePreset = keyof typeof PIPER_STYLE_PRESETS

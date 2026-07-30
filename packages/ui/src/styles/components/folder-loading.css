@@ -1,32 +1,47 @@
-/* Folder loading overlay */
+/* Folder loading overlay — rotating StarWorld globe (portal loader parity) */
 .folder-loading-overlay {
   position: fixed;
   inset: 0;
-  background-color: var(--folder-overlay-bg);
+  background-color: rgba(9, 10, 17, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 50;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 .folder-loading-indicator {
   @apply flex flex-col items-center gap-3 text-center;
-  padding: 24px 32px;
-  border-radius: var(--folder-card-radius);
-  background-color: var(--surface-base);
-  border: 1px solid var(--border-base);
-  box-shadow: var(--folder-card-shadow);
-  min-width: 260px;
+  padding: 28px 36px;
+  border-radius: var(--sw-pill-radius, var(--folder-card-radius));
+  background-color: var(--sw-glass-bg, var(--surface-base));
+  background-image: var(--sw-pill-fill, none);
+  border: var(--sw-pill-border, 1px solid var(--border-base));
+  box-shadow: var(--sw-pill-shadow, var(--folder-card-shadow));
+  -webkit-backdrop-filter: var(--sw-glass-blur, none);
+  backdrop-filter: var(--sw-glass-blur, none);
+  min-width: 280px;
+}
+
+.folder-loading-globe {
+  margin-bottom: 4px;
+  filter: drop-shadow(0 12px 28px rgba(212, 175, 55, 0.22));
 }
 
 .folder-loading-text {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
+  color: var(--sw-brand, var(--text-primary));
 }
 
 .folder-loading-subtext {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
+}
+
+@keyframes sw-globe-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

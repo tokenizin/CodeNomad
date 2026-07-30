@@ -14,9 +14,9 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "继续运行",
   "app.stopInstance.toast.error": "无法停止工作区。",
 
-  "emptyState.logoAlt": "CodeNomad 徽标",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "选择文件夹，开始与 AI 一起编码",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "选择文件夹",
   "emptyState.actions.selecting": "正在选择...",
   "emptyState.keyboardShortcut": "键盘快捷键：{shortcut}",

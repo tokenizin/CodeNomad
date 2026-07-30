@@ -14,14 +14,14 @@ export const appMessages = {
   "app.stopInstance.cancelLabel": "Keep running",
   "app.stopInstance.toast.error": "Failed to stop workspace.",
 
-  "emptyState.logoAlt": "CodeNomad logo",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Select a folder to start coding with AI",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "Select Folder",
   "emptyState.actions.selecting": "Selecting...",
   "emptyState.keyboardShortcut": "Keyboard shortcut: {shortcut}",
   "emptyState.examples": "Examples: {example}",
-  "emptyState.multipleInstances": "You can have multiple instances of the same folder",
+  "emptyState.multipleInstances": "You can open multiple workspaces for the same project",
 
   "releases.upgradeRequired.title": "Upgrade required",
   "releases.upgradeRequired.message.withVersion": "Update to CodeNomad {version} to use the latest UI.",

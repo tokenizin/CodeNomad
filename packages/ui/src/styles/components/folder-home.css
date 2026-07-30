@@ -2,7 +2,8 @@
   height: 100dvh;
   overflow-x: hidden;
   overflow-y: auto;
-  background-color: var(--surface-secondary);
+  /* Mesh + glass applied in starworld-surfaces.css (Level C) */
+  background-color: var(--sw-bg, var(--surface-base));
 }
 
 .folder-home-shell {

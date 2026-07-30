@@ -1,0 +1,208 @@
+/**
+ * Tokenizin × StarWorld brand overlay for CodeNomad (Level B).
+ * Imported after tokens.css — remaps dark surfaces, gold accent, CTAs, chat.
+ * Source: docs/product/STARWORLD_BRAND_GUIDE.md + public/tokenizin-ecosystem.html
+ */
+
+:root {
+  /* Shared brand constants (available in light + dark for glass surfaces) */
+  --sw-brand: #d4af37;
+  --sw-brand-bright: #ffc713;
+  --sw-brand-dim: #b8962e;
+  --sw-brand-hover: #c49a2f;
+  --sw-bg: #090a11;
+  --sw-card: #212936;
+  --sw-surface: #161b22;
+  --sw-text: #f3f4f6;
+  --sw-text-muted: #9ca3af;
+  --sw-pill-radius: 14px;
+  --sw-glass-blur: blur(36px) saturate(1.5);
+  --sw-glass-bg: rgba(12, 16, 24, 0.32);
+  --sw-pill-border: 1px solid rgba(212, 175, 55, 0.28);
+  --sw-pill-border-hover: rgba(212, 175, 55, 0.5);
+  --sw-pill-fill:
+    linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0.04) 32%,
+      rgba(255, 255, 255, 0.015) 62%,
+      rgba(0, 0, 0, 0.06) 100%
+    ),
+    radial-gradient(120% 90% at 10% 0%, rgba(255, 230, 190, 0.12) 0%, transparent 48%),
+    radial-gradient(90% 80% at 100% 100%, rgba(40, 130, 150, 0.1) 0%, transparent 55%),
+    linear-gradient(160deg, rgba(52, 64, 80, 0.32) 0%, rgba(18, 24, 34, 0.45) 52%, rgba(10, 12, 18, 0.55) 100%);
+  --sw-pill-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 8px 28px rgba(0, 0, 0, 0.4);
+  --sw-pill-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+    0 12px 36px rgba(0, 0, 0, 0.45),
+    0 0 24px rgba(212, 175, 55, 0.08);
+  --sw-mesh:
+    radial-gradient(ellipse 70% 55% at 50% 35%, rgba(212, 175, 55, 0.1) 0%, transparent 65%),
+    radial-gradient(circle at 1px 1px, rgba(212, 175, 55, 0.28) 1px, transparent 0);
+  --sw-mesh-size: auto, 14px 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --surface-base: var(--sw-bg);
+    --surface-primary: var(--surface-base);
+    --surface-secondary: var(--sw-card);
+    --surface-muted: var(--sw-surface);
+    --surface-code: var(--sw-bg);
+    --surface-hover: #2a3344;
+    --markdown-table-row-odd: #0c0e14;
+    --markdown-table-row-even: #12161f;
+
+    --border-base: rgba(255, 255, 255, 0.08);
+    --border-secondary: rgba(255, 255, 255, 0.08);
+    --border-muted: rgba(255, 255, 255, 0.06);
+    --border-strong: rgba(212, 175, 55, 0.3);
+
+    --text-primary: var(--sw-text);
+    --text-secondary: var(--sw-text-muted);
+    --text-muted: var(--sw-text-muted);
+    --text-inverted: var(--sw-bg);
+    --text-on-accent: var(--sw-bg);
+
+    --accent-primary: var(--sw-brand);
+    --accent-hover: var(--sw-brand-hover);
+
+    --status-success: #4ade80;
+    --status-error: #ef4444;
+    --status-warning: #fbbf24;
+
+    --message-user-bg: color-mix(in oklab, var(--sw-surface) 82%, var(--sw-brand));
+    --message-user-border: var(--sw-brand);
+    --message-assistant-bg: var(--message-tool-bg);
+    --message-assistant-border: var(--sw-brand-dim);
+    --message-tool-bg: var(--sw-surface);
+    --message-tool-border: rgba(255, 255, 255, 0.12);
+
+    --list-item-highlight-bg: rgba(212, 175, 55, 0.14);
+    --list-item-highlight-bg-solid: #2a2416;
+    --list-item-highlight-border: rgba(212, 175, 55, 0.35);
+    --attachment-chip-bg: rgba(212, 175, 55, 0.12);
+    --attachment-chip-text: var(--sw-brand-bright);
+    --attachment-chip-ring: rgba(212, 175, 55, 0.2);
+    --badge-neutral-bg: rgba(212, 175, 55, 0.12);
+    --badge-neutral-text: var(--sw-brand);
+    --env-vars-bg: rgba(212, 175, 55, 0.12);
+    --env-vars-border: rgba(212, 175, 55, 0.28);
+    --env-vars-text: var(--sw-brand);
+    --dropdown-highlight-bg: rgba(212, 175, 55, 0.16);
+    --dropdown-highlight-text: var(--text-primary);
+    --selection-highlight-bg: rgba(212, 175, 55, 0.16);
+    --selection-highlight-strong-bg: rgba(212, 175, 55, 0.26);
+    --focus-ring-color: var(--accent-primary);
+    --focus-ring-offset: var(--surface-base);
+
+    --button-primary-bg: var(--sw-brand);
+    --button-primary-hover-bg: var(--sw-brand-bright);
+    --button-primary-text: var(--sw-bg);
+
+    /* Tabs stay subdued; accent drives indicators elsewhere */
+    --tab-active-bg: color-mix(in oklab, var(--sw-brand) 18%, var(--sw-surface));
+    --tab-active-hover-bg: color-mix(in oklab, var(--sw-brand) 26%, var(--sw-surface));
+    --tab-active-text: var(--sw-text);
+    --tab-inactive-bg: var(--sw-surface);
+    --tab-inactive-hover-bg: var(--sw-card);
+    --tab-inactive-text: var(--sw-text-muted);
+    --new-tab-bg: var(--sw-card);
+    --new-tab-hover-bg: color-mix(in oklab, var(--sw-brand) 14%, var(--sw-card));
+    --new-tab-text: var(--sw-text);
+    --session-tab-active-bg: var(--sw-surface);
+    --session-tab-active-text: var(--text-primary);
+    --session-tab-inactive-text: var(--text-muted);
+    --session-tab-hover-bg: var(--surface-hover);
+
+    --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-base: var(--sw-bg);
+  --surface-primary: var(--surface-base);
+  --surface-secondary: var(--sw-card);
+  --surface-muted: var(--sw-surface);
+  --surface-code: var(--sw-bg);
+  --surface-hover: #2a3344;
+  --markdown-table-row-odd: #0c0e14;
+  --markdown-table-row-even: #12161f;
+
+  --border-base: rgba(255, 255, 255, 0.08);
+  --border-secondary: rgba(255, 255, 255, 0.08);
+  --border-muted: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(212, 175, 55, 0.3);
+
+  --text-primary: var(--sw-text);
+  --text-secondary: var(--sw-text-muted);
+  --text-muted: var(--sw-text-muted);
+  --text-inverted: var(--sw-bg);
+  --text-on-accent: var(--sw-bg);
+
+  --accent-primary: var(--sw-brand);
+  --accent-hover: var(--sw-brand-hover);
+
+  --status-success: #4ade80;
+  --status-error: #ef4444;
+  --status-warning: #fbbf24;
+
+  --message-user-bg: color-mix(in oklab, var(--sw-surface) 82%, var(--sw-brand));
+  --message-user-border: var(--sw-brand);
+  --message-assistant-bg: var(--message-tool-bg);
+  --message-assistant-border: var(--sw-brand-dim);
+  --message-tool-bg: var(--sw-surface);
+  --message-tool-border: rgba(255, 255, 255, 0.12);
+
+  --list-item-highlight-bg: rgba(212, 175, 55, 0.14);
+  --list-item-highlight-bg-solid: #2a2416;
+  --list-item-highlight-border: rgba(212, 175, 55, 0.35);
+  --attachment-chip-bg: rgba(212, 175, 55, 0.12);
+  --attachment-chip-text: var(--sw-brand-bright);
+  --attachment-chip-ring: rgba(212, 175, 55, 0.2);
+  --badge-neutral-bg: rgba(212, 175, 55, 0.12);
+  --badge-neutral-text: var(--sw-brand);
+  --env-vars-bg: rgba(212, 175, 55, 0.12);
+  --env-vars-border: rgba(212, 175, 55, 0.28);
+  --env-vars-text: var(--sw-brand);
+  --dropdown-highlight-bg: rgba(212, 175, 55, 0.16);
+  --dropdown-highlight-text: var(--text-primary);
+  --selection-highlight-bg: rgba(212, 175, 55, 0.16);
+  --selection-highlight-strong-bg: rgba(212, 175, 55, 0.26);
+  --focus-ring-color: var(--accent-primary);
+  --focus-ring-offset: var(--surface-base);
+
+  --button-primary-bg: var(--sw-brand);
+  --button-primary-hover-bg: var(--sw-brand-bright);
+  --button-primary-text: var(--sw-bg);
+
+  --tab-active-bg: color-mix(in oklab, var(--sw-brand) 18%, var(--sw-surface));
+  --tab-active-hover-bg: color-mix(in oklab, var(--sw-brand) 26%, var(--sw-surface));
+  --tab-active-text: var(--sw-text);
+  --tab-inactive-bg: var(--sw-surface);
+  --tab-inactive-hover-bg: var(--sw-card);
+  --tab-inactive-text: var(--sw-text-muted);
+  --new-tab-bg: var(--sw-card);
+  --new-tab-hover-bg: color-mix(in oklab, var(--sw-brand) 14%, var(--sw-card));
+  --new-tab-text: var(--sw-text);
+  --session-tab-active-bg: var(--sw-surface);
+  --session-tab-active-text: var(--text-primary);
+  --session-tab-inactive-text: var(--text-muted);
+  --session-tab-hover-bg: var(--surface-hover);
+
+  --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}

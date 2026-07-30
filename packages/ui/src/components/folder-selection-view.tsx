@@ -20,8 +20,9 @@ import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
+import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
+import StarWorldGlobe from "./starworld-globe"
 
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
 
@@ -702,9 +703,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
           <div class="folder-home-hero text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
+              <img src={TOKENIZIN_LOGO_URL} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
             </div>
-            <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
+            <h1 class="folder-home-brand-title mb-2 text-3xl font-semibold">{t("folderSelection.brandTitle")}</h1>
+            <p class="folder-home-tagline text-base text-secondary max-w-xl mx-auto">{t("folderSelection.tagline")}</p>
             <div class="mt-3 flex justify-center gap-2">
               <a
                 href={GITHUB_URL}
@@ -1105,9 +1107,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
         </div>
         <Show when={isLoading()}>
-          <div class="folder-loading-overlay">
+          <div class="folder-loading-overlay" role="status" aria-live="polite">
             <div class="folder-loading-indicator">
-              <div class="spinner" />
+              <StarWorldGlobe size={120} rotationSpeed={0.117} class="folder-loading-globe" />
               <p class="folder-loading-text">{t("folderSelection.loading.title")}</p>
               <p class="folder-loading-subtext">{t("folderSelection.loading.subtitle")}</p>
             </div>

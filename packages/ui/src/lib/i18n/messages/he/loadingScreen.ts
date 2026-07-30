@@ -1,5 +1,7 @@
 export const loadingScreenMessages = {
-  "loadingScreen.logoAlt": "לוגו CodeNomad",
+  "loadingScreen.logoAlt": "Tokenizin logo",
+  "loadingScreen.brandTitle": "Tokenizin",
+  "loadingScreen.tagline": "Tokenizin × StarWorld · trusted AI operations for hospitality",
   "loadingScreen.status.issue": "נתקלנו בבעיה",
   "loadingScreen.actions.showAnother": "הצג עוד",
   "loadingScreen.errors.missingRoot": "אלמנט השורש לטעינה לא נמצא",

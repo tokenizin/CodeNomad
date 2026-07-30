@@ -1,5 +1,7 @@
 export const loadingScreenMessages = {
-  "loadingScreen.logoAlt": "Logo CodeNomad",
+  "loadingScreen.logoAlt": "Tokenizin logo",
+  "loadingScreen.brandTitle": "Tokenizin",
+  "loadingScreen.tagline": "Tokenizin × StarWorld · trusted AI operations for hospitality",
   "loadingScreen.status.issue": "Un problème est survenu",
   "loadingScreen.actions.showAnother": "En afficher un autre",
   "loadingScreen.errors.missingRoot": "Élément racine de chargement introuvable",

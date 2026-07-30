@@ -1,5 +1,7 @@
 export const loadingScreenMessages = {
-  "loadingScreen.logoAlt": "CodeNomad लोगो",
+  "loadingScreen.logoAlt": "Tokenizin logo",
+  "loadingScreen.brandTitle": "Tokenizin",
+  "loadingScreen.tagline": "Tokenizin × StarWorld · trusted AI operations for hospitality",
   "loadingScreen.status.issue": "एउटा समस्या आइपऱ्यो",
   "loadingScreen.actions.showAnother": "अर्को देखाउनुहोस्",
   "loadingScreen.errors.missingRoot": "लोडिङ मूल तत्व फेला परेन",

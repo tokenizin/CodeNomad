@@ -1,5 +1,7 @@
 export const loadingScreenMessages = {
-  "loadingScreen.logoAlt": "Logo CodeNomad",
+  "loadingScreen.logoAlt": "Tokenizin logo",
+  "loadingScreen.brandTitle": "Tokenizin",
+  "loadingScreen.tagline": "Tokenizin × StarWorld · trusted AI operations for hospitality",
   "loadingScreen.status.issue": "Menemui masalah",
   "loadingScreen.actions.showAnother": "Tampilkan lainnya",
   "loadingScreen.errors.missingRoot": "Elemen root pemuatan tidak ditemukan",

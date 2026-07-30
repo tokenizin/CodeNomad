@@ -7,6 +7,7 @@ import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 import { NvidiaSpeechProvider } from "./providers/nvidia"
 import { LocalSpeechProvider } from "./providers/local"
 import { WhisperSpeechProvider } from "./providers/whisper"
+import { DeepgramSpeechProvider } from "./providers/deepgram"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -63,6 +64,10 @@ const DEFAULT_TTS_MODEL = "gpt-realtime-2"
 const DEFAULT_TTS_VOICE = "marin"
 const DEFAULT_TTS_FORMAT = "mp3"
 const DEFAULT_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
+const DEEPGRAM_BASE_URL = "https://api.deepgram.com/v1"
+const DEEPGRAM_STT_MODEL = "nova-3"
+const DEEPGRAM_TTS_MODEL = "aura-2"
+const DEEPGRAM_TTS_VOICE = "aura-asteria-en"
 
 export class SpeechService {
   constructor(
@@ -103,21 +108,37 @@ export class SpeechService {
       return new WhisperSpeechProvider({ settings, logger })
     }
 
-    // Default to OpenAI-compatible provider (covers openai, deepgram, etc.)
+    if (settings.provider === "deepgram") {
+      return new DeepgramSpeechProvider({ settings, logger })
+    }
+
+    // Default to OpenAI-compatible provider
     return new OpenAICompatibleSpeechProvider({ settings, logger })
   }
 
   private resolveSettings(): NormalizedSpeechSettings {
     const parsed = ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
     const speech = parsed.speech ?? {}
+    const provider = speech.provider?.trim() || DEFAULT_PROVIDER
+    const isDeepgram = provider === "deepgram"
 
     return {
-      provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-      baseUrl: speech.baseUrl?.trim() || DEFAULT_BASE_URL,
-      sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
-      ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
-      ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
+      provider,
+      apiKey:
+        speech.apiKey?.trim() ||
+        (isDeepgram ? process.env.DEEPGRAM_API_KEY : process.env.OPENAI_API_KEY),
+      baseUrl:
+        speech.baseUrl?.trim() ||
+        (isDeepgram ? DEEPGRAM_BASE_URL : DEFAULT_BASE_URL),
+      sttModel:
+        speech.sttModel?.trim() ||
+        (isDeepgram ? DEEPGRAM_STT_MODEL : DEFAULT_STT_MODEL),
+      ttsModel:
+        speech.ttsModel?.trim() ||
+        (isDeepgram ? DEEPGRAM_TTS_MODEL : DEFAULT_TTS_MODEL),
+      ttsVoice:
+        speech.ttsVoice?.trim() ||
+        (isDeepgram ? DEEPGRAM_TTS_VOICE : DEFAULT_TTS_VOICE),
       ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
     }
   }

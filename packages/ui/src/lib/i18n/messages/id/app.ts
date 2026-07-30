@@ -13,9 +13,9 @@ export const appMessages = {
   "app.stopInstance.confirmLabel": "Hentikan",
   "app.stopInstance.cancelLabel": "Biarkan berjalan",
 
-  "emptyState.logoAlt": "Logo CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Pilih folder untuk mulai coding dengan AI",
+  "emptyState.logoAlt": "Tokenizin logo",
+  "emptyState.brandTitle": "Tokenizin",
+  "emptyState.tagline": "Tokenizin × StarWorld — AI ops for hospitality. Select a workspace to build and ship.",
   "emptyState.actions.selectFolder": "Pilih Folder",
   "emptyState.actions.selecting": "Memilih...",
   "emptyState.keyboardShortcut": "Pintasan keyboard: {shortcut}",

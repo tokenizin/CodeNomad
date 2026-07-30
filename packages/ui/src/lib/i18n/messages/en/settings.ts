@@ -265,6 +265,7 @@ export const settingsMessages = {
   "settings.speech.provider.title": "Provider",
   "settings.speech.provider.subtitle": "Speech requests use the server-side speech adapter.",
   "settings.speech.provider.openaiCompatible": "OpenAI-compatible",
+  "settings.speech.provider.deepgram": "Deepgram",
   "settings.speech.status.loading": "Checking configuration...",
   "settings.speech.status.configured": "Configured",
   "settings.speech.status.missing": "Missing API key",

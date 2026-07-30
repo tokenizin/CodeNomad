@@ -1,7 +1,6 @@
 import type { Component, JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
-
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
 
 interface BrandedEmptyStateProps {
   title?: JSX.Element
@@ -17,7 +16,7 @@ const BrandedEmptyState: Component<BrandedEmptyStateProps> = (props) => {
     <div class={`empty-state ${props.class ?? ""}`.trim()}>
       <div class="empty-state-content">
         <div class="flex flex-col items-center gap-3 mb-6">
-          <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="empty-state-logo h-48 w-auto" loading="lazy" />
+          <img src={TOKENIZIN_LOGO_URL} alt={t("messageSection.empty.logoAlt")} class="empty-state-logo h-48 w-auto" loading="lazy" />
           <h1 class="empty-state-brand-title text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
         </div>
         {props.title ? <h3>{props.title}</h3> : null}

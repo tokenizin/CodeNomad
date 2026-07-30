@@ -36,7 +36,7 @@ export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
-export type SpeechProviderPreference = "openai-compatible"
+export type SpeechProviderPreference = "openai-compatible" | "deepgram"
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 
@@ -270,23 +270,40 @@ function normalizeRecord(value: unknown): Record<string, string> {
 
 function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
   const sanitized = input ?? {}
+  const provider: SpeechProviderPreference =
+    sanitized.provider === "deepgram" || sanitized.provider === "openai-compatible"
+      ? sanitized.provider
+      : defaultSpeechSettings.provider
+  const deepgramDefaults =
+    provider === "deepgram"
+      ? {
+          sttModel: "nova-3",
+          ttsModel: "aura-2",
+          ttsVoice: "aura-asteria-en",
+          baseUrl: "https://api.deepgram.com/v1",
+        }
+      : null
+
   return {
-    provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
+    provider,
     apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
     hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
-    baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
+    baseUrl:
+      typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim()
+        ? sanitized.baseUrl.trim()
+        : deepgramDefaults?.baseUrl ?? defaultSpeechSettings.baseUrl,
     sttModel:
       typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
         ? sanitized.sttModel.trim()
-        : defaultSpeechSettings.sttModel,
+        : deepgramDefaults?.sttModel ?? defaultSpeechSettings.sttModel,
     ttsModel:
       typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
         ? sanitized.ttsModel.trim()
-        : defaultSpeechSettings.ttsModel,
+        : deepgramDefaults?.ttsModel ?? defaultSpeechSettings.ttsModel,
     ttsVoice:
       typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
         ? sanitized.ttsVoice.trim()
-        : defaultSpeechSettings.ttsVoice,
+        : deepgramDefaults?.ttsVoice ?? defaultSpeechSettings.ttsVoice,
     playbackMode:
       sanitized.playbackMode === "buffered" || sanitized.playbackMode === "streaming"
         ? sanitized.playbackMode

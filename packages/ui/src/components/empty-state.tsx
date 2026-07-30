@@ -1,8 +1,7 @@
 import { Component } from "solid-js"
 import { Loader2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-
-const codeNomadIcon = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
 
 interface EmptyStateProps {
   onSelectFolder: () => void
@@ -15,13 +14,13 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
   const shortcut = `${modifier}+N`
 
   return (
-    <div class="flex h-full w-full items-center justify-center bg-surface-secondary">
-      <div class="max-w-[500px] px-8 py-12 text-center">
+    <div class="empty-state h-full w-full">
+      <div class="empty-state-content max-w-[500px] px-8 py-12 text-center">
         <div class="mb-8 flex justify-center">
-          <img src={codeNomadIcon} alt={t("emptyState.logoAlt")} class="h-24 w-auto" loading="lazy" />
+          <img src={TOKENIZIN_LOGO_URL} alt={t("emptyState.logoAlt")} class="empty-state-logo h-24 w-auto" loading="lazy" />
         </div>
 
-        <h1 class="mb-3 text-3xl font-semibold text-primary">{t("emptyState.brandTitle")}</h1>
+        <h1 class="empty-state-brand-title mb-3 text-3xl font-semibold">{t("emptyState.brandTitle")}</h1>
         <p class="mb-8 text-base text-secondary">{t("emptyState.tagline")}</p>
 
 
