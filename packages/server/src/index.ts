@@ -28,6 +28,7 @@ import { resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
+import { ensureDefaultSidecars } from "./sidecars/defaults"
 import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
@@ -363,6 +364,17 @@ async function main() {
     eventBus,
     logger: logger.child({ component: "sidecars" }),
   })
+
+  // Ensure default sidecars are registered
+  queueMicrotask(() => {
+    void ensureDefaultSidecars(sidecarManager, {
+      info: (msg) => logger.info({ component: "sidecars" }, msg),
+      warn: (msg) => logger.warn({ component: "sidecars" }, msg),
+    }).catch((err) => {
+      logger.error({ component: "sidecars", err }, "Failed to initialize default sidecars")
+    })
+  })
+
   const previewManager = new PreviewManager()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
