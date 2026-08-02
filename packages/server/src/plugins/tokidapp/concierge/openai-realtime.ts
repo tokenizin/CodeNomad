@@ -1,6 +1,11 @@
 import WebSocket from "ws"
 import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
-import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
+import {
+  sanitizeAsrText,
+  sanitizeSpeechText,
+  stringifyToolResultForSpeech,
+  VOICE_INSTRUCTIONS,
+} from "./speech-sanitize"
 import {
   investigateCodebase,
   generateFeature,
@@ -72,8 +77,25 @@ const REALTIME_MODEL =
 const REALTIME_REASONING_EFFORT =
   process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim() || "low"
 
-/** Only gpt-realtime-2 supports the reasoning parameter. */
-const SUPPORTS_REASONING = REALTIME_MODEL === "gpt-realtime-2"
+/**
+ * Realtime models that accept the `reasoning` session parameter.
+ *
+ * Previously a literal `=== "gpt-realtime-2"`, which silently dropped reasoning
+ * for every other model — including future ones. Matching by family prefix means
+ * a successor (gpt-realtime-3, gpt-realtime-2-mini, …) keeps its reasoning
+ * without a code change. Set OPENAI_REALTIME_REASONING=off to force it off, or
+ * =on to force it on for a model this list does not yet know about.
+ */
+const REASONING_CAPABLE_PREFIXES = ["gpt-realtime-2", "gpt-realtime-3", "gpt-5-realtime"]
+
+const REASONING_OVERRIDE = process.env.OPENAI_REALTIME_REASONING?.trim().toLowerCase()
+
+const SUPPORTS_REASONING =
+  REASONING_OVERRIDE === "on"
+    ? true
+    : REASONING_OVERRIDE === "off"
+      ? false
+      : REASONING_CAPABLE_PREFIXES.some((prefix) => REALTIME_MODEL.startsWith(prefix))
 
 /** ── Voice Activity Detection calibration (env-var configurable) ── */
 
@@ -125,9 +147,144 @@ interface RealtimeSession {
   /** Send a message to the frontend client WebSocket (not the OpenAI WS).
    *  Used for tool_result, clickflow prompts, and other client-destined messages. */
   sendToClient?: (msg: string) => void
+  /** Epoch ms of the last audio, transcript or tool activity — drives the heartbeat. */
+  lastActivityAt: number
+  /** Tool currently executing, if any — makes the heartbeat a progress update. */
+  activeToolName?: string
+  /** Silence-heartbeat interval handle. */
+  heartbeatTimer?: ReturnType<typeof setInterval>
+  /** Consecutive heartbeats emitted with no work in flight, to avoid nagging. */
+  idleHeartbeats: number
 }
 
 const sessions = new Map<string, RealtimeSession>()
+
+// ── Voice approval policy ──────────────────────────────────────────────
+//
+// DAG nodes that mutate the repo, the chain, or a deployment. A voice session
+// has no approval surface, so these are refused rather than silently approved.
+// Set VOICE_ALLOW_DESTRUCTIVE=true to restore the previous auto-approve.
+
+const DESTRUCTIVE_VOICE_NODE_TOOLS: ReadonlySet<string> = new Set([
+  "commit_push",
+  "git_commit_push",
+  "trigger_deploy",
+  "rollback_deploy",
+  "deploy_contract",
+  "verify_contract",
+  "generate_feature",
+  "spawn_agent",
+  "write_to_wiki",
+])
+
+const VOICE_ALLOW_DESTRUCTIVE = process.env.VOICE_ALLOW_DESTRUCTIVE?.trim() === "true"
+
+export function isDestructiveVoiceNode(toolName: string | undefined | null): boolean {
+  if (VOICE_ALLOW_DESTRUCTIVE) return false
+  if (!toolName) return false
+  return DESTRUCTIVE_VOICE_NODE_TOOLS.has(toolName.trim())
+}
+
+// ── Silence heartbeat ──────────────────────────────────────────────────
+//
+// Keeps the session feeling alive: after a stretch of silence the assistant
+// gives a short macro-level update — progress if a tool is running, otherwise a
+// brief check-in. Idle check-ins are capped so it does not nag a user who is
+// simply thinking.
+
+const HEARTBEAT_ENABLED = process.env.VOICE_HEARTBEAT_ENABLED?.trim() !== "false"
+
+/** Silence before a heartbeat fires. Default 18s (the 15–20s band). */
+const HEARTBEAT_SILENCE_MS = (() => {
+  const raw = Number(process.env.VOICE_HEARTBEAT_SILENCE_MS)
+  return Number.isFinite(raw) && raw >= 5000 ? raw : 18_000
+})()
+
+/** How often the silence check runs. */
+const HEARTBEAT_TICK_MS = 5_000
+
+/** Max consecutive check-ins when no work is in flight. */
+const HEARTBEAT_MAX_IDLE = (() => {
+  const raw = Number(process.env.VOICE_HEARTBEAT_MAX_IDLE)
+  return Number.isFinite(raw) && raw >= 0 ? raw : 2
+})()
+
+/** Mark a session active so the heartbeat clock restarts. */
+function markSessionActivity(sessionId: string): void {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.lastActivityAt = Date.now()
+  session.idleHeartbeats = 0
+}
+
+function stopHeartbeat(session: RealtimeSession): void {
+  if (session.heartbeatTimer) {
+    clearInterval(session.heartbeatTimer)
+    session.heartbeatTimer = undefined
+  }
+}
+
+/**
+ * Ask the model for a short spoken status update.
+ *
+ * Injected as a system item rather than a user turn so it never pollutes the
+ * conversation transcript, and skipped whenever a response is already in
+ * flight — the assistant should never talk over itself.
+ */
+function emitHeartbeat(session: RealtimeSession): void {
+  if (!session.connected || session.responseInProgress) return
+
+  const working = Boolean(session.activeToolName)
+  if (!working && session.idleHeartbeats >= HEARTBEAT_MAX_IDLE) return
+
+  const instruction = working
+    ? `You have been working on "${session.activeToolName}" for a while with no update. ` +
+      `Give a one-sentence macro-level progress update — what stage you are at and what is next. ` +
+      `Do not repeat details already given, and do not read out any identifier, link or address.`
+    : `There has been a stretch of silence. Give one short, warm check-in sentence ` +
+      `summarising where things stand at a high level and offering the next step. ` +
+      `Do not read out any identifier, link or address.`
+
+  session.idleHeartbeats = working ? 0 : session.idleHeartbeats + 1
+  session.lastActivityAt = Date.now()
+
+  try {
+    session.ws.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [{ type: "input_text", text: instruction }],
+        },
+      }),
+    )
+    session.responseInProgress = true
+    session.ws.send(JSON.stringify({ type: "response.create" }))
+    session.sendToClient?.(
+      JSON.stringify({ type: "voice_heartbeat", working, tool: session.activeToolName ?? null }),
+    )
+  } catch (err) {
+    console.warn("[realtime] heartbeat send failed:", (err as Error).message)
+  }
+}
+
+function startHeartbeat(session: RealtimeSession): void {
+  if (!HEARTBEAT_ENABLED) return
+  stopHeartbeat(session)
+  session.heartbeatTimer = setInterval(() => {
+    const live = sessions.get(session.sessionId)
+    if (!live || !live.connected) {
+      stopHeartbeat(session)
+      return
+    }
+    if (Date.now() - live.lastActivityAt >= HEARTBEAT_SILENCE_MS) {
+      emitHeartbeat(live)
+    }
+  }, HEARTBEAT_TICK_MS)
+  // Never hold the process open for a heartbeat.
+  session.heartbeatTimer.unref?.()
+}
 
 /** TokiDAPP chat sessions that already received the opening voice greeting. */
 const voiceGreetingPlayedForChatSession = new Set<string>()
@@ -930,9 +1087,32 @@ export async function executeTool(
                 }))
               },
               onApprovalRequired: async (node, ctx) => {
-                // Voice path: auto-approve (no approval modal possible over voice)
-                // Future: could send an approval_request WS message and wait
-                return "approved" as const
+                // There is no approval modal over voice, so an unattended
+                // "approve everything" would let a spoken sentence push to git
+                // or trigger a deploy with no human in the loop. Read-only work
+                // still auto-approves; anything destructive is refused and the
+                // DAG stops, which is the safe direction to fail.
+                const toolName = String((node as { toolName?: string }).toolName ?? "")
+                if (!isDestructiveVoiceNode(toolName)) {
+                  return "approved" as const
+                }
+
+                console.warn(
+                  `[realtime] refusing destructive node "${node.title}" (${toolName}) on the voice path`,
+                )
+                tokidappSocket.send(
+                  JSON.stringify({
+                    type: "dag_node_status",
+                    nodeId: node.title,
+                    nodeName: node.title,
+                    status: "BLOCKED",
+                    progress: 0,
+                    error:
+                      `"${node.title}" needs approval and cannot be approved by voice. ` +
+                      `Approve it from the Orchestration tab, or set VOICE_ALLOW_DESTRUCTIVE=true to opt in.`,
+                  }),
+                )
+                return "rejected" as const
               },
               onBroadcast: () => {},
               onLog: () => {},
@@ -1140,6 +1320,8 @@ export function createRealtimeSession(
       responseInProgress: false,
       pendingResponseQueue: [],
       transcript: [],
+      lastActivityAt: Date.now(),
+      idleHeartbeats: 0,
     }
   }
 
@@ -1168,6 +1350,8 @@ export function createRealtimeSession(
     pendingResponseQueue: [],
     transcript: [],
     sendToClient,
+    lastActivityAt: Date.now(),
+    idleHeartbeats: 0,
   }
 
   /** Send response.create, guarding against concurrent responses */
@@ -1200,6 +1384,8 @@ export function createRealtimeSession(
   ws.addEventListener("open", () => {
     console.log("[openai-realtime] OpenAI WS connected for session:", sessionId)
     session.connected = true
+    session.lastActivityAt = Date.now()
+    startHeartbeat(session)
     flushPendingForSession(session)
 
     const instructions = enrichedInstructions
@@ -1289,7 +1475,10 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
         // Audio deltas (GA event names + legacy fallbacks)
         case "response.output_audio.delta":
         case "response.audio.delta":
-          if (parsed.delta) onAudioDelta(parsed.delta)
+          if (parsed.delta) {
+            markSessionActivity(sessionId)
+            onAudioDelta(parsed.delta)
+          }
           break
 
         // Text deltas (GA event names + legacy fallbacks)
@@ -1378,6 +1567,10 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
           const toolName = parsed.name
           const args = parsed.arguments || "{}"
 
+          // A long-running tool turns the silence heartbeat into a progress update.
+          session.activeToolName = toolName
+          markSessionActivity(sessionId)
+
           // Skip response.cancel for wait_for_user — it's a no-op tool
           if (toolName !== "wait_for_user") {
             cancelCurrentResponse()
@@ -1450,13 +1643,29 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
             // Not JSON or not a structured result — continue with normal flow
           }
 
+          // Tool finished — heartbeats go back to idle check-ins.
+          session.activeToolName = undefined
+          markSessionActivity(sessionId)
+
+          // Redact identifiers BEFORE the model sees them. Sanitizing the
+          // assistant transcript afterwards cannot un-speak generated audio,
+          // so the only reliable control is to never hand the model a raw
+          // UUID, cuid, wallet address, URL or credential to read out.
+          let speechSafeToolResult: string
+          try {
+            speechSafeToolResult = stringifyToolResultForSpeech(JSON.parse(toolResultText))
+          } catch {
+            // Not JSON — redact it as plain text.
+            speechSafeToolResult = sanitizeSpeechText(toolResultText)
+          }
+
           ws.send(
             JSON.stringify({
               type: "conversation.item.create",
               item: {
                 type: "function_call_output",
                 call_id: parsed.call_id,
-                output: toolResultText,
+                output: speechSafeToolResult,
               },
             }),
           )
@@ -1523,6 +1732,7 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
   ws.addEventListener("close", (event: any) => {
     console.log("[openai-realtime] OpenAI WS closed for session:", sessionId, "code:", event?.code, "reason:", event?.reason)
     session.connected = false
+    stopHeartbeat(session)
     sessions.delete(sessionId)
   })
 
@@ -1665,6 +1875,7 @@ export function endVoiceSession(sessionId: string) {
     session.ws.onclose = null
     session.ws.onerror = null
     session.ws.close()
+    stopHeartbeat(session)
     sessions.delete(sessionId)
   }
   // Clean up per-user tracking — only remove if this was the tracked session

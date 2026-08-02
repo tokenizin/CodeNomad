@@ -34,10 +34,15 @@ import {
   handleOrnithMessage,
   cleanupAllOrnithSessions,
 } from "../../plugins/tokidapp/concierge/ornith-realtime"
-import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
+import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession, isEngineAvailable } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
+import type { VoiceEngine as FallbackVoiceEngine } from "../../plugins/tokidapp/concierge/voice-fallback"
 import {
-  isOpenAiVoiceFallbackError,
+  describeFallback,
+  getNextFallbackEngine,
+  getVoiceFallbackChain,
+  isVoiceFallbackError,
   LOCAL_VOICE_FALLBACK_ENGINE,
+  TERMINAL_VOICE_ENGINE,
 } from "../../plugins/tokidapp/concierge/voice-fallback"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
@@ -122,8 +127,13 @@ const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
 
-/** Voice engine selection — 'openai' (default, backward-compatible), 'deepgram', 'local', or 'ornith'. */
-type VoiceEngine = "openai" | "deepgram" | "local" | "ornith"
+/**
+ * Voice engine selection — 'openai' (default, backward-compatible), 'deepgram',
+ * 'local', or 'ornith'. The canonical union lives in voice-fallback.ts and also
+ * carries the terminal 'browser' tier, which is client-side only and therefore
+ * never a valid voice_start request.
+ */
+type VoiceEngine = FallbackVoiceEngine
 const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram", "local", "ornith"])
 
 function parseVoiceEngine(raw: unknown): VoiceEngine {
@@ -467,8 +477,110 @@ async function buildVoiceEnrichedInstructions(userId?: string): Promise<string> 
   return (digest || "") + sessionContext
 }
 
-/** Sessions that already fell back from OpenAI → local (avoid loops). */
-const openaiLocalFallbackDone = new Set<string>()
+/**
+ * Engines already tried per session, so a descent never revisits a tier and
+ * always terminates. Cleared when the socket closes.
+ */
+const voiceEngineAttempts = new Map<string, Set<VoiceEngine>>()
+
+function markEngineAttempted(sessionId: string, engine: VoiceEngine): void {
+  const attempted = voiceEngineAttempts.get(sessionId) ?? new Set<VoiceEngine>()
+  attempted.add(engine)
+  voiceEngineAttempts.set(sessionId, attempted)
+}
+
+function clearEngineAttempts(sessionId: string): void {
+  voiceEngineAttempts.delete(sessionId)
+}
+
+/**
+ * Drop one tier down the fallback chain after `from` failed.
+ *
+ * Replaces the previous one-shot OpenAI→local hop: each failure descends a
+ * single step (openai → deepgram → local → browser), skipping engines that are
+ * unconfigured or already tried, so a Deepgram outage after an OpenAI outage
+ * still reaches local rather than dead-ending.
+ *
+ * Returns true if a lower tier was started or handed to the client.
+ */
+function descendVoiceEngine(
+  sessionId: string,
+  from: VoiceEngine,
+  socketRef: { send: (msg: string) => void },
+  chatSessionId: string | undefined,
+  reason: string,
+  opts?: { voice?: unknown; locale?: "en" | "id" | "auto"; interpret?: boolean },
+): boolean {
+  markEngineAttempted(sessionId, from)
+
+  const next = getNextFallbackEngine(from, {
+    attempted: voiceEngineAttempts.get(sessionId),
+    isAvailable: isEngineAvailable as (engine: VoiceEngine) => boolean,
+  })
+
+  if (!next) {
+    console.error(
+      `[voice-ws] fallback chain exhausted after ${from} (chain: ${getVoiceFallbackChain().join(" → ")})`,
+    )
+    socketRef.send(
+      JSON.stringify({
+        type: "error",
+        content: `Voice unavailable — every engine in the fallback chain failed (last: ${from}).`,
+        engine: from,
+        fallbackExhausted: true,
+      }),
+    )
+    return false
+  }
+
+  const notice = describeFallback(from, next, reason)
+  console.warn(`[voice-ws] ${from} → ${next}: ${reason.slice(0, 160)}`)
+  markEngineAttempted(sessionId, next)
+
+  // Tear down the failed engine before starting the next one.
+  try {
+    endVoiceSession(sessionId)
+  } catch {
+    /* ignore */
+  }
+  try {
+    endDeepgramSession(sessionId)
+  } catch {
+    /* ignore */
+  }
+
+  // Tell the client which tier it is on now, before any audio arrives.
+  socketRef.send(
+    JSON.stringify({ type: "voice_fallback", from, to: next, reason, notice }),
+  )
+  socketRef.send(JSON.stringify({ type: "message", content: `⚠️ ${notice}`, engine: next }))
+
+  if (next === TERMINAL_VOICE_ENGINE) {
+    // Browser tier runs entirely client-side (Web Speech API) — no server session.
+    socketRef.send(
+      JSON.stringify({
+        type: "voice_ready",
+        voice: "browser-default",
+        engine: TERMINAL_VOICE_ENGINE,
+        clientSide: true,
+      }),
+    )
+    return true
+  }
+
+  if (next === "deepgram") {
+    void startDeepgramVoiceSession(sessionId, opts?.voice, socketRef, chatSessionId)
+    return true
+  }
+
+  void startLocalVoiceSession(sessionId, opts?.voice ?? "local", socketRef, chatSessionId, {
+    fallbackFrom: from,
+    notice,
+    locale: opts?.locale,
+    interpret: opts?.interpret,
+  })
+  return true
+}
 
 /**
  * Start local (no-cloud) voice: whisper.cpp / faster-whisper STT + Piper TTS + Ollama.
@@ -480,7 +592,7 @@ async function startLocalVoiceSession(
   socketRef: { send: (msg: string) => void },
   chatSessionId?: string,
   opts?: {
-    fallbackFrom?: "openai"
+    fallbackFrom?: VoiceEngine
     notice?: string
     locale?: "en" | "id" | "auto"
     interpret?: boolean
@@ -558,6 +670,14 @@ async function startLocalVoiceSession(
       )
     }
     session.onError = (error) => {
+      if (isVoiceFallbackError(error.message, "local")) {
+        descendVoiceEngine(sessionId, "local", socketRef, chatSessionId, error.message, {
+          voice: requestedVoice,
+          locale: opts?.locale,
+          interpret: opts?.interpret,
+        })
+        return
+      }
       socketRef.send(
         JSON.stringify({
           type: "error",
@@ -590,6 +710,20 @@ async function startLocalVoiceSession(
     )
   } catch (err: any) {
     console.error("[voice-ws] Failed to start local voice session:", err?.message)
+    // Local is the last server-side tier — descend to the browser rather than
+    // leaving the client with no voice at all.
+    if (
+      descendVoiceEngine(
+        sessionId,
+        "local",
+        socketRef,
+        chatSessionId,
+        err?.message || "local voice session failed to start",
+        { voice: requestedVoice, locale: opts?.locale, interpret: opts?.interpret },
+      )
+    ) {
+      return
+    }
     socketRef.send(
       JSON.stringify({
         type: "error",
@@ -634,33 +768,10 @@ async function startVoiceRealtimeSession(
       (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
       (error) => {
         console.log("[voice-ws] OpenAI Realtime error:", error)
-        if (
-          isOpenAiVoiceFallbackError(error) &&
-          !openaiLocalFallbackDone.has(sessionId)
-        ) {
-          openaiLocalFallbackDone.add(sessionId)
-          console.warn(
-            "[voice-ws] OpenAI voice failed — falling back to local STT/TTS/LLM:",
-            error.slice(0, 160),
-          )
-          try {
-            endVoiceSession(sessionId)
-          } catch {
-            /* ignore */
+        if (isVoiceFallbackError(error, "openai")) {
+          if (descendVoiceEngine(sessionId, "openai", socketRef, chatSessionId, error, { voice })) {
+            return
           }
-          startLocalVoiceSession(sessionId, "local", socketRef, chatSessionId, {
-            fallbackFrom: "openai",
-            notice:
-              "OpenAI Realtime unavailable (quota/billing/connect) — switched to local Whisper + Piper + Ollama",
-          })
-          socketRef.send(
-            JSON.stringify({
-              type: "message",
-              content:
-                "⚠️ OpenAI voice quota/connect failed — continuing on local voice (Whisper + Piper + Ollama).",
-              engine: LOCAL_VOICE_FALLBACK_ENGINE,
-            }),
-          )
           return
         }
         socketRef.send(JSON.stringify({ type: "error", content: error, engine: "openai" }))
@@ -720,7 +831,13 @@ async function startDeepgramVoiceSession(
     onTextDelta: (textDelta) => socketRef.send(JSON.stringify({ type: "stream", delta: textDelta })),
     onError: (error) => {
       console.log("[voice-ws] Deepgram error:", error)
-      socketRef.send(JSON.stringify({ type: "error", content: error }))
+      if (isVoiceFallbackError(error, "deepgram")) {
+        descendVoiceEngine(sessionId, "deepgram", socketRef, chatSessionId, error, {
+          voice: requestedVoice,
+        })
+        return
+      }
+      socketRef.send(JSON.stringify({ type: "error", content: error, engine: "deepgram" }))
     },
     onReady: notifyReady,
     onUserTranscript: (transcript) =>
@@ -764,6 +881,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
     endDeepgramSession(sessionId)
+    clearEngineAttempts(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {
@@ -805,6 +923,9 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         const engine = parseVoiceEngine(msg.engine)
         console.log("[voice-ws] voice_start received, engine:", engine, "REALTIME_ENABLED:", REALTIME_ENABLED)
         activeEngine = engine
+        // A fresh voice_start restarts the descent from the requested tier.
+        clearEngineAttempts(sessionId)
+        markEngineAttempted(sessionId, engine)
 
         if (engine === "deepgram") {
           // Deepgram engine — requires DEEPGRAM_ENABLED=true + DEEPGRAM_API_KEY
@@ -867,16 +988,14 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
             )
           } else {
-            console.log("[voice-ws] REALTIME_ENABLED is false — falling back to local voice")
-            startLocalVoiceSession(
+            console.log("[voice-ws] REALTIME_ENABLED is false — descending the fallback chain")
+            descendVoiceEngine(
               sessionId,
-              msg.voice || "local",
+              "openai",
               socketRef,
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
-              {
-                fallbackFrom: "openai",
-                notice: "OPENAI_API_KEY missing — using local Whisper + Piper + Ollama",
-              },
+              "OPENAI_API_KEY missing",
+              { voice: msg.voice, locale: parseVoiceLocale(msg.locale), interpret: Boolean(msg.interpret) },
             )
           }
         }
@@ -2701,6 +2820,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     clearAudioBuffer(sessionId)
     endVoiceSession(sessionId)
     endDeepgramSession(sessionId)
+    clearEngineAttempts(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {

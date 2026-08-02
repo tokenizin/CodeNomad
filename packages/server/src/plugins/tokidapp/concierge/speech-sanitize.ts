@@ -168,11 +168,43 @@ function restoreWordSpacing(text: string): string {
   return result.join(' ')
 }
 
-const UUID_RE =
-  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi
-const ETH_ADDRESS_RE = /\b0x[0-9a-fA-F]{40}\b/g
-const LONG_HEX_RE = /\b0x[0-9a-fA-F]{16,}\b/g
-const URL_RE = /\bhttps?:\/\/[^\s<>"']+/gi
+/**
+ * Any UUID version, including the nil UUID and non-RFC-4122 variants.
+ * The previous pattern required v1–v5 version bits plus an 8/9/a/b variant
+ * nibble, so v6/v7/v8 and generated test ids were spoken aloud verbatim.
+ */
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+
+/**
+ * Prisma/ZenStack `@default(cuid())` — the primary key format for every
+ * TokiDAPP* model. cuid v1 is `c` + 24 base36 chars; cuid2 is 24–32 lowercase
+ * alphanumerics. Requiring at least one digit avoids swallowing ordinary words.
+ */
+const CUID_RE = /\b(?:c[a-z0-9]{20,30}|[a-z][a-z0-9]{23,31})\b/g
+
+// The `0x` prefix is matched case-insensitively: a `0X`-prefixed address would
+// otherwise slip through unredacted and be read aloud.
+const ETH_ADDRESS_RE = /\b0x[0-9a-f]{40}\b/gi
+const LONG_HEX_RE = /\b0x[0-9a-f]{16,}\b/gi
+const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi
+
+/** WhatsApp JIDs — `6281353795211@c.us`, `1635…@lid`, `1203…@g.us`. */
+const WHATSAPP_JID_RE = /\b\d{5,}(?::\d+)?@(?:c\.us|s\.whatsapp\.net|lid|g\.us)\b/gi
+
+const EMAIL_RE = /\b[\w.+-]+@[\w-]+\.[\w.-]{2,}\b/g
+
+// NOTE: bare phone numbers are deliberately NOT matched. A generic 8+ digit
+// pattern also swallows prices, epoch timestamps and quantities, which would
+// degrade every spoken sentence. WhatsApp numbers are covered by
+// WHATSAPP_JID_RE, which is unambiguous.
+
+/**
+ * Credentials that must never be spoken or displayed. Ordered before the
+ * generic identifier rules so a key is never mistaken for a cuid.
+ */
+const SECRET_RE =
+  /\b(?:owa_k1_[A-Za-z0-9]+|npg_[A-Za-z0-9]+|sk-[A-Za-z0-9_-]{16,}|tvly-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|xox[baprs]-[A-Za-z0-9-]+|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g
+
 const FILE_PATH_RE =
   /(?:^|[\s(])(?:\/?(?:Users|home|var|tmp|src|contracts|CodeNomad)[^\s)\],:;]+|(?:\.\.?\/)+[\w./-]+|[\w.-]+\/(?:[\w.-]+\/)+[\w.-]+)/g
 
@@ -184,6 +216,66 @@ const ENTITY_ALIASES: Record<string, string> = {
   starguard: "StarWORLD",
   codenomad: "CodeNomad",
   tokidapp: "TokiDAPP",
+}
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// ── Friendly reference registry ────────────────────────────────────────
+//
+// Opaque identifiers are never spoken. Instead a caller that knows the
+// human-recognisable name for an id registers it here, and the sanitizer
+// substitutes that name — "invoice INV-1042" rather than "the record".
+// Anything unregistered degrades to a generic noun; the raw id is never
+// emitted either way.
+
+const friendlyReferences = new Map<string, string>()
+
+/** Cap the registry so a long-running session cannot grow it without bound. */
+const MAX_FRIENDLY_REFERENCES = 2000
+
+/**
+ * Teach the sanitizer that `id` should be spoken as `label`.
+ * Call this from tool executors and DB reads, where the entity name is known.
+ */
+export function registerSpeechReference(id: string, label: string): void {
+  const key = id?.trim()
+  const value = label?.trim()
+  if (!key || !value) return
+  if (friendlyReferences.size >= MAX_FRIENDLY_REFERENCES) {
+    // Drop the oldest entry — Map preserves insertion order.
+    const oldest = friendlyReferences.keys().next()
+    if (!oldest.done) friendlyReferences.delete(oldest.value)
+  }
+  friendlyReferences.set(key.toLowerCase(), value)
+}
+
+export function clearSpeechReferences(): void {
+  friendlyReferences.clear()
+}
+
+function friendlyFor(match: string, fallback: string): string {
+  return friendlyReferences.get(match.toLowerCase()) ?? fallback
+}
+
+/**
+ * Replace every opaque identifier with a human reference.
+ * Order matters: secrets first, then structured ids, then bare numbers.
+ */
+function redactIdentifiers(text: string): string {
+  let out = text
+
+  out = out.replace(SECRET_RE, "[redacted credential]")
+  out = out.replace(URL_RE, "the link")
+  out = out.replace(WHATSAPP_JID_RE, (m) => friendlyFor(m, "that contact"))
+  out = out.replace(EMAIL_RE, (m) => friendlyFor(m, "that contact"))
+  out = out.replace(ETH_ADDRESS_RE, (m) => friendlyFor(m, "the contract"))
+  out = out.replace(LONG_HEX_RE, (m) => friendlyFor(m, "the identifier"))
+  out = out.replace(UUID_RE, (m) => friendlyFor(m, "that record"))
+  out = out.replace(CUID_RE, (m) => friendlyFor(m, "that record"))
+
+  return out
 }
 
 /**
@@ -234,16 +326,125 @@ export function isFillerTranscript(text: string): boolean {
   return false
 }
 
+/**
+ * Field names that must never reach the model or the speaker.
+ *
+ * Mirrors ZenStack's `@omit` semantics: `@omit` is the schema-level declaration
+ * that a field is not for sharing, and this is its voice-layer counterpart.
+ * The schema currently marks only `User.walletAddress` and one other
+ * `walletAddress`; `Session.token` and `Session.walletAddress` are NOT marked,
+ * so the name-based rules below are deliberately broader than the schema.
+ * Comparison is case-insensitive and ignores separators, so `api_key`,
+ * `apiKey` and `API-KEY` all match.
+ */
+const OMITTED_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "walletaddress",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "secret",
+  "webhooksecret",
+  "clientsecret",
+  "apikey",
+  "password",
+  "passwordhash",
+  "privatekey",
+  "mnemonic",
+  "seed",
+  "sessiontoken",
+  "authorization",
+  "cookie",
+])
+
+/** Fields whose value is a good spoken label for the record's primary key. */
+const LABEL_FIELDS = [
+  "name",
+  "title",
+  "displayName",
+  "pushName",
+  "chatName",
+  "label",
+  "invoiceNumber",
+  "reference",
+  "slug",
+  "email",
+]
+
+function normalizeFieldName(key: string): string {
+  return key.replace(/[_\-\s]/g, "").toLowerCase()
+}
+
+function isOmittedField(key: string): boolean {
+  return OMITTED_FIELD_NAMES.has(normalizeFieldName(key))
+}
+
+/**
+ * Prepare a tool result for the model.
+ *
+ * This is the load-bearing control for "never speak an id". Sanitizing the
+ * assistant's transcript after the fact cannot un-speak generated audio — the
+ * only reliable prevention is to ensure the model never receives a raw
+ * identifier to read. So tool output is redacted on the way IN.
+ *
+ * Three passes:
+ *  1. harvest — record `id → human label` so the id can be spoken as a name
+ *  2. omit    — drop `@omit`-class fields entirely
+ *  3. redact  — replace any remaining identifier in string values
+ */
+export function sanitizeToolResultForSpeech(value: unknown, depth = 0): unknown {
+  if (depth > 12) return "[nested data omitted]"
+
+  if (typeof value === "string") return redactIdentifiers(value)
+  if (value === null || typeof value !== "object") return value
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeToolResultForSpeech(entry, depth + 1))
+  }
+
+  const record = value as Record<string, unknown>
+
+  // Pass 1 — harvest a friendly label for this record's id before redacting.
+  const id = record.id
+  if (typeof id === "string" && id.length > 0) {
+    for (const field of LABEL_FIELDS) {
+      const label = record[field]
+      if (typeof label === "string" && label.trim().length > 0) {
+        registerSpeechReference(id, label.trim())
+        break
+      }
+    }
+  }
+
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(record)) {
+    // Pass 2 — omit.
+    if (isOmittedField(key)) {
+      out[key] = "[omitted]"
+      continue
+    }
+    // Pass 3 — redact.
+    out[key] = sanitizeToolResultForSpeech(entry, depth + 1)
+  }
+  return out
+}
+
+/** Convenience wrapper: sanitize a tool result and serialize it for the model. */
+export function stringifyToolResultForSpeech(value: unknown): string {
+  try {
+    return JSON.stringify(sanitizeToolResultForSpeech(value)) ?? "null"
+  } catch {
+    return JSON.stringify({ error: "tool result could not be serialized" })
+  }
+}
+
 export function sanitizeSpeechText(text: string): string {
   if (!text) return text
   let out = stripThinkingContent(text)
   for (const [key, label] of Object.entries(ENTITY_ALIASES)) {
-    out = out.replace(new RegExp(key, "gi"), label)
+    out = out.replace(new RegExp(escapeRegExp(key), "gi"), label)
   }
-  out = out.replace(URL_RE, "the link")
-  out = out.replace(ETH_ADDRESS_RE, "the contract")
-  out = out.replace(LONG_HEX_RE, "the identifier")
-  out = out.replace(UUID_RE, "the record")
+  out = redactIdentifiers(out)
   out = out.replace(FILE_PATH_RE, (m) => {
     const trimmed = m.trim()
     const base = trimmed.split("/").pop() || trimmed
@@ -268,12 +469,9 @@ export function sanitizeAsrText(text: string): string {
   if (!text) return text
   let out = text
   for (const [key, label] of Object.entries(ENTITY_ALIASES)) {
-    out = out.replace(new RegExp(key, "gi"), label)
+    out = out.replace(new RegExp(escapeRegExp(key), "gi"), label)
   }
-  out = out.replace(URL_RE, "the link")
-  out = out.replace(ETH_ADDRESS_RE, "the contract")
-  out = out.replace(LONG_HEX_RE, "the identifier")
-  out = out.replace(UUID_RE, "the record")
+  out = redactIdentifiers(out)
 
   // Restore word spacing for concatenated ASR output
   out = restoreWordSpacing(out)
