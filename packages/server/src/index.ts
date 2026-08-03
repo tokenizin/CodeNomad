@@ -75,7 +75,7 @@ interface CliOptions {
 const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
-const DEFAULT_HTTP_PORT = 9899
+const DEFAULT_HTTP_PORT = 9940
 
 function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()

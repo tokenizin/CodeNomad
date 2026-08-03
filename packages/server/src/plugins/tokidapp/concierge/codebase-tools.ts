@@ -2,8 +2,12 @@ import { execSync } from "child_process"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
+import { fileURLToPath } from "url"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback.js"
 import { apiGet } from "../orchestrator/starguard-client.js"
+
+// ESM package — __dirname is not defined, so derive it from import.meta.url.
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ── Knowledge Base ─────────────────────────────────────────────
 

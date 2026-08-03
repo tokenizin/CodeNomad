@@ -37,11 +37,11 @@ describe("resolvePluginBaseUrl", () => {
   it("keeps loopback HTTP when remote HTTPS also exists", () => {
     assert.equal(
       resolvePluginBaseUrl({
-        httpStart: { protocol: "http", bindHost: "127.0.0.1", port: 9899 },
+        httpStart: { protocol: "http", bindHost: "127.0.0.1", port: 9940 },
         httpsStart: { protocol: "https", bindHost: "192.168.1.25", port: 9898 },
         remoteUrl: "https://192.168.1.25:9898",
       }),
-      "http://127.0.0.1:9899",
+      "http://127.0.0.1:9940",
     )
   })
 })

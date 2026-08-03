@@ -490,6 +490,12 @@ export function sanitizeAsrText(text: string): string {
 
 import * as fs from "fs"
 import * as path from "path"
+import { fileURLToPath } from "url"
+
+// The package is ESM ("type": "module"), so __dirname does not exist — deriving
+// it from import.meta.url, the same shim index.ts / bin.ts / opencode-plugin.ts use.
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const VOICE_INSTRUCTIONS_FILE = path.resolve(
   __dirname, "..", "..", "..", "..", "..", "config", "voice-instructions.md",

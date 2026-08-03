@@ -5,7 +5,7 @@
  * task files on disk, and streams execution status back to the frontend.
  *
  * Architecture:
- *   TokiDAPP UI ──WS──→ CodeNomad Server (:9899)
+ *   TokiDAPP UI ──WS──→ CodeNomad Server (:9940)
  *                          ├── 1. nomadworks_invoke handler
  *                          │      └── Creates tasks/todo/TASK-{slug}.md
  *                          │      └── Updates tasks/current.md

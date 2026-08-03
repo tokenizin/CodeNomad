@@ -17,8 +17,12 @@
 
 import { spawn, type ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { resolveLocalVoicePython } from "./resolve-local-voice-python"
+
+// ESM package — __dirname is not defined, so derive it from import.meta.url.
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // ── Environment Configuration ───────────────────────────────────────────
 
@@ -100,7 +104,6 @@ export interface LocalSTTCallbacks {
  * Resolves relative to this file's directory.
  */
 function findServerScript(): string {
-  // __dirname in Bun/Node.js resolves to the directory of this file
   return resolve(__dirname, "local_stt_server.py")
 }
 
