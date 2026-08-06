@@ -2,6 +2,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin/tool"
 import { createCodeNomadClient, createCodeNomadRequester, getCodeNomadConfig } from "./lib/client.js"
 import { createBackgroundProcessTools } from "./lib/background-process.js"
+import { attemptOllamaFallback } from "./lib/ollama-fallback.js"
 
 let voiceModeEnabled = false
 
@@ -16,6 +17,7 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
   const client = createCodeNomadClient(config)
   const requester = createCodeNomadRequester(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
+  const opencodeClient = input.client
 
   await client.startEvents((event) => {
     if (event.type === "codenomad.ping") {
@@ -64,6 +66,15 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
       const opencodeEvent = input?.event
       if (!opencodeEvent || typeof opencodeEvent !== "object") return
 
+      if (opencodeEvent.type === "session.error") {
+        const properties = opencodeEvent.properties ?? {}
+        await attemptOllamaFallback(opencodeClient, properties.sessionID, properties.error).catch((fallbackError) => {
+          console.error(
+            `[CodeNomadPlugin] Ollama fallback threw for session ${properties.sessionID}:`,
+            fallbackError,
+          )
+        })
+      }
     },
   }
 }

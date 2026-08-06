@@ -13,6 +13,13 @@ An npm-packable plugin package. Production builds ship a local `.tgz` and inject
 - The `CodeNomadPlugin` reads `CODENOMAD_INSTANCE_ID` + `CODENOMAD_BASE_URL`, connects to `GET /workspaces/:id/plugin/events`, and posts to `POST /workspaces/:id/plugin/event` (`packages/opencode-plugin/plugin/lib/client.ts`).
 - The server exposes the plugin routes and maps events into the UI SSE pipeline (`packages/server/src/server/routes/plugin.ts`, `packages/server/src/plugins/handlers.ts`).
 
+## Ollama quota fallback
+- The plugin's `event` hook watches for `session.error`. When the error looks like a rate-limit/quota/token-limit failure (HTTP 429/402, or a message matching "rate limit", "quota", "insufficient credits", etc.) it automatically replays the session's last user turn on the local Ollama model instead of leaving the session dead.
+- This means a subagent pinned to a free-tier cloud model (e.g. `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`) that runs out of quota for the period keeps working locally instead of erroring out.
+- Fallback model defaults to `qwen3.6:latest` (36B MoE, 262k context, tool calling + reasoning + vision — the most capable all-rounder in the local Ollama library, able to cover the same tools/instructions as any cloud-backed agent). Override with `CODENOMAD_OLLAMA_FALLBACK_MODEL`; the Ollama host defaults to `OLLAMA_BASE_URL` (`http://127.0.0.1:11434`).
+- Requires the target project's `opencode.json` to already declare an `ollama` provider with that model (this repo's root `opencode.json` does). If Ollama is unreachable or the provider/model isn't recognized, the attempt just logs and leaves the session in its original errored state — it never throws into the host process.
+- Logic lives in `packages/opencode-plugin/plugin/lib/ollama-fallback.ts`; wired into the `event` hook in `packages/opencode-plugin/plugin/codenomad.ts`.
+
 ## Expectations
 - Local-only bridge (no auth/token yet).
 - Plugin must fail startup if it cannot connect after 3 retries.
