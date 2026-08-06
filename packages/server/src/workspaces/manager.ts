@@ -156,6 +156,7 @@ export class WorkspaceManager {
     await this.collapseDuplicateWorkspaces(workspacePath)
 
     const existing = this.findByFolder(workspacePath)
+    let reuseId: string | undefined
     if (existing) {
       if (existing.status === "ready" || existing.status === "starting") {
         this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
@@ -166,11 +167,15 @@ export class WorkspaceManager {
           { workspaceId: existing.id, folder: workspacePath, error: existing.error },
           "Replacing errored workspace",
         )
+        // Preserve the id so callers relaunching after a crash (e.g. the
+        // frontend reconnection flow) don't end up with an orphaned record
+        // under the old id and a disconnected duplicate under a new one.
+        reuseId = existing.id
         await this.delete(existing.id)
       }
     }
 
-    const id = `${Date.now().toString(36)}`
+    const id = reuseId ?? `${Date.now().toString(36)}`
     const binary = this.options.binaryResolver.resolveDefault()
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
     clearWorkspaceSearchCache(workspacePath)

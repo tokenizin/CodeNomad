@@ -1,18 +1,12 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Show, Match, Switch } from "solid-js"
 import { useI18n } from "../lib/i18n"
-import {
-  reconnecting,
-  retryCount,
-  lastError,
-  starGuardToken,
-  MAX_RETRIES,
-  cancelReconnect,
-  startReconnect,
-} from "../stores/session-recovery"
+import { isReconnecting, getRetryCount, getLastError, MAX_RETRIES, cancelReconnect } from "../stores/session-recovery"
+import { retryInstanceReconnect } from "../stores/instances"
 
 interface InstanceDisconnectedModalProps {
   open: boolean
+  instanceId: string | null
   folder?: string
   reason?: string
   onClose: () => void
@@ -24,14 +18,22 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
   const folderLabel = () => props.folder || t("instanceDisconnected.folderFallback")
   const reasonLabel = () => props.reason || t("instanceDisconnected.reasonFallback")
 
+  const reconnecting = () => (props.instanceId ? isReconnecting(props.instanceId) : false)
+  const lastError = () => (props.instanceId ? getLastError(props.instanceId) : null)
+
   // +1 because retryCount is incremented after each attempt's sleep,
   // so during attempt N the counter is N-1.
-  const displayAttempt = () => retryCount() + 1
+  const displayAttempt = () => (props.instanceId ? getRetryCount(props.instanceId) + 1 : 1)
 
   const handleRetry = () => {
-    const token = starGuardToken()
-    if (token) {
-      startReconnect(token)
+    if (props.instanceId) {
+      void retryInstanceReconnect(props.instanceId)
+    }
+  }
+
+  const handleCancel = () => {
+    if (props.instanceId) {
+      cancelReconnect(props.instanceId)
     }
   }
 
@@ -78,7 +80,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
                   <button
                     type="button"
                     class="selector-button selector-button-primary"
-                    onClick={cancelReconnect}
+                    onClick={handleCancel}
                   >
                     {t("instanceDisconnected.actions.cancelReconnect")}
                   </button>
@@ -111,7 +113,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
 
                 {/* Buttons: [Retry secondary] [Close primary] — consistent order */}
                 <div class="flex justify-end gap-2">
-                  <Show when={starGuardToken()}>
+                  <Show when={props.instanceId}>
                     <button
                       type="button"
                       class="selector-button selector-button-secondary"

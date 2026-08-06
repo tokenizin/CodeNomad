@@ -1,12 +1,26 @@
 // ---------------------------------------------------------------------------
 // Reconnection Manager
 //
-// Handles automatic reconnection after an SSE disconnect by attempting
-// re-authentication via the StarGuard SSO endpoint when a stored token is
-// available. Uses exponential backoff across retries and falls back to the
-// original connection-lost handler if all attempts fail.
+// Handles automatic reconnection after a workspace instance disconnects.
+//
+// `instance.eventStatus: "disconnected"` only fires when the workspace's own
+// backend process has actually stopped or crashed (see
+// InstanceEventBridge.stopStream on the server) — it is not a signal about
+// the browser's own connection to the CodeNomad server (that has its own,
+// separate recovery loop in server-events.ts). So the fix for a disconnected
+// instance is to relaunch the workspace process, not to refresh an auth
+// cookie: the workspace manager already knows how to replace an errored
+// workspace for the same folder in place (see WorkspaceManager.create), so
+// each retry attempt just re-issues the create call.
+//
+// A StarGuard re-auth is only attempted as a secondary remedy, when a
+// relaunch attempt itself fails with what looks like an expired/invalid
+// CodeNomad session (401/403) — that's a real but different failure mode
+// (the browser's own session with the CodeNomad server lapsed) and doesn't
+// apply when no StarGuard token is in play (e.g. plain local dev).
 // ---------------------------------------------------------------------------
 
+import type { WorkspaceDescriptor } from "../../../server/src/api-types"
 import {
   resetReconnect,
   startReconnect,
@@ -16,6 +30,7 @@ import {
   getReconnectAbortSignal,
 } from "../stores/session-recovery"
 import { getStoredStarGuardToken } from "./server-events"
+import { serverApi } from "./api-client"
 import { getLogger } from "./logger"
 
 const log = getLogger("reconnection")
@@ -41,45 +56,71 @@ function sleep(ms: number, signal: AbortSignal | null): Promise<void> {
   })
 }
 
+function isAuthFailureMessage(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes("401") ||
+    lower.includes("403") ||
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden")
+  )
+}
+
+/** Best-effort StarGuard cookie refresh; failures just fall through to the next retry. */
+async function reauthWithStarGuard(token: string, signal: AbortSignal | null): Promise<boolean> {
+  try {
+    const response = await fetch(`/auth/starguard?starguard_token=${encodeURIComponent(token)}`, {
+      method: "GET",
+      credentials: "include",
+      redirect: "manual",
+      signal: signal ?? undefined,
+    })
+    // Opaque redirect (type === "opaqueredirect") means the server responded
+    // with a 302 and the cookie was set in the response headers.
+    return response.ok || response.type === "opaqueredirect"
+  } catch {
+    return false
+  }
+}
+
 /**
- * Attempt to reconnect after an SSE disconnect by re-authenticating with the
- * server using a stored StarGuard token.
+ * Attempt to reconnect after a workspace instance disconnects, by relaunching
+ * the workspace process for its folder.
  *
  * Flow:
- *   1. Check for a persisted StarGuard token (localStorage via session-recovery).
- *   2. If no token is available, return `false` immediately.
- *   3. Otherwise, retry up to {@link MAX_RETRIES} times with exponential backoff.
- *   4. Each attempt issues a GET `/auth/starguard?starguard_token=…` which the
- *      server validates, creates a new session, and sets the `codenomad_session`
- *      cookie before responding (opaque redirect).
- *   5. On success: resets reconnection state and returns `true`.
- *   6. On failure: invokes the provided fallback handler and returns `false`.
+ *   1. Retry up to {@link MAX_RETRIES} times with exponential backoff.
+ *   2. Each attempt calls `POST /workspaces` for the same folder. The server
+ *      detects the existing (now-errored) workspace record and replaces it
+ *      in place, preserving its id.
+ *   3. If an attempt fails with what looks like an expired CodeNomad session
+ *      (401/403) and a StarGuard token is available, refresh it before the
+ *      next attempt.
+ *   4. On success: resets reconnection state and returns the new descriptor.
+ *   5. On failure: invokes the provided fallback handler and returns `null`.
  *
- * @param instanceId   - The disconnected workspace instance.
+ * @param instanceId - The disconnected workspace instance.
+ * @param folder - The workspace's folder path, used to relaunch it.
+ * @param name - Optional workspace/project name to preserve on relaunch.
  * @param onConnectionLost - Fallback handler invoked when all retries fail.
- * @returns `true` if re-auth succeeded, `false` otherwise.
+ * @returns The relaunched workspace descriptor, or `null` if recovery failed/was cancelled.
  */
 export async function reconnectWithRecovery(
   instanceId: string,
+  folder: string,
+  name: string | undefined,
   onConnectionLost: (instanceId: string, reason: string) => void | Promise<void>,
-): Promise<boolean> {
-  const token = getStoredStarGuardToken() ?? starGuardToken()
-  if (!token) {
-    log.info("No StarGuard token available for reconnection", { instanceId })
-    return false
-  }
+): Promise<WorkspaceDescriptor | null> {
+  log.info("Starting reconnection", { instanceId })
+  startReconnect(instanceId)
 
-  log.info("Starting reconnection with StarGuard token", { instanceId })
-  startReconnect(token)
-
-  const signal = getReconnectAbortSignal()
+  const signal = getReconnectAbortSignal(instanceId)
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     // Check if cancelled before starting next attempt.
     if (signal?.aborted) {
       log.info("Reconnection cancelled by user", { instanceId })
-      resetReconnect()
-      return false
+      resetReconnect(instanceId)
+      return null
     }
 
     const delay = BACKOFF_DELAYS[Math.min(attempt, BACKOFF_DELAYS.length - 1)]
@@ -93,55 +134,38 @@ export async function reconnectWithRecovery(
     } catch {
       // AbortError — user cancelled or new reconnection started.
       log.info("Reconnection sleep interrupted", { instanceId })
-      return false
+      return null
     }
 
     try {
-      // The /auth/starguard server route verifies the JWT, creates a session,
-      // and sets the codenomad_session cookie. We use `redirect: "manual"` so
-      // the browser does not navigate away — the cookie is still applied.
-      const response = await fetch(
-        `/auth/starguard?starguard_token=${encodeURIComponent(token)}`,
-        { method: "GET", credentials: "include", redirect: "manual", signal: signal ?? undefined },
-      )
-
-      // Opaque redirect (type === "opaqueredirect") means the server responded
-      // with a 302 and the cookie was set in the response headers.
-      if (response.ok || response.type === "opaqueredirect") {
-        log.info("Re-auth successful, cookie updated", { instanceId })
-        resetReconnect()
-        return true
-      }
-
-      // Token rejected — no point retrying with the same token.
-      if (response.status === 401 || response.status === 403) {
-        log.warn("StarGuard token rejected, stopping reconnection", {
-          instanceId,
-          status: response.status,
-        })
-        incrementRetry(`Authentication failed (${response.status})`)
-        break
-      }
-
-      incrementRetry(`Server returned ${response.status}`)
-      log.warn("Re-auth returned unexpected status", {
-        instanceId,
-        status: response.status,
-      })
+      const workspace = await serverApi.createWorkspace({ path: folder, name })
+      log.info("Workspace relaunch successful", { instanceId, workspaceId: workspace.id })
+      resetReconnect(instanceId)
+      return workspace
     } catch (error) {
       if (signal?.aborted) {
-        log.info("Reconnection cancelled during fetch", { instanceId })
-        return false
+        log.info("Reconnection cancelled during relaunch", { instanceId })
+        return null
       }
+
       const message = error instanceof Error ? error.message : String(error)
-      incrementRetry(message)
-      log.error("Re-auth request failed", { instanceId, error })
+
+      if (isAuthFailureMessage(message)) {
+        const token = getStoredStarGuardToken() ?? starGuardToken()
+        if (token) {
+          log.info("Relaunch blocked by an auth failure, refreshing StarGuard session", { instanceId })
+          await reauthWithStarGuard(token, signal)
+        }
+      }
+
+      incrementRetry(instanceId, message)
+      log.warn("Workspace relaunch attempt failed", { instanceId, error: message })
     }
   }
 
   // All attempts exhausted — invoke the original fallback handler.
   log.error("Reconnection failed after all attempts", { instanceId })
-  resetReconnect()
+  resetReconnect(instanceId)
   await onConnectionLost(instanceId, "reconnection_failed")
-  return false
+  return null
 }

@@ -60,6 +60,7 @@ import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadat
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 import { reconnectWithRecovery } from "../lib/reconnection-manager"
+import { activeReconnectInstanceId, cancelReconnect } from "./session-recovery"
 import { buildV2RequestLocations, type V2Location } from "./request-locations"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
@@ -1357,13 +1358,13 @@ async function sendPermissionResponse(
   }
 }
 
-sseManager.onConnectionLost = async (instanceId, reason) => {
+async function attemptInstanceReconnect(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance) {
     return
   }
 
-  const reconnected = await reconnectWithRecovery(instanceId, (id, r) => {
+  const workspace = await reconnectWithRecovery(instanceId, instance.folder, instance.projectName, (id, r) => {
     markBackendOffline(r)
     requestTunnelRestartFromStarGuard(r)
     setDisconnectedInstance({
@@ -1373,10 +1374,19 @@ sseManager.onConnectionLost = async (instanceId, reason) => {
     })
   })
 
-  if (reconnected) {
-    log.info("Reconnection succeeded, rehydrating instance", { instanceId })
+  if (workspace) {
+    log.info("Reconnection succeeded, relaunching instance", { instanceId, workspaceId: workspace.id })
+    upsertWorkspace(workspace, instance.projectName)
+    setDisconnectedInstance((current) => (current?.id === instanceId ? null : current))
     await rehydrateInstance(instanceId, { reason: "reconnected" })
   }
+}
+
+sseManager.onConnectionLost = (instanceId) => attemptInstanceReconnect(instanceId)
+
+/** Manually re-trigger the reconnection sequence, e.g. from the disconnected-instance modal's Retry button. */
+async function retryInstanceReconnect(instanceId: string): Promise<void> {
+  return attemptInstanceReconnect(instanceId)
 }
 
 sseManager.onLspUpdated = async (instanceId) => {
@@ -1417,17 +1427,23 @@ sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
 }
 
 async function acknowledgeDisconnectedInstance(): Promise<void> {
-  const pending = disconnectedInstance()
-  if (!pending) {
+  // `disconnectedInstance` is only set once all retries are exhausted; while
+  // a reconnection attempt is still in flight (e.g. the very first "Attempt
+  // 1 of N" screen), it's still null even though the modal is showing via
+  // `activeReconnectInstanceId`. Fall back to that so Close Instance works
+  // at any point during the reconnect sequence, not just after it gives up.
+  const targetId = disconnectedInstance()?.id ?? activeReconnectInstanceId()
+  if (!targetId) {
     return
   }
 
+  cancelReconnect(targetId)
   try {
-    stopInstance(pending.id)
+    stopInstance(targetId)
   } catch (error) {
     log.error("Failed to stop disconnected instance", error)
   } finally {
-    setDisconnectedInstance(null)
+    setDisconnectedInstance((current) => (current?.id === targetId ? null : current))
   }
 }
 
@@ -1478,6 +1494,7 @@ export {
   setActiveQuestionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  retryInstanceReconnect,
   fetchLspStatus,
   disposeInstance,
 }
