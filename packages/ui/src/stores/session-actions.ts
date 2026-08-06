@@ -10,7 +10,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
 import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
+import { OpencodeApiError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 
 const log = getLogger("actions")
@@ -469,15 +469,24 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
 
   const client = getRootClient(instanceId)
 
-  // The SDK generator does not currently expose a typed method for deleting a message,
-  // but the API is available at DELETE /session/:sessionID/message/:messageID.
-  await requestData(
-    (client as any).client.delete({
-      url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      query: await getSessionWorkspacePayload(instanceId, sessionId),
-    }),
-    "session.message.delete",
-  )
+  const result = await client.session.deleteMessage({
+    sessionID: sessionId,
+    messageID: messageId,
+    ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+  })
+
+  // Unlike abortSession's 400 (nothing to cancel, desired end state already
+  // holds), a 409 here is SessionBusyError: the message is still actively
+  // being streamed into. Deletion did NOT happen, so this must surface as a
+  // real failure — not be swallowed — or the UI would show the message gone
+  // while the server keeps writing to it.
+  const errorTag = (result as { error?: { _tag?: string } } | undefined)?.error?._tag
+  if (errorTag === "SessionBusyError") {
+    log.info("deleteMessage: session busy, message still streaming", { instanceId, sessionId, messageId })
+    throw new OpencodeApiError("Can't delete this message — it's still being generated. Stop the session first, then try again.")
+  }
+
+  await requestData(Promise.resolve(result), "session.message.delete")
 
   // Optimistic removal; SSE will also broadcast a message-removed event.
   removeMessageV2(instanceId, messageId)
