@@ -323,13 +323,23 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 
   try {
     log.info("session.abort", { instanceId, sessionId })
-    await requestData(
-      client.session.abort({
-        sessionID: sessionId,
-        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      }),
-      "session.abort",
-    )
+    const result = await client.session.abort({
+      sessionID: sessionId,
+      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+    })
+
+    // OpenCode's /session/{id}/abort returns 400 (BadRequest/InvalidRequestError)
+    // when there's nothing active to cancel — the session already finished
+    // between the local "busy" check and the request reaching the server.
+    // The desired end state (not running) already holds, so treat it as a
+    // no-op success instead of surfacing a "Failed to abort" error.
+    const errorTag = (result as { error?: { _tag?: string } } | undefined)?.error?._tag
+    if (errorTag === "BadRequest" || errorTag === "InvalidRequestError") {
+      log.info("abortSession: nothing to abort, session already idle", { instanceId, sessionId })
+      return
+    }
+
+    await requestData(Promise.resolve(result), "session.abort")
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
