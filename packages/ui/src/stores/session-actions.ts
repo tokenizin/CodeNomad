@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { providers, sessions, withSession } from "./session-state"
+import { getSessionRoot, providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -347,6 +347,21 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   }
 }
 
+/**
+ * Pause a subagent session. A session created via a `subtask` handoff (product_manager →
+ * developer, etc.) has no in-flight request of its own to cancel — the generation actually
+ * runs inside its root ancestor's blocking `/session/{id}/message` call, as a nested tool
+ * execution. Calling abort directly on the child returns 400 (nothing to cancel from its
+ * own perspective) while it's still 409-busy underneath, so it can never be stopped that
+ * way. Resolve to the root session that actually owns the request, and abort that instead.
+ */
+async function pauseSession(instanceId: string, sessionId: string): Promise<void> {
+  const root = getSessionRoot(instanceId, sessionId)
+  const targetId = root?.id ?? sessionId
+  log.info("pauseSession", { instanceId, sessionId, targetId })
+  await abortSession(instanceId, targetId)
+}
+
 async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -498,6 +513,7 @@ export {
   deleteMessage,
   deleteMessagePart,
   executeCustomCommand,
+  pauseSession,
   renameSession,
   runShellCommand,
   sendMessage,

@@ -31,5 +31,7 @@ export interface PromptInputProps {
   escapeInDebounce?: boolean
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>
+  /** True when the currently viewed session is a subagent (has a parentId) — onAbortSession pauses its root ancestor rather than stopping it directly. Swaps the stop button's icon/label to "Pause". */
+  isSubagentSession?: boolean
   registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
 }

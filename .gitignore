@@ -18,4 +18,4 @@ bun.lockb
 .tmp/
 packages/cloudflare/.wrangler/
 .env
-node_modules
+node_modules/

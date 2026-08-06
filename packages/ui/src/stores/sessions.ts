@@ -63,6 +63,7 @@ import {
 import {
   abortSession,
   executeCustomCommand,
+  pauseSession,
   renameSession,
   runShellCommand,
   sendMessage,
@@ -114,6 +115,7 @@ export {
   deleteSession,
   ensureSessionParentExpanded,
   executeCustomCommand,
+  pauseSession,
   renameSession,
   runShellCommand,
   fetchAgents,

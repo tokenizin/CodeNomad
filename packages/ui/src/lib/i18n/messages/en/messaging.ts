@@ -181,6 +181,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "again to abort session",
   "promptInput.stopSession.ariaLabel": "Stop session",
   "promptInput.stopSession.title": "Stop session",
+  "promptInput.pauseSession.ariaLabel": "Pause subagent",
+  "promptInput.pauseSession.title": "Pause subagent (stops the root session driving it)",
   "promptInput.attachFiles.ariaLabel": "Attach files",
   "promptInput.attachFiles.title": "Attach files",
   "promptInput.attachFiles.dialogTitle": "Attach files",

@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, pauseSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -325,20 +325,28 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     await runShellCommand(props.instanceId, props.sessionId, command)
   }
  
+  const isSubagentSession = createMemo(() => Boolean(session()?.parentId))
+
   async function handleAbortSession() {
     const currentSession = session()
     if (!currentSession) return
- 
+
     try {
-      await abortSession(props.instanceId, currentSession.id)
-      log.info("Abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
+      // A subagent session has no in-flight request of its own — the generation runs
+      // inside its root ancestor's blocking call. pauseSession resolves to that root
+      // automatically (and is a no-op passthrough to abortSession for top-level sessions).
+      await pauseSession(props.instanceId, currentSession.id)
+      log.info("Pause/abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
     } catch (error) {
-      log.error("Failed to abort session", error)
-      showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
-        title: t("sessionView.alerts.abortFailed.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
+      log.error("Failed to pause/abort session", error)
+      showAlertDialog(
+        isSubagentSession() ? t("sessionView.alerts.pauseFailed.message") : t("sessionView.alerts.abortFailed.message"),
+        {
+          title: isSubagentSession() ? t("sessionView.alerts.pauseFailed.title") : t("sessionView.alerts.abortFailed.title"),
+          detail: error instanceof Error ? error.message : String(error),
+          variant: "error",
+        },
+      )
     }
   }
  
@@ -532,6 +540,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               isSessionBusy={sessionBusy()}
               disabled={sessionNeedsInput()}
               onAbortSession={handleAbortSession}
+              isSubagentSession={isSubagentSession()}
               registerPromptInputApi={registerPromptInputApi}
             />
             </div>

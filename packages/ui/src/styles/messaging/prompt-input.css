@@ -385,6 +385,23 @@
   height: 1rem;
 }
 
+/* Pause targets a subagent's root ancestor rather than ending the session outright —
+   styled as a caution/hold action rather than the destructive red of Stop. */
+.stop-button.pause-button {
+  background-color: var(--button-warning-bg, rgba(217, 119, 6, 0.85));
+  color: var(--button-warning-text, var(--text-inverted, #ffffff));
+}
+
+.stop-button.pause-button:hover:not(:disabled) {
+  background-color: var(--button-warning-hover-bg, rgba(217, 119, 6, 0.95));
+  @apply opacity-95 scale-105;
+}
+
+.stop-button.pause-button:active:not(:disabled) {
+  background-color: var(--button-warning-active-bg, rgba(217, 119, 6, 1));
+  @apply scale-95;
+}
+
 .send-button {
   @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
   background-color: var(--accent-primary);

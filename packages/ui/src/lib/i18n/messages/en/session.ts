@@ -73,6 +73,8 @@ export const sessionMessages = {
   "sessionView.fallback.sessionNotFound": "Session not found",
   "sessionView.alerts.abortFailed.message": "Failed to stop session",
   "sessionView.alerts.abortFailed.title": "Stop failed",
+  "sessionView.alerts.pauseFailed.message": "Failed to pause subagent",
+  "sessionView.alerts.pauseFailed.title": "Pause failed",
   "sessionView.alerts.revertFailed.message": "Failed to revert to message",
   "sessionView.alerts.revertFailed.title": "Revert failed",
   "sessionView.alerts.deleteUpToFailed.message": "Failed to delete messages",

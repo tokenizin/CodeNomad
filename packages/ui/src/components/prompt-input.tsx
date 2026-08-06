@@ -1041,14 +1041,25 @@ export default function PromptInput(props: PromptInputProps) {
           <button
             type="button"
             class="stop-button"
+            classList={{ "pause-button": Boolean(props.isSubagentSession) }}
             onClick={handleAbort}
             disabled={!canStop()}
-            aria-label={t("promptInput.stopSession.ariaLabel")}
-            title={t("promptInput.stopSession.title")}
+            aria-label={props.isSubagentSession ? t("promptInput.pauseSession.ariaLabel") : t("promptInput.stopSession.ariaLabel")}
+            title={props.isSubagentSession ? t("promptInput.pauseSession.title") : t("promptInput.stopSession.title")}
           >
-            <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <rect x="4" y="4" width="12" height="12" rx="2" />
-            </svg>
+            <Show
+              when={props.isSubagentSession}
+              fallback={
+                <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <rect x="4" y="4" width="12" height="12" rx="2" />
+                </svg>
+              }
+            >
+              <svg class="stop-icon pause-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <rect x="4" y="3" width="4" height="14" rx="1" />
+                <rect x="12" y="3" width="4" height="14" rx="1" />
+              </svg>
+            </Show>
           </button>
           <button
             type="button"
