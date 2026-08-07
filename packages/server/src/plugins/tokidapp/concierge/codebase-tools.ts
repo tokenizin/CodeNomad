@@ -5,6 +5,7 @@ import * as path from "path"
 import { fileURLToPath } from "url"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback.js"
 import { apiGet } from "../orchestrator/starguard-client.js"
+import { searchText, formatSearchResult, searchAvailability } from "./text-search.js"
 
 // ESM package — __dirname is not defined, so derive it from import.meta.url.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -447,61 +448,24 @@ export async function investigateCodebase(
 ): Promise<string> {
   if (send) send(JSON.stringify({ type: "stream", delta: "Searching the codebase..." }))
 
-  // Extract meaningful keywords: keep capitalized words, identifiers, and short technical terms
-  const words = query
-    .replace(/[^\w\s-]/g, ' ')      // replace punctuation with space (keep hyphens)
-    .split(/\s+/)                     // split on whitespace
-    .filter(Boolean)                 // remove empty
-    .filter((w) => w.length > 2)     // remove 1-2 char words
-    .filter((w) => !STOP_WORDS.has(w.toLowerCase())) // remove stop words
-    .filter((w) => !/^\d+$/.test(w)) // remove pure numbers
-
-  // Prioritize capitalized / CamelCase / snake_case / hyphenated terms (identifiers)
-  const identifiers = words.filter((w) => /[A-Z]/.test(w) || /[-_]/.test(w) || /^\w+\.\w+$/.test(w))
-  const remaining = words.filter((w) => !identifiers.includes(w))
-
-  // Take up to 10 keywords total, prioritizing identifiers
-  const keywords = [...identifiers, ...remaining].slice(0, 10)
-  if (keywords.length === 0) {
-    return "What specific code would you like me to investigate? Try mentioning a filename, component name, or contract address."
-  }
-
   try {
-    const pattern = keywords.join("|")
-    let results: string
-    try {
-      results = execSync(
-        `rg -l -i --engine auto "${pattern}" --type-add 'web:*.{ts,tsx,js,jsx,css,json}' --type web --glob '!node_modules' --glob '!.next' --glob '!public/codenomad' -m 5 2>/dev/null || true`,
-        { cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 1024 * 1024 },
-      )
-    } catch {
-      results = ""
-    }
-
-    const fileList = results.trim().split("\n").filter(Boolean).slice(0, 20)
-    if (fileList.length === 0) return `No files found matching: ${keywords.join(", ")}`
-
-    const previews: string[] = []
-    for (const file of fileList.slice(0, 3)) {
-      try {
-        const content = execSync(`head -30 "${file}"`, { cwd: workspaceRoot, encoding: "utf-8", maxBuffer: 1024 * 1024 })
-        previews.push(`📄 ${file}:\n${content}`)
-      } catch {
-        previews.push(`📄 ${file}: (could not read)`)
-      }
-    }
-
-    return [
-      `Found ${fileList.length} files matching: ${keywords.join(", ")}`,
-      "",
-      ...fileList.map((f) => `- ${f}`),
-      "",
-      "--- Previews ---",
-      "",
-      ...previews,
-    ].join("\n")
+    const result = searchText(
+      query,
+      {
+        roots: [workspaceRoot],
+        extensions: [".ts", ".tsx", ".js", ".jsx", ".css", ".json"],
+        excludeDirs: [
+          "node_modules", ".next", ".git", "dist", "build", "coverage",
+          ".turbo", "playwright-report", "test-results", "codenomad",
+        ],
+        maxFiles: 12,
+        snippetsPerFile: 3,
+      },
+      STOP_WORDS,
+    )
+    return formatSearchResult(result, { relativeTo: workspaceRoot, label: "file(s)" })
   } catch (err) {
-    return `Error: ${(err as Error).message}`
+    return `Codebase search failed: ${(err as Error).message}`
   }
 }
 
@@ -1763,74 +1727,60 @@ export async function readWikiPage(pageName: string): Promise<string> {
 export async function searchWiki(query: string): Promise<string> {
   if (!query?.trim()) return "Please provide a search term."
 
-  const terms = query.trim().split(/\s+/).filter(Boolean)
-  if (terms.length === 0) return "Please provide a search term."
-
   try {
-    const pattern = terms.join("|")
-    const allFiles: string[] = []
-    const seenBasenames = new Set<string>()
+    // Same STOP_WORDS as the codebase search — without them a spoken question drags in
+    // "the"/"and"/"what", which match every note and flatten the ranking.
+    const result = searchText(
+      query,
+      {
+        roots: WIKI_ROOTS,
+        extensions: [".md"],
+        maxFiles: 8,
+        snippetsPerFile: 2,
+      },
+      STOP_WORDS,
+    )
 
-    // Search each root — primary first
-    for (const root of WIKI_ROOTS) {
-      try {
-        const result = execSync(
-          `rg -l -i "${pattern}" "${root}" --glob '*.md' -m 10 2>/dev/null || true`,
-          { encoding: "utf-8", maxBuffer: 1024 * 1024 },
-        )
-        const files = result.trim().split("\n").filter(Boolean)
-        for (const file of files) {
-          const basename = path.basename(file).toLowerCase()
-          // Deduplicate by basename; prefer earlier root (primary first)
-          if (!seenBasenames.has(basename)) {
-            seenBasenames.add(basename)
-            allFiles.push(file)
-          }
-        }
-      } catch { /* skip unsearchable root */ }
+    if (result.terms.length === 0) return "Please provide a search term."
+    if (result.hits.length === 0) {
+      return formatSearchResult(result, { label: "wiki page(s)" })
     }
 
-    if (allFiles.length === 0) return `No wiki pages found matching: ${query}`
+    const { note } = searchAvailability()
+    const lines: string[] = [
+      `Found ${result.totalFiles} page(s) for: ${result.terms.join(", ")} ` +
+        `(vault · project-intelligence · ecosystem)` +
+        (result.fullMatches > 0
+          ? ` — ${result.fullMatches} match every term`
+          : ` — none match every term, showing best partial matches`) +
+        (result.truncated ? ` (top ${result.hits.length})` : ""),
+    ]
+    if (note) lines.push(`(${note})`)
+    lines.push("")
 
-    const previews: string[] = []
-    for (const file of allFiles.slice(0, 8)) {
+    // Dedupe by page name — the same note can exist in more than one knowledge root.
+    const seenNames = new Set<string>()
+    for (const hit of result.hits) {
+      const name = path.basename(hit.file).replace(/\.md$/, "")
+      if (seenNames.has(name.toLowerCase())) continue
+      seenNames.add(name.toLowerCase())
+
+      let stableId = ""
       try {
-        const content = fs.readFileSync(file, "utf-8")
-        // Determine the best display name: relative to any known root, else basename
-        let name = path.basename(file).replace(/\.md$/, "")
-        for (const root of WIKI_ROOTS) {
-          if (file.startsWith(root)) {
-            const rel = path.relative(root, file)
-            name = rel.replace(/\.md$/, "").replace(/^.*[/\\]/, "")
-            break
-          }
-        }
+        const head = fs.readFileSync(hit.file, "utf-8").slice(0, 2000)
+        stableId = head.match(/stableId:\s*(.+)/)?.[1]?.trim() ?? ""
+      } catch { /* name alone is enough */ }
 
-        // Extract frontmatter stableId if present
-        const stableMatch = content.match(/stableId:\s*(.+)/)
-        const stableId = stableMatch ? stableMatch[1].trim() : ""
-
-        // Extract priority from HTML comment (project-intelligence style)
-        const priorityMatch = content.match(/Priority:\s*(\w+)/i)
-        const priority = priorityMatch ? priorityMatch[1].trim() : ""
-
-        // Get first 3 lines of content after frontmatter
-        const bodyLines = content.split("\n").filter(l => l.trim() && !l.startsWith("---")).slice(0, 3)
-        const preview = bodyLines.join(" ").slice(0, 200)
-
-        const tags = [stableId, priority].filter(Boolean).join(" · ")
-        previews.push(`• ${name}${tags ? ` (${tags})` : ""}: ${preview}`)
-      } catch { /* skip unreadable */ }
+      lines.push(
+        `• ${name}${stableId ? ` (${stableId})` : ""} ` +
+          `[${hit.termsMatched}/${result.terms.length} terms · ${hit.hits} hit${hit.hits === 1 ? "" : "s"}]`,
+      )
+      // The matching lines — not the file header, which for a wiki note is frontmatter.
+      for (const s of hit.snippets) lines.push(`    ${s.line}: ${s.text}`)
     }
 
-    const sourceNote = " (vault · project-intelligence · ecosystem)"
-    return [
-      `Found ${allFiles.length} page(s) matching "${query}"${sourceNote}:`,
-      "",
-      ...previews,
-      "",
-      `Use read_wiki_page("pageName") to read a specific page.`,
-    ].join("\n")
+    lines.push("", `Use read_wiki_page("pageName") to read a specific page.`)
+    return lines.join("\n")
   } catch (err) {
     return `Wiki search failed: ${(err as Error).message}`
   }
