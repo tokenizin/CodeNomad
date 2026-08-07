@@ -217,6 +217,205 @@ function markSessionActivity(sessionId: string): void {
   session.idleHeartbeats = 0
 }
 
+// ── Background-work relay ──────────────────────────────────────────────
+//
+// Delegated work runs outside the voice turn. Without a relay the concierge
+// hands a task off and then goes deaf to it: progress, blocks and results all
+// went to the UI socket only, so the assistant could never mention them and
+// the user had to ask "is it done yet?".
+//
+// `relayToVoice` injects an out-of-band system item and lets the model decide
+// how to voice it. Injected as `system` (not `user`) so it never pollutes the
+// transcript, and rate-limited so a chatty agent cannot monopolise the turn.
+
+/** Minimum gap between spoken relays, per session. */
+const RELAY_MIN_INTERVAL_MS = (() => {
+  const raw = Number(process.env.VOICE_RELAY_MIN_INTERVAL_MS)
+  return Number.isFinite(raw) && raw >= 0 ? raw : 12_000
+})()
+
+/** Per-session timestamp of the last spoken relay. */
+const lastRelayAt = new Map<string, number>()
+
+/**
+ * Recently spoken relay text, per session.
+ *
+ * One state change emits a matched pair (`agent_progress` +
+ * `nomadworks_task_status`) that classify to the same sentence. The interval
+ * gate does not catch it — alerts bypass the gate entirely — so a block or
+ * failure would be announced twice in a row. Suppress by content instead.
+ */
+const recentRelayText = new Map<string, Map<string, number>>()
+const RELAY_DEDUPE_WINDOW_MS = 30_000
+
+function isDuplicateRelay(sessionId: string, text: string, now: number): boolean {
+  let seen = recentRelayText.get(sessionId)
+  if (!seen) {
+    seen = new Map()
+    recentRelayText.set(sessionId, seen)
+  }
+  for (const [prev, at] of seen) {
+    if (now - at > RELAY_DEDUPE_WINDOW_MS) seen.delete(prev)
+  }
+  if (seen.has(text)) return true
+  seen.set(text, now)
+  return false
+}
+
+export type RelayUrgency = "ambient" | "notify" | "alert"
+
+/**
+ * Surface a background event inside the live voice conversation.
+ *
+ * - `alert`  — always spoken (failures, blocks, approvals needed)
+ * - `notify` — spoken unless another relay just happened (completions)
+ * - `ambient`— spoken only if the assistant is otherwise idle (reasoning,
+ *              tool steps); these are the "thinking out loud" updates
+ *
+ * Returns true when the item was injected.
+ */
+export function relayToVoice(
+  sessionId: string,
+  text: string,
+  urgency: RelayUrgency = "notify",
+): boolean {
+  const session = sessions.get(sessionId)
+  if (!session?.connected) return false
+  if (!text.trim()) return false
+
+  // Never talk over an in-flight response for anything but an alert; alerts
+  // are queued through the same guard rather than interrupting mid-sentence.
+  if (session.responseInProgress && urgency !== "alert") return false
+
+  const now = Date.now()
+  if (isDuplicateRelay(sessionId, text, now)) return false
+
+  const since = now - (lastRelayAt.get(sessionId) ?? 0)
+  if (urgency === "ambient" && (since < RELAY_MIN_INTERVAL_MS || session.activeToolName)) {
+    return false
+  }
+  if (urgency === "notify" && since < RELAY_MIN_INTERVAL_MS / 2) return false
+
+  const instruction =
+    `[background update — ${urgency}] ${text}\n` +
+    `Relay this to the user in one short spoken sentence, in your own words. ` +
+    `Do not read out identifiers, file paths, links or addresses. ` +
+    `If it needs a decision from them, ask for it plainly.`
+
+  try {
+    session.ws.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [{ type: "input_text", text: instruction }],
+        },
+      }),
+    )
+    session.responseInProgress = true
+    session.ws.send(JSON.stringify({ type: "response.create" }))
+    lastRelayAt.set(sessionId, now)
+    session.lastActivityAt = now
+    session.idleHeartbeats = 0
+    session.sendToClient?.(
+      JSON.stringify({ type: "voice_relay", urgency, text }),
+    )
+    return true
+  } catch (err) {
+    console.warn("[realtime] relay send failed:", (err as Error).message)
+    return false
+  }
+}
+
+/**
+ * Classify one bridge progress payload into what the concierge should say and
+ * how urgently — or null when the event is not worth voicing.
+ *
+ * Pure and exported so the mapping can be tested without a live session.
+ */
+export function classifyTaskEvent(
+  rawPayload: string,
+): { text: string; urgency: RelayUrgency } | null {
+  let p: Record<string, unknown>
+  try {
+    p = JSON.parse(rawPayload)
+  } catch {
+    return null
+  }
+
+  const type = String(p.type ?? "")
+  if (type !== "agent_progress" && type !== "nomadworks_task_status") return null
+
+  const stage = String(p.stage ?? p.progress_stage ?? "")
+  const status = String(p.status ?? "")
+  const title = String(p.title ?? "").trim()
+  const agent = String(p.agentType ?? "the agent").replace(/_/g, " ")
+  const detail = String(p.content ?? p.progress_message ?? "").trim()
+  const pct = typeof p.pct === "number" ? p.pct : undefined
+  const label = title ? `"${title}"` : "the delegated task"
+
+  // Only speak a status event when the status actually moved — otherwise every
+  // progress tick emits a duplicate status event and the assistant repeats itself.
+  if (type === "nomadworks_task_status" && p.statusChanged !== true) return null
+
+  let urgency: RelayUrgency = "ambient"
+  let text: string
+
+  switch (stage) {
+    case "error":
+      urgency = "alert"
+      text = `${agent} failed on ${label}${detail ? `: ${detail}` : "."}`
+      break
+    case "blocked":
+      urgency = "alert"
+      text = `${agent} is blocked on ${label}${detail ? `: ${detail}` : "."} It needs a decision before it can continue.`
+      break
+    case "complete":
+      urgency = "notify"
+      text = `${agent} finished ${label}${detail ? `: ${detail}` : "."}`
+      break
+    case "reviewing":
+      urgency = "notify"
+      text = `${agent} has ${label} in review${detail ? `: ${detail}` : "."}`
+      break
+    case "thinking":
+      text = `${agent} is reasoning about ${label}${detail ? `: ${detail}` : "."}`
+      break
+    case "tool_call":
+      text = `${agent} is running a step on ${label}${detail ? `: ${detail}` : "."}`
+      break
+    case "tool_result":
+      text = `${agent} got a result back on ${label}${detail ? `: ${detail}` : "."}`
+      break
+    case "executing":
+      text = `${agent} is working through ${label}${detail ? `: ${detail}` : "."}${pct != null ? ` About ${pct} percent along.` : ""}`
+      break
+    default:
+      if (status === "blocked") {
+        urgency = "alert"
+        text = `${label} moved to blocked.`
+      } else if (status === "cancelled") {
+        urgency = "notify"
+        text = `${label} was cancelled.`
+      } else if (p.laneChanged === true) {
+        urgency = "notify"
+        text = `${label} moved to ${status}.`
+      } else {
+        return null
+      }
+  }
+
+  return { text, urgency }
+}
+
+/** Classify a bridge payload and, if it warrants it, speak it into the session. */
+export function relayTaskEvent(sessionId: string, rawPayload: string): void {
+  const classified = classifyTaskEvent(rawPayload)
+  if (!classified) return
+  relayToVoice(sessionId, classified.text, classified.urgency)
+}
+
 function stopHeartbeat(session: RealtimeSession): void {
   if (session.heartbeatTimer) {
     clearInterval(session.heartbeatTimer)
@@ -1171,31 +1370,41 @@ export async function executeTool(
           sessionId,
         })
 
-        // Also try to notify the tokidapp WS so the Evidence tab gets live updates
+        // Fan every progress event out to two places: the UI socket (Evidence /
+        // Causal tabs) and the live voice conversation. Previously only the UI
+        // got them, so the concierge itself never learned the task moved.
         try {
           const userId = sessionId ? sessionId.replace(/^voice_/, "") : null
-          if (userId) {
-            const { getTokidappSocket, tokidappSessionId } = await import("../../../server/ws-socket-registry")
-            const socket = getTokidappSocket(tokidappSessionId(userId))
-            if (socket) {
-              socket.send(JSON.stringify({
-                type: "nomadworks_task_status",
-                taskId: result.taskId,
-                status: "created",
-                title: intent.slice(0, 120),
-                agentType,
-                complexity,
-              }))
-              // Start watching for task completion so the Evidence Browser gets
-              // live causal + evidence updates when the PMA finishes processing
-              bridge.watchTask(result.taskId, (msg) => socket.send(msg))
-            }
+          const { getTokidappSocket, tokidappSessionId } = await import("../../../server/ws-socket-registry")
+          const socket = userId ? getTokidappSocket(tokidappSessionId(userId)) : undefined
+
+          if (socket) {
+            socket.send(JSON.stringify({
+              type: "nomadworks_task_status",
+              taskId: result.taskId,
+              status: "created",
+              title: intent.slice(0, 120),
+              agentType,
+              complexity,
+            }))
           }
-        } catch {
-          // Non-critical — task was created regardless
+
+          // Watch regardless of whether a UI socket exists — the voice relay is
+          // reason enough, and a task with no watcher reports nothing at all.
+          bridge.watchTask(result.taskId, (msg) => {
+            socket?.send(msg)
+            relayTaskEvent(sessionId, msg)
+          })
+        } catch (err) {
+          // Non-critical — the task file was created regardless, but say so:
+          // silence here used to hide a task that would never be monitored.
+          console.warn(
+            `[openai-realtime] nomadworks_invoke: monitoring not attached for ${result.taskId}:`,
+            (err as Error).message,
+          )
         }
 
-        return `NomadWorks task created: ${result.taskId} (${agentType}, ${complexity}). Task file: ${result.taskFilePath}. Evidence will appear in the Evidence Browser and Causal tabs once the task is completed.`
+        return `NomadWorks task created: ${result.taskId} (${agentType}, ${complexity}). Task file: ${result.taskFilePath}. I am monitoring it and will tell you when it progresses, blocks, or finishes. Evidence will appear in the Evidence Browser and Causal tabs once the task completes.`
       }
 
       // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────
@@ -1878,6 +2087,9 @@ export function endVoiceSession(sessionId: string) {
     stopHeartbeat(session)
     sessions.delete(sessionId)
   }
+  // Relay bookkeeping is per-session — drop it with the session.
+  lastRelayAt.delete(sessionId)
+  recentRelayText.delete(sessionId)
   // Clean up per-user tracking — only remove if this was the tracked session
   // for that user, in case it was already replaced by a newer one.
   for (const [userId, trackedId] of activeUserSessions) {

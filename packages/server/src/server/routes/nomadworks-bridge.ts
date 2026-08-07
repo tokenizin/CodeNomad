@@ -46,9 +46,140 @@ import {
 const REPO_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const TASKS_ROOT = path.join(REPO_ROOT, "tasks")
 const TODO_DIR = path.join(TASKS_ROOT, "todo")
+const BLOCKED_DIR = path.join(TASKS_ROOT, "blocked")
+const DONE_DIR = path.join(TASKS_ROOT, "done")
 const CURRENT_FILE = path.join(TASKS_ROOT, "current.md")
 const BRIDGE_SECTION = "## Bridge-Initiated Tasks"
 const EVIDENCES_ROOT = path.join(REPO_ROOT, "evidences")
+
+/**
+ * Task lanes, in resolution order. A task is a file in exactly one of these;
+ * moving the file between them IS the lifecycle transition, so every lookup
+ * has to consider all three or a moved task silently becomes unreadable.
+ */
+export type TaskLane = "todo" | "blocked" | "done"
+
+const TASK_LANES: ReadonlyArray<{ lane: TaskLane; dir: string }> = [
+  { lane: "todo", dir: TODO_DIR },
+  { lane: "blocked", dir: BLOCKED_DIR },
+  { lane: "done", dir: DONE_DIR },
+]
+
+/**
+ * Canonical task states. Task files on disk carry ~11 different spellings
+ * (`active`/`Active`/`todo`/`done`/`Done`/`completed`/`complete`/`pending`/
+ * `created`/`review`/`ready-for-close`, plus free text), and the frontmatter
+ * routinely disagrees with the directory. Everything the bridge reports is
+ * normalized through `normalizeStatus` so subscribers see one vocabulary.
+ */
+export type CanonicalTaskStatus =
+  | "created"
+  | "queued"
+  | "in_progress"
+  | "blocked"
+  | "review"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+const TERMINAL_STATUSES: ReadonlySet<CanonicalTaskStatus> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+])
+
+/** Raw frontmatter spelling → canonical status. */
+const STATUS_ALIASES: Readonly<Record<string, CanonicalTaskStatus>> = {
+  created: "created",
+  new: "created",
+  todo: "queued",
+  pending: "queued",
+  queued: "queued",
+  ready: "queued",
+  active: "in_progress",
+  "in progress": "in_progress",
+  in_progress: "in_progress",
+  inprogress: "in_progress",
+  running: "in_progress",
+  wip: "in_progress",
+  blocked: "blocked",
+  waiting: "blocked",
+  "on hold": "blocked",
+  review: "review",
+  "in review": "review",
+  "ready-for-close": "review",
+  "ready for close": "review",
+  done: "completed",
+  complete: "completed",
+  completed: "completed",
+  closed: "completed",
+  shipped: "completed",
+  failed: "failed",
+  error: "failed",
+  cancelled: "cancelled",
+  canceled: "cancelled",
+  abandoned: "cancelled",
+  superseded: "cancelled",
+}
+
+/**
+ * Normalize a raw frontmatter `status:` value to the canonical vocabulary.
+ * Free-text statuses like `Active (Batch 2 complete in bcd876e3; ...)` are
+ * matched on their leading word. `lane` breaks ties when frontmatter is
+ * missing or contradicts the file's directory — the directory wins for
+ * `blocked`/`done`, because moving the file is the deliberate act.
+ */
+export function normalizeStatus(raw: unknown, lane?: TaskLane): CanonicalTaskStatus {
+  if (lane === "blocked") return "blocked"
+
+  const text = typeof raw === "string" ? raw.trim().toLowerCase() : ""
+  if (text) {
+    const exact = STATUS_ALIASES[text]
+    if (exact) return lane === "done" && !TERMINAL_STATUSES.has(exact) ? "completed" : exact
+
+    // Free text — match the leading word (e.g. "Active (implementation ...)").
+    const lead = text.split(/[\s(—–:,;]/)[0]
+    const byLead = STATUS_ALIASES[lead]
+    if (byLead) return lane === "done" && !TERMINAL_STATUSES.has(byLead) ? "completed" : byLead
+  }
+
+  if (lane === "done") return "completed"
+  if (lane === "todo") return "queued"
+  return "created"
+}
+
+/** True when a status means no further updates are expected. */
+export function isTerminalStatus(status: CanonicalTaskStatus): boolean {
+  return TERMINAL_STATUSES.has(status)
+}
+
+/** Stage the agent reports → the task status it implies. */
+const STAGE_TO_STATUS: Readonly<Record<AgentProgressStage, CanonicalTaskStatus>> = {
+  thinking: "in_progress",
+  tool_call: "in_progress",
+  tool_result: "in_progress",
+  executing: "in_progress",
+  reviewing: "review",
+  blocked: "blocked",
+  complete: "completed",
+  error: "failed",
+}
+
+const VALID_STAGES: ReadonlySet<string> = new Set(Object.keys(STAGE_TO_STATUS))
+
+/**
+ * Resolve a taskId to its file and lane, searching todo → blocked → done.
+ * Returns null when the task has no file in any lane.
+ */
+export function resolveTaskFile(
+  taskId: string,
+): { filePath: string; lane: TaskLane } | null {
+  for (const { lane, dir } of TASK_LANES) {
+    const candidate = path.join(dir, `${taskId}.md`)
+    if (fs.existsSync(candidate)) return { filePath: candidate, lane }
+  }
+  return null
+}
 
 // ── Event Bus (In-Memory Progress Notifications) ─────────────
 // Replaces the fs.watch polling round-trip for progress updates.
@@ -166,6 +297,7 @@ export type AgentProgressStage =
   | 'tool_result'
   | 'executing'
   | 'reviewing'
+  | 'blocked'
   | 'complete'
   | 'error'
 
@@ -185,7 +317,14 @@ export interface CreateTaskParams {
 
 export interface TaskStatus {
   taskId: string
-  status: string
+  /** Canonical status — see `normalizeStatus`. */
+  status: CanonicalTaskStatus
+  /** Raw frontmatter `status:` value, preserved for display/debugging. */
+  rawStatus?: string
+  /** Which directory the task file currently lives in. */
+  lane?: TaskLane
+  /** True when no further updates are expected. */
+  terminal?: boolean
   complexity?: string
   track?: string
   slice?: string
@@ -232,7 +371,7 @@ function ensureDir(dir: string): void {
 }
 
 /** Parse YAML frontmatter from a task file. */
-function parseTaskFile(content: string, taskId: string): TaskStatus | null {
+function parseTaskFile(content: string, taskId: string, lane?: TaskLane): TaskStatus | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/)
   if (!match) return null
 
@@ -240,16 +379,31 @@ function parseTaskFile(content: string, taskId: string): TaskStatus | null {
     const frontmatter = YAML.parse(match[1])
     if (!frontmatter || typeof frontmatter !== "object") return null
 
+    const rawStatus = frontmatter.status as string | undefined
+    const status = normalizeStatus(rawStatus, lane)
+
     return {
+      // Spread first so the normalized fields below always win — otherwise the
+      // raw frontmatter `status` would overwrite the canonical one.
+      ...frontmatter,
       taskId: (frontmatter.task_id as string) || taskId,
-      status: (frontmatter.status as string) || "unknown",
+      status,
+      rawStatus,
+      lane,
+      terminal: isTerminalStatus(status),
       complexity: frontmatter.complexity as string | undefined,
       track: frontmatter.track as string | undefined,
       slice: frontmatter.slice as string | undefined,
       title: frontmatter.title as string | undefined,
       createdAt: frontmatter.createdAt as string | undefined,
       updatedAt: frontmatter.updatedAt as string | undefined,
-      ...frontmatter,
+      // Frontmatter is snake_case; TaskStatus is camelCase. Without this
+      // mapping progressStage/Message/Pct were always undefined, which silently
+      // disabled the fs.watch progress-detection fallback in watchTask().
+      progressStage: frontmatter.progress_stage as string | undefined,
+      progressMessage: frontmatter.progress_message as string | undefined,
+      progressPct:
+        typeof frontmatter.progress_pct === "number" ? frontmatter.progress_pct : undefined,
     }
   } catch {
     return null
@@ -290,6 +444,10 @@ async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResul
     "---",
     `task_id: ${taskId}`,
     `sessionId: ${sessionId}`,
+    // agentType + title live in frontmatter (not only prose) so progress
+    // events can name the specialist and the work without re-reading the body.
+    `agentType: ${agentType}`,
+    `title: ${JSON.stringify(intent.slice(0, 120))}`,
     `complexity: ${complexity}`,
     "track: implementation",
     "slice: core",
@@ -358,24 +516,12 @@ async function createTaskFile(params: CreateTaskParams): Promise<CreateTaskResul
  * Searches tasks/todo/ first, then common locations.
  */
 async function readTaskStatus(taskId: string): Promise<TaskStatus | null> {
-  const candidates = [
-    path.join(TODO_DIR, `${taskId}.md`),
-    path.join(TASKS_ROOT, "done", `${taskId}.md`),
-  ]
-
-  let filePath: string | null = null
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      filePath = p
-      break
-    }
-  }
-
-  if (!filePath) return null
+  const resolved = resolveTaskFile(taskId)
+  if (!resolved) return null
 
   try {
-    const content = fs.readFileSync(filePath, "utf-8")
-    return parseTaskFile(content, taskId)
+    const content = fs.readFileSync(resolved.filePath, "utf-8")
+    return parseTaskFile(content, taskId, resolved.lane)
   } catch {
     return null
   }
@@ -484,17 +630,21 @@ export async function invokePmaNode(params: {
   // Watch for completion — return a promise
   return new Promise((resolve, reject) => {
     const unwatch = watchTask(taskId, send, (status: TaskStatus) => {
-      if (status.status === 'completed' || status.status === 'done') {
+      if (status.status === 'completed') {
         unwatch()
         // Collect evidence and link to execution node
         collectEvidence(taskId, executionId, send).catch(() => {})
         resolve({ taskId, evidence: status })
-      } else if (status.status === 'failed') {
+      } else if (status.status === 'failed' || status.status === 'cancelled') {
+        // 'cancelled' previously fell through and left this promise pending
+        // forever — a cancelled node would hang its whole DAG execution.
         unwatch()
         const errorMessage =
           typeof status.errorMessage === "string" && status.errorMessage.trim().length > 0
             ? status.errorMessage
-            : "Task failed"
+            : status.status === 'cancelled'
+              ? "Task cancelled"
+              : "Task failed"
         reject(new Error(errorMessage))
       }
     })
@@ -577,23 +727,20 @@ function updateTaskProgress(
   message: string,
   pct?: number,
 ): void {
-  const candidates = [
-    path.join(TODO_DIR, `${taskId}.md`),
-    path.join(TASKS_ROOT, "done", `${taskId}.md`),
-  ]
-
-  let filePath: string | null = null
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      filePath = p
-      break
-    }
+  if (!VALID_STAGES.has(stage)) {
+    console.warn(
+      `[nomadworks-bridge] Rejected unknown stage "${stage}" for ${taskId}. ` +
+        `Valid stages: ${[...VALID_STAGES].join(", ")}`,
+    )
+    return
   }
 
-  if (!filePath) {
+  const resolved = resolveTaskFile(taskId)
+  if (!resolved) {
     console.warn(`[nomadworks-bridge] Cannot update progress for ${taskId}: file not found`)
     return
   }
+  const { filePath, lane } = resolved
 
   try {
     const content = fs.readFileSync(filePath, "utf-8")
@@ -607,10 +754,21 @@ function updateTaskProgress(
     const frontmatter = YAML.parse(match[1])
     if (!frontmatter || typeof frontmatter !== "object") return
 
+    // The stage the agent reports IS the state transition — record it as
+    // `status` too, or the task stays "created" forever at 100% and no
+    // subscriber can ever tell that it finished.
+    const nextStatus = STAGE_TO_STATUS[stage]
+    const prevStatus = normalizeStatus(frontmatter.status, lane)
+
     frontmatter.progress_stage = stage
     frontmatter.progress_message = message
-    frontmatter.progress_pct = pct ?? frontmatter.progress_pct ?? 0
+    frontmatter.progress_pct =
+      pct ?? (stage === "complete" ? 100 : (frontmatter.progress_pct ?? 0))
+    frontmatter.status = nextStatus
     frontmatter.updatedAt = new Date().toISOString()
+    if (isTerminalStatus(nextStatus)) {
+      frontmatter.completedAt = frontmatter.completedAt || frontmatter.updatedAt
+    }
 
     // Rebuild the file with updated frontmatter
     const newFrontmatter = YAML.stringify(frontmatter, {
@@ -631,18 +789,25 @@ function updateTaskProgress(
       type: "agent_progress",
       taskId,
       agentType: (frontmatter.agentType as string) || "developer",
+      sessionId: (frontmatter.sessionId as string) || "",
+      title: (frontmatter.title as string) || "",
       stepId: `${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       stage,
       content: message,
-      pct: pct ?? frontmatter.progress_pct ?? 0,
-      timestamp: new Date().toISOString(),
+      pct: frontmatter.progress_pct,
+      status: nextStatus,
+      previousStatus: prevStatus,
+      statusChanged: prevStatus !== nextStatus,
+      terminal: isTerminalStatus(nextStatus),
+      lane,
+      timestamp: frontmatter.updatedAt,
     })
     progressBus.emit({
       taskId,
       type: "agent_progress",
       stage,
       message,
-      pct: pct ?? frontmatter.progress_pct ?? 0,
+      pct: frontmatter.progress_pct,
       rawPayload,
     })
 
@@ -650,18 +815,25 @@ function updateTaskProgress(
     const taskStatusPayload = JSON.stringify({
       type: "nomadworks_task_status",
       taskId,
-      status: frontmatter.status || "in_progress",
+      status: nextStatus,
+      previousStatus: prevStatus,
+      statusChanged: prevStatus !== nextStatus,
+      terminal: isTerminalStatus(nextStatus),
+      lane,
+      title: (frontmatter.title as string) || "",
+      agentType: (frontmatter.agentType as string) || "developer",
+      sessionId: (frontmatter.sessionId as string) || "",
       complexity: frontmatter.complexity,
       progress_stage: stage,
       progress_message: message,
-      progress_pct: pct ?? frontmatter.progress_pct ?? 0,
+      progress_pct: frontmatter.progress_pct,
       updatedAt: frontmatter.updatedAt,
     })
     progressBus.emit({
       taskId,
       type: "nomadworks_task_status",
       stage,
-      status: frontmatter.status as string | undefined,
+      status: nextStatus,
       rawPayload: taskStatusPayload,
     })
   } catch (err) {
@@ -799,23 +971,12 @@ async function writeClickflowResult(
   frontmatter: Record<string, unknown>,
   result: Record<string, unknown>,
 ): Promise<void> {
-  const candidates = [
-    path.join(TODO_DIR, `${taskId}.md`),
-    path.join(TASKS_ROOT, 'done', `${taskId}.md`),
-  ]
-
-  let filePath: string | null = null
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      filePath = p
-      break
-    }
-  }
-
-  if (!filePath) {
+  const resolved = resolveTaskFile(taskId)
+  if (!resolved) {
     console.warn(`[nomadworks-bridge] Cannot write clickflow_result for ${taskId}: file not found`)
     return
   }
+  const filePath = resolved.filePath
 
   try {
     const content = fs.readFileSync(filePath, 'utf-8')
@@ -876,8 +1037,10 @@ async function detectAndProcessClickflow(
  *   FALLBACK: fs.watch — detects changes from external editors, git operations,
  *             or agent writes that bypass updateTaskProgress().
  *
- * The hasDirectEmit flag prevents double-delivery when the event bus fires
- * first and fs.watch fires shortly after.
+ * De-duplication: the bus records the content it just wrote, and fs.watch
+ * skips any change whose content matches. A plain boolean cannot do this —
+ * two rapid bus emits leave the flag set for only one of the two fs.watch
+ * callbacks, so the second was delivered twice.
  *
  * Returns an unsubscribe function for cleanup.
  */
@@ -890,21 +1053,34 @@ function watchTask(
   const existing = activeWatchers.get(taskId)
   if (existing) return existing
 
-  const filePath = path.join(TODO_DIR, `${taskId}.md`)
-
-  if (!fs.existsSync(filePath)) {
-    console.warn(`[nomadworks-bridge] Cannot watch ${taskId}: file not found`)
+  const resolved = resolveTaskFile(taskId)
+  if (!resolved) {
+    console.warn(`[nomadworks-bridge] Cannot watch ${taskId}: file not found in any lane`)
     return () => { /* no-op */ }
   }
+  const filePath = resolved.filePath
+  let currentLane: TaskLane = resolved.lane
 
   let lastContent = fs.readFileSync(filePath, "utf-8")
-  let hasDirectEmit = false // bus fired; fs.watch should skip the next change
+  /** Content hashes already delivered via the bus — fs.watch skips these. */
+  const emittedContent = new Set<string>()
+
+  const rememberEmitted = () => {
+    try {
+      const now = fs.readFileSync(filePath, "utf-8")
+      emittedContent.add(now)
+      // Bound the set — only the most recent writes can race with fs.watch.
+      if (emittedContent.size > 8) {
+        emittedContent.delete(emittedContent.values().next().value as string)
+      }
+    } catch { /* file may have moved lanes */ }
+  }
 
   // ══════════════════════════════════════════════════════════════
   // PRIMARY PATH: subscribe to in-memory event bus
   // ══════════════════════════════════════════════════════════════
   const busUnsub = progressBus.subscribe(taskId, (event) => {
-    hasDirectEmit = true
+    rememberEmitted()
     send(event.rawPayload)
 
     if (event.stage === "complete") {
@@ -913,7 +1089,11 @@ function watchTask(
       streamCausalUpdate(taskId, sid, send).catch(() => {})
     }
 
-    if (event.type === "nomadworks_task_status" && (event.status === "completed" || event.status === "failed")) {
+    if (
+      event.type === "nomadworks_task_status" &&
+      event.status &&
+      isTerminalStatus(event.status as CanonicalTaskStatus)
+    ) {
       const sid = extractSessionIdFromFile(taskId)
       collectEvidence(taskId, sid, send).catch(() => {})
       streamCausalUpdate(taskId, sid, send).catch(() => {})
@@ -925,24 +1105,49 @@ function watchTask(
   // FALLBACK PATH: fs.watch for external edits
   // ══════════════════════════════════════════════════════════════
   const watcher = fs.watch(filePath, (eventType) => {
-    if (eventType !== "change") return
-    // If the event bus already handled this update, skip the fs.watch round-trip
-    if (hasDirectEmit) {
-      hasDirectEmit = false
-      return
-    }
-
     try {
-      if (!fs.existsSync(filePath)) {
-        send(JSON.stringify({ type: "nomadworks_task_status", taskId, status: "removed" }))
+      let content: string
+      if (fs.existsSync(filePath)) {
+        content = fs.readFileSync(filePath, "utf-8")
+      } else {
+        // The file is gone from this lane. That is almost always a lane MOVE
+        // (todo → blocked / done), which is a state transition, not a deletion —
+        // reporting "removed" here dropped every completion that closed by
+        // moving the file. Re-resolve before concluding anything.
+        const moved = resolveTaskFile(taskId)
+        if (!moved) {
+          send(JSON.stringify({
+            type: "nomadworks_task_status",
+            taskId,
+            status: "cancelled",
+            terminal: true,
+            reason: "task file removed from all lanes",
+          }))
+          unsubscribe()
+          return
+        }
+        currentLane = moved.lane
+        content = fs.readFileSync(moved.filePath, "utf-8")
+        const movedStatus = parseTaskFile(content, taskId, currentLane)
+        if (movedStatus) {
+          send(JSON.stringify({ type: "nomadworks_task_status", ...movedStatus, laneChanged: true }))
+          if (onStatus) onStatus(movedStatus)
+          if (movedStatus.terminal) {
+            collectEvidence(taskId, (movedStatus.sessionId as string) || "", send).catch(() => {})
+            streamCausalUpdate(taskId, (movedStatus.sessionId as string) || "", send).catch(() => {})
+            unsubscribe()
+          }
+        }
         return
       }
 
-      const content = fs.readFileSync(filePath, "utf-8")
+      if (eventType !== "change") return
+      // Already delivered through the event bus — skip the fs.watch round-trip.
+      if (emittedContent.has(content)) return
       if (content === lastContent) return
       lastContent = content
 
-      const status = parseTaskFile(content, taskId)
+      const status = parseTaskFile(content, taskId, currentLane)
       if (!status) return
 
       send(JSON.stringify({ type: "nomadworks_task_status", ...status }))
@@ -998,9 +1203,10 @@ function watchTask(
       }
       // ── End ClickFlow Prompt Detection ──────────────────────
 
-      if (status.status === "completed" || status.status === "failed") {
-        collectEvidence(taskId, status.sourceStepId as string || "", send).catch(() => {})
-        streamCausalUpdate(taskId, status.sourceStepId as string || "", send).catch(() => {})
+      if (status.terminal) {
+        const sid = (status.sessionId as string) || (status.sourceStepId as string) || ""
+        collectEvidence(taskId, sid, send).catch(() => {})
+        streamCausalUpdate(taskId, sid, send).catch(() => {})
         unsubscribe()
       }
     } catch {
@@ -1022,9 +1228,9 @@ function watchTask(
 /** Read a taskId's sessionId from disk (best-effort, for evidence collection). */
 function extractSessionIdFromFile(taskId: string): string {
   try {
-    const p = path.join(TODO_DIR, `${taskId}.md`)
-    if (!fs.existsSync(p)) return ""
-    const content = fs.readFileSync(p, "utf-8")
+    const resolved = resolveTaskFile(taskId)
+    if (!resolved) return ""
+    const content = fs.readFileSync(resolved.filePath, "utf-8")
     const fm = content.match(/^---\n([\s\S]*?)\n---/)
     if (!fm) return ""
     const parsed = YAML.parse(fm[1])
@@ -1043,12 +1249,9 @@ async function listTasks(sessionId?: string): Promise<TaskStatus[]> {
   const results: TaskStatus[] = []
   const seen = new Set<string>()
 
-  const directories = [
-    { dir: TODO_DIR, prefix: "todo" },
-    { dir: path.join(TASKS_ROOT, "done"), prefix: "done" },
-  ]
-
-  for (const { dir } of directories) {
+  // All three lanes — omitting `blocked` made blocked work invisible to every
+  // caller that lists tasks, including the concierge's own status reporting.
+  for (const { lane, dir } of TASK_LANES) {
     if (!fs.existsSync(dir)) continue
 
     const entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -1058,7 +1261,7 @@ async function listTasks(sessionId?: string): Promise<TaskStatus[]> {
       const filePath = path.join(dir, entry.name)
       try {
         const content = fs.readFileSync(filePath, "utf-8")
-        const status = parseTaskFile(content, entry.name.replace(".md", ""))
+        const status = parseTaskFile(content, entry.name.replace(".md", ""), lane)
 
         if (status && status.taskId && !seen.has(status.taskId)) {
           // When sessionId is provided, only include tasks whose frontmatter sessionId matches
@@ -1110,3 +1313,6 @@ export const bridge: NomadworksBridge = {
   updateTaskProgress,
   eventBus: progressBus,
 }
+
+/** Directories the bridge treats as task lanes (exported for diagnostics/tests). */
+export const TASK_LANE_DIRS = { todo: TODO_DIR, blocked: BLOCKED_DIR, done: DONE_DIR }
