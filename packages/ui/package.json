@@ -37,12 +37,14 @@
     "shiki": "^3.13.0",
     "solid-js": "^1.8.0",
     "solid-toast": "^0.5.0",
+    "three": "^0.172.0",
     "topojson-client": "^3.1.0",
     "virtua": "^0.48.8",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
+    "@types/three": "^0.172.0",
     "@types/topojson-client": "^3.1.5",
     "@vite-pwa/assets-generator": "^1.0.2",
     "autoprefixer": "10.4.21",

@@ -1,7 +1,7 @@
 import { Component } from "solid-js"
 import { Loader2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
+import TokenizinLogo3D from "./tokenizin-logo-3d"
 
 interface EmptyStateProps {
   onSelectFolder: () => void
@@ -17,7 +17,12 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
     <div class="empty-state h-full w-full">
       <div class="empty-state-content max-w-[500px] px-8 py-12 text-center">
         <div class="mb-8 flex justify-center">
-          <img src={TOKENIZIN_LOGO_URL} alt={t("emptyState.logoAlt")} class="empty-state-logo h-24 w-auto" loading="lazy" />
+          <TokenizinLogo3D
+            width={120}
+            height={120}
+            alt={t("emptyState.logoAlt")}
+            spin
+          />
         </div>
 
         <h1 class="empty-state-brand-title mb-3 text-3xl font-semibold">{t("emptyState.brandTitle")}</h1>

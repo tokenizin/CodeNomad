@@ -20,7 +20,7 @@ import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
-import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
+import TokenizinLogo3D from "./tokenizin-logo-3d"
 import StarWorldGlobe from "./starworld-globe"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -703,7 +703,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
           <div class="folder-home-hero text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={TOKENIZIN_LOGO_URL} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
+              <TokenizinLogo3D
+                width={160}
+                height={160}
+                class="folder-home-logo"
+                alt={t("folderSelection.logoAlt")}
+                spin
+              />
             </div>
             <h1 class="folder-home-brand-title mb-2 text-3xl font-semibold">{t("folderSelection.brandTitle")}</h1>
             <p class="folder-home-tagline text-base text-secondary max-w-xl mx-auto">{t("folderSelection.tagline")}</p>
