@@ -4,7 +4,8 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { getSessionRoot, providers, sessions, withSession } from "./session-state"
+import { getSessionFamily, getSessionRoot, providers, sessions, setSessionStatus, withSession } from "./session-state"
+import { mapSdkSessionStatus, type SessionStatus } from "../types/session"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -311,7 +312,134 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   )
 }
 
-async function abortSession(instanceId: string, sessionId: string): Promise<void> {
+type AbortSessionOutcome = "aborted" | "idle" | "failed"
+
+function getOpencodeErrorTag(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined
+  const record = error as Record<string, unknown>
+  if (typeof record._tag === "string") return record._tag
+  if (typeof record.name === "string") return record.name
+  return undefined
+}
+
+function isAbortNothingToCancel(error: unknown): boolean {
+  const tag = getOpencodeErrorTag(error)
+  return tag === "BadRequest" || tag === "InvalidRequestError"
+}
+
+function isLocallyActiveSessionStatus(status: SessionStatus | undefined): boolean {
+  return status === "working" || status === "compacting"
+}
+
+function collectSessionFamilyIds(instanceId: string, sessionId: string): string[] {
+  const root = getSessionRoot(instanceId, sessionId)
+  const rootId = root?.id ?? sessionId
+  const ids = new Set<string>([sessionId, rootId])
+
+  for (const member of getSessionFamily(instanceId, rootId)) {
+    ids.add(member.id)
+  }
+
+  return [...ids]
+}
+
+async function fetchOpenCodeSessionStatuses(
+  instanceId: string,
+): Promise<Record<string, unknown>> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return {}
+
+  const client = getRootClient(instanceId)
+  const result = await client.session.status()
+  if (result.data && typeof result.data === "object") {
+    return result.data as Record<string, unknown>
+  }
+  return {}
+}
+
+function isServerActiveSessionStatus(rawStatus: unknown): boolean {
+  if (!rawStatus || typeof rawStatus !== "object") return false
+  return mapSdkSessionStatus(rawStatus as Parameters<typeof mapSdkSessionStatus>[0]) === "working"
+}
+
+async function resolveSessionAbortTargets(instanceId: string, sessionId: string): Promise<string[]> {
+  const familyIds = collectSessionFamilyIds(instanceId, sessionId)
+  const familyIdSet = new Set(familyIds)
+  const root = getSessionRoot(instanceId, sessionId)
+  const rootId = root?.id ?? sessionId
+  const instanceSessions = sessions().get(instanceId)
+
+  const locallyActive = new Set<string>()
+  for (const id of familyIds) {
+    const status = instanceSessions?.get(id)?.status
+    if (isLocallyActiveSessionStatus(status)) {
+      locallyActive.add(id)
+    }
+  }
+
+  let serverActive = new Set<string>()
+  try {
+    const statusById = await fetchOpenCodeSessionStatuses(instanceId)
+    for (const id of familyIds) {
+      if (isServerActiveSessionStatus(statusById[id])) {
+        serverActive.add(id)
+      }
+    }
+  } catch (error) {
+    log.warn("resolveSessionAbortTargets: session.status unavailable, using local state only", {
+      instanceId,
+      sessionId,
+      error,
+    })
+  }
+
+  const targets = new Set<string>()
+  for (const id of locallyActive) targets.add(id)
+  for (const id of serverActive) targets.add(id)
+
+  const currentStatus = instanceSessions?.get(sessionId)?.status
+  if (isLocallyActiveSessionStatus(currentStatus)) {
+    targets.add(sessionId)
+    targets.add(rootId)
+  }
+
+  if (targets.size === 0) {
+    targets.add(sessionId)
+    targets.add(rootId)
+  }
+
+  const ordered: string[] = []
+  const pushTarget = (id: string) => {
+    if (!familyIdSet.has(id)) return
+    if (!ordered.includes(id)) ordered.push(id)
+  }
+
+  pushTarget(sessionId)
+  pushTarget(rootId)
+  for (const id of targets) {
+    if (id !== sessionId && id !== rootId) pushTarget(id)
+  }
+
+  return ordered
+}
+
+async function refreshSessionFamilyStatus(instanceId: string, sessionIds: string[]): Promise<void> {
+  if (sessionIds.length === 0) return
+
+  try {
+    const statusById = await fetchOpenCodeSessionStatuses(instanceId)
+    for (const id of sessionIds) {
+      const rawStatus = statusById[id]
+      if (rawStatus && typeof rawStatus === "object") {
+        setSessionStatus(instanceId, id, mapSdkSessionStatus(rawStatus as Parameters<typeof mapSdkSessionStatus>[0]))
+      }
+    }
+  } catch (error) {
+    log.warn("refreshSessionFamilyStatus failed", { instanceId, sessionIds, error })
+  }
+}
+
+async function abortSessionOnce(instanceId: string, sessionId: string): Promise<AbortSessionOutcome> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -319,47 +447,61 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 
   const client = getRootClient(instanceId)
 
-  log.info("abortSession", { instanceId, sessionId })
+  log.info("session.abort", { instanceId, sessionId })
+  const result = await client.session.abort({
+    sessionID: sessionId,
+    ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+  })
 
-  try {
-    log.info("session.abort", { instanceId, sessionId })
-    const result = await client.session.abort({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-    })
-
-    // OpenCode's /session/{id}/abort returns 400 (BadRequest/InvalidRequestError)
-    // when there's nothing active to cancel — the session already finished
-    // between the local "busy" check and the request reaching the server.
-    // The desired end state (not running) already holds, so treat it as a
-    // no-op success instead of surfacing a "Failed to abort" error.
-    const errorTag = (result as { error?: { _tag?: string } } | undefined)?.error?._tag
-    if (errorTag === "BadRequest" || errorTag === "InvalidRequestError") {
-      log.info("abortSession: nothing to abort, session already idle", { instanceId, sessionId })
-      return
+  if ((result as { error?: unknown } | undefined)?.error) {
+    const error = (result as { error: unknown }).error
+    if (isAbortNothingToCancel(error)) {
+      log.info("abortSessionOnce: nothing to abort, session already idle", { instanceId, sessionId })
+      return "idle"
     }
 
     await requestData(Promise.resolve(result), "session.abort")
-    log.info("abortSession complete", { instanceId, sessionId })
-  } catch (error) {
-    log.error("Failed to abort session", error)
-    throw error
+    return "failed"
+  }
+
+  await requestData(Promise.resolve(result), "session.abort")
+  log.info("abortSessionOnce complete", { instanceId, sessionId })
+  return "aborted"
+}
+
+async function abortSession(instanceId: string, sessionId: string): Promise<void> {
+  log.info("abortSession", { instanceId, sessionId })
+
+  const targets = await resolveSessionAbortTargets(instanceId, sessionId)
+  log.info("abortSession targets", { instanceId, sessionId, targets })
+
+  let anyAborted = false
+  let firstFailure: unknown = null
+
+  for (const targetId of targets) {
+    try {
+      const outcome = await abortSessionOnce(instanceId, targetId)
+      if (outcome === "aborted") anyAborted = true
+    } catch (error) {
+      firstFailure ??= error
+      log.error("Failed to abort session target", { instanceId, sessionId, targetId, error })
+    }
+  }
+
+  await refreshSessionFamilyStatus(instanceId, targets)
+
+  if (firstFailure) {
+    throw firstFailure
+  }
+
+  if (!anyAborted) {
+    log.info("abortSession: all targets already idle", { instanceId, sessionId, targets })
   }
 }
 
-/**
- * Pause a subagent session. A session created via a `subtask` handoff (product_manager →
- * developer, etc.) has no in-flight request of its own to cancel — the generation actually
- * runs inside its root ancestor's blocking `/session/{id}/message` call, as a nested tool
- * execution. Calling abort directly on the child returns 400 (nothing to cancel from its
- * own perspective) while it's still 409-busy underneath, so it can never be stopped that
- * way. Resolve to the root session that actually owns the request, and abort that instead.
- */
+/** Stop the current session and any busy members of its NomadWorks/subagent family. */
 async function pauseSession(instanceId: string, sessionId: string): Promise<void> {
-  const root = getSessionRoot(instanceId, sessionId)
-  const targetId = root?.id ?? sessionId
-  log.info("pauseSession", { instanceId, sessionId, targetId })
-  await abortSession(instanceId, targetId)
+  await abortSession(instanceId, sessionId)
 }
 
 async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
@@ -495,7 +637,7 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   // being streamed into. Deletion did NOT happen, so this must surface as a
   // real failure — not be swallowed — or the UI would show the message gone
   // while the server keeps writing to it.
-  const errorTag = (result as { error?: { _tag?: string } } | undefined)?.error?._tag
+  const errorTag = getOpencodeErrorTag((result as { error?: unknown } | undefined)?.error)
   if (errorTag === "SessionBusyError") {
     log.info("deleteMessage: session busy, message still streaming", { instanceId, sessionId, messageId })
     throw new OpencodeApiError("Can't delete this message — it's still being generated. Stop the session first, then try again.")

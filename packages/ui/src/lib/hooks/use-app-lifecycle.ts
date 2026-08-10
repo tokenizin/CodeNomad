@@ -5,7 +5,8 @@ import { registerInputShortcuts } from "../shortcuts/input"
 import { registerAgentShortcuts } from "../shortcuts/agent"
 import { registerEscapeShortcut, setEscapeStateChangeHandler } from "../shortcuts/escape"
 import { keyboardRegistry } from "../keyboard-registry"
-import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
+import { getSessions, pauseSession } from "../../stores/sessions"
+import { isSessionBusy as isSessionBusyByStatus } from "../../stores/session-status"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../logger"
@@ -91,7 +92,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         const session = sessions.find((s) => s.id === sessionId)
         if (!session) return false
 
-        return isSessionBusy(instance.id, sessionId)
+        return isSessionBusyByStatus(instance.id, sessionId)
       },
       async () => {
         if (options.showFolderSelection()) {
@@ -104,7 +105,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         if (!instance || !sessionId || sessionId === "info") return
 
         try {
-          await abortSession(instance.id, sessionId)
+          await pauseSession(instance.id, sessionId)
           log.info("Session aborted successfully", { instanceId: instance.id, sessionId })
         } catch (error) {
           log.error("Failed to abort session", error)
