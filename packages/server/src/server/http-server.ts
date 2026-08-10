@@ -56,6 +56,8 @@ import {
   resolveInstanceProxyBody,
   resolveInstanceProxyForwardContentType,
 } from "./instance-proxy-body.js"
+import { isModelRequest, proxyModelRequest } from "./model-throttle-proxy.js"
+import { ModelThrottle } from "../model-throttle.js"
 
 // reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
 const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
@@ -106,6 +108,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
+  const modelThrottle = new ModelThrottle()
 
   async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
     const handler = deps.starGuardJwtHandler
@@ -417,7 +420,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerNotificationRoutes(app, { notifyRegistry })
   registerChoiceRoutes(app, { eventBus: deps.eventBus })
   registerWikiLintRoutes(app)
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
+  app.get("/api/model-throttle/metrics", async (_request, reply) => {
+    reply.send({ config: modelThrottle.getConfig(), metrics: modelThrottle.getMetrics() })
+  })
   registerTokidappRoutes(app)
   registerRecordingRoutes(app)
   registerFileUploadRoutes(app)
@@ -503,6 +509,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 interface InstanceProxyDeps {
   workspaceManager: WorkspaceManager
   logger: Logger
+  modelThrottle: ModelThrottle
 }
 
 interface SideCarProxyDeps {
@@ -695,8 +702,9 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        pathSuffix: "",
-        logger: deps.logger,
+         pathSuffix: "",
+         logger: deps.logger,
+         modelThrottle: deps.modelThrottle,
       })
     }
 
@@ -708,8 +716,9 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        pathSuffix: request.params["*"] ?? "",
-        logger: deps.logger,
+         pathSuffix: request.params["*"] ?? "",
+         logger: deps.logger,
+         modelThrottle: deps.modelThrottle,
       })
     }
 
@@ -726,6 +735,7 @@ async function proxyWorkspaceRequest(args: {
   workspaceManager: WorkspaceManager
   logger: Logger
   pathSuffix?: string
+  modelThrottle: ModelThrottle
 }) {
   const { request, reply, workspaceManager, logger } = args
   const workspaceId = (request.params as { id: string }).id
@@ -824,6 +834,28 @@ async function proxyWorkspaceRequest(args: {
   const forwardBody = allowsBody ? resolveInstanceProxyBody(request) : undefined
   const forwardContentType = resolveInstanceProxyForwardContentType(request, forwardBody)
 
+  // OpenCode performs provider calls inside child processes. The prompt boundary
+  // is therefore the only process-wide gateway available to CodeNomad; local
+  // tools, DAG scheduling, approvals, and non-model routes remain untouched.
+  if (isModelRequest(normalizedSuffix)) {
+    try {
+      await proxyModelRequest({
+        request,
+        reply,
+        targetUrl,
+        body: forwardBody,
+        contentType: forwardContentType,
+        authHeader: instanceAuthHeader,
+        throttle: args.modelThrottle,
+        logger,
+      })
+    } catch (error) {
+      logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy throttled model request")
+      if (!reply.sent) reply.code(502).send({ error: "Workspace model request failed" })
+    }
+    return
+  }
+
   // Always pass an explicit body option for mutating methods.
   // Omitting `body` lets @fastify/reply-from fall back to `request.body`; with our
   // buffer parser + application/json that becomes JSON.stringify(Buffer) → OpenCode 400.
@@ -877,6 +909,7 @@ async function proxyWorkspaceRequest(args: {
     },
   })
 }
+
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   if (!pathSuffix || pathSuffix === "/") {

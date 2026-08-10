@@ -1,0 +1,21 @@
+scope: module
+parent: ../codemap.yml
+entrypoints:
+  - path: packages/server/src/model-throttle.ts
+    description: Process-wide provider/model request gateway and metrics.
+  - path: packages/server/src/server/model-throttle-proxy.ts
+    description: OpenCode prompt boundary adapter with bounded upstream retries.
+sources_of_truth:
+  - path: ../docs/architecture/codenomad-model-throttle.md
+    description: Gateway scope, defaults, configuration, and measurement contract.
+internals:
+  - path: packages/server/src/model-throttle.test.ts
+    description: Deterministic limiter and backpressure tests.
+  - path: packages/server/src/model-throttle-harness.ts
+    description: Fake-upstream before/after throughput harness.
+invariants:
+  - One limiter is shared by all workspaces in a CodeNomad server process.
+  - Budgets are keyed by exact provider/model and never inferred as provider quota.
+commands:
+  typecheck: npm run typecheck --workspace @neuralnomads/codenomad
+  build: npm run build --workspace @neuralnomads/codenomad
