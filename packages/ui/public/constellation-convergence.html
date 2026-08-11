@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Constellation Convergence — Prototype</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      :root { color-scheme: dark; }
+      html, body {
+        background-color: #04040a;
+        color: #f3f4f6;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        overflow: hidden;
+        height: 100vh;
+        width: 100vw;
+      }
+      #app { display: flex; flex-direction: column; height: 100vh; }
+      #canvas-wrap { flex: 1; min-height: 0; position: relative; }
+      canvas { display: block; width: 100%; height: 100%; }
+
+      .overlay {
+        position: absolute;
+        padding: 8px 12px;
+        background: rgba(0,0,0,0.6);
+        border: 1px solid rgba(255,255,255,0.1);
+        font-size: 11px;
+        font-family: 'SF Mono', Monaco, monospace;
+        backdrop-filter: blur(8px);
+      }
+      #phase-overlay { top: 12px; left: 12px; }
+      #phase-overlay .label {
+        color: #d4af37;
+        font-weight: 600;
+        font-size: 9px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      #phase-overlay .value { color: rgba(255,255,255,0.9); margin-top: 2px; }
+
+      #progress-overlay { top: 12px; right: 12px; text-align: right; }
+      #progress-overlay .label {
+        color: rgba(255,255,255,0.4);
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      #progress-overlay .pct { color: #d4af37; font-size: 14px; font-weight: 600; }
+      #progress-overlay .time { color: rgba(255,255,255,0.4); font-size: 10px; margin-top: 2px; }
+
+      #timeline-bar {
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 3px;
+        background: rgba(255,255,255,0.05);
+      }
+      #timeline-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #d4af37, #fff8e7);
+        transition: width 0.1s linear;
+        width: 0%;
+      }
+      #phase-ticks {
+        position: absolute;
+        bottom: 6px; left: 0; right: 0;
+        display: flex;
+        padding: 0 2px;
+      }
+      .tick {
+        font-size: 8px;
+        color: rgba(255,255,255,0.25);
+        font-family: monospace;
+        text-align: center;
+      }
+
+      #controls {
+        flex-shrink: 0;
+        padding: 12px 16px;
+        border-top: 1px solid rgba(255,255,255,0.1);
+        background: #06060e;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      button {
+        padding: 6px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn-primary {
+        background: #d4af37;
+        color: #000;
+      }
+      .btn-primary:hover { background: #e5c04a; }
+      .btn-secondary {
+        background: transparent;
+        color: rgba(255,255,255,0.8);
+        border: 1px solid rgba(255,255,255,0.2);
+      }
+      .btn-secondary:hover { background: rgba(255,255,255,0.05); }
+
+      .control-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: rgba(255,255,255,0.6);
+      }
+      .control-group label { font-family: monospace; }
+      .control-group input[type="range"] {
+        width: 120px;
+        accent-color: #d4af37;
+      }
+      .control-group input[type="text"] {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: #fff;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-family: monospace;
+        width: 200px;
+      }
+      .spacer { flex: 1; }
+      .info { font-size: 10px; color: rgba(255,255,255,0.3); }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+        <div id="phase-overlay" class="overlay">
+          <div class="label">Phase</div>
+          <div class="value" id="phase-name">Idle</div>
+        </div>
+        <div id="progress-overlay" class="overlay">
+          <div class="label">Progress</div>
+          <div class="pct" id="pct">0.0%</div>
+          <div class="time" id="time">0.0s / 75.0s</div>
+        </div>
+        <div id="timeline-bar"><div id="timeline-fill"></div></div>
+        <div id="phase-ticks">
+          <div class="tick" style="width:15%">0%</div>
+          <div class="tick" style="width:15%">15%</div>
+          <div class="tick" style="width:55%">30%</div>
+          <div class="tick" style="width:10%">85%</div>
+          <div class="tick" style="width:5%">95%</div>
+        </div>
+      </div>
+      <div id="controls">
+        <button class="btn-primary" id="play-btn">Pause</button>
+        <button class="btn-secondary" id="restart-btn">Restart</button>
+        <div class="control-group">
+          <label>Duration:</label>
+          <input type="range" id="duration-slider" min="15000" max="180000" step="5000" value="75000" />
+          <span id="duration-val">75s</span>
+        </div>
+        <div class="control-group">
+          <label>Particles:</label>
+          <input type="range" id="particle-slider" min="5000" max="60000" step="5000" value="25000" />
+          <span id="particle-val">25k</span>
+        </div>
+        <div class="control-group">
+          <label>Target:</label>
+          <input type="text" id="target-url" placeholder="Image URL (or empty for sphere)" />
+        </div>
+        <div class="spacer"></div>
+        <div class="info">Seedance v1.0 Pro Fast: 60–90s @ 480p / 5s clip</div>
+      </div>
+    </div>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js"
+      }
+    }
+    </script>
+    <script type="module">
+      import * as THREE from 'three'
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  CONFIG (mutable via controls)
+      // ═════════════════════════════════════════════════════════════════════
+      let ESTIMATED_DURATION = 75000 // ms
+      let PARTICLE_COUNT = 25000
+      let TARGET_URL = ''
+      const BRAND_COLOR = '#d4af37'
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  THREE.JS SCENE
+      // ═════════════════════════════════════════════════════════════════════
+      const canvas = document.getElementById('canvas')
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setClearColor(0x04040a, 1)
+
+      const scene = new THREE.Scene()
+      scene.fog = new THREE.FogExp2(0x04040a, 0.012)
+
+      const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200)
+      camera.position.set(0, 0, 35)
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  SHADERS
+      // ═════════════════════════════════════════════════════════════════════
+      const vertexShader = `
+        uniform float uProgress;
+        uniform float uTime;
+        uniform float uConvergence;
+        uniform float uBreath;
+        uniform float uGrace;
+        uniform vec3 uBrandColor;
+        uniform float uPixelRatio;
+
+        attribute vec3 aInitialPos;
+        attribute vec3 aTargetPos;
+        attribute float aSize;
+        attribute float aPhaseOffset;
+
+        varying float vAlpha;
+        varying vec3 vColor;
+
+        void main() {
+          float c = smoothstep(0.0, 1.0, uConvergence);
+
+          // Curved bezier path from initial → target
+          vec3 mid = (aInitialPos + aTargetPos) * 0.5;
+          vec3 diff = aTargetPos - aInitialPos;
+          vec3 perp = normalize(cross(diff, vec3(0.0, 1.0, 0.0) + vec3(0.001))) * 8.0;
+          float arc = sin(c * 3.14159) * (1.0 - c) * 0.6;
+          vec3 arcPos = mid + perp * arc;
+
+          vec3 p0 = aInitialPos;
+          vec3 p1 = arcPos;
+          vec3 p2 = aTargetPos;
+          vec3 bez = p0 * (1.0 - c) * (1.0 - c) + p1 * 2.0 * (1.0 - c) * c + p2 * c * c;
+
+          // Dormant drift (fades as convergence rises)
+          float driftAmt = (1.0 - c) * 3.0;
+          vec3 drift = vec3(
+            sin(uTime * 0.4 + aPhaseOffset) * driftAmt,
+            cos(uTime * 0.3 + aPhaseOffset) * driftAmt,
+            sin(uTime * 0.5 + aPhaseOffset * 2.0) * driftAmt
+          );
+          vec3 finalPos = bez + drift;
+
+          // Micro-jitter during Lock & Resolve (85–95%)
+          float jitter = smoothstep(0.8, 0.9, uProgress) * (1.0 - smoothstep(0.9, 0.95, uProgress)) * 0.15;
+          finalPos += vec3(
+            sin(uTime * 40.0 + aPhaseOffset * 7.0),
+            cos(uTime * 38.0 + aPhaseOffset * 5.0),
+            sin(uTime * 42.0 + aPhaseOffset * 9.0)
+          ) * jitter;
+
+          // Breath during hold
+          float breathScale = 1.0 + uBreath * 0.005 * sin(uTime * 1.5);
+          finalPos *= breathScale;
+
+          // Grace (overtime): push back out
+          finalPos += normalize(aInitialPos - aTargetPos + vec3(0.001)) * uGrace * 2.0;
+
+          vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+
+          float sizeBoost = 1.0 + c * 0.3;
+          gl_PointSize = aSize * sizeBoost * uPixelRatio * (300.0 / -mvPosition.z);
+          gl_Position = projectionMatrix * mvPosition;
+
+          vAlpha = 0.4 + c * 0.5;
+          vAlpha += smoothstep(0.85, 1.0, uProgress) * 0.1;
+          vAlpha -= uGrace * 0.15;
+          vAlpha = clamp(vAlpha, 0.1, 1.0);
+
+          vColor = uBrandColor;
+        }
+      `
+
+      const fragmentShader = `
+        varying float vAlpha;
+        varying vec3 vColor;
+
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          float dist = length(uv);
+          if (dist > 0.5) discard;
+
+          float soft = smoothstep(0.5, 0.0, dist);
+          float core = smoothstep(0.25, 0.0, dist) * 0.6 + soft * 0.4;
+
+          vec3 col = vColor;
+          col = mix(col, vec3(1.0, 0.97, 0.9), smoothstep(0.85, 1.0, vAlpha) * core * 0.5);
+
+          gl_FragColor = vec4(col, core * vAlpha);
+        }
+      `
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  POSITION GENERATION
+      // ═════════════════════════════════════════════════════════════════════
+      function generateInitialPositions(count) {
+        const arr = new Float32Array(count * 3)
+        for (let i = 0; i < count; i++) {
+          arr[i * 3] = (Math.random() - 0.5) * 80
+          arr[i * 3 + 1] = (Math.random() - 0.5) * 80
+          arr[i * 3 + 2] = (Math.random() - 0.5) * 80
+        }
+        return arr
+      }
+
+      function generateSphereTargets(count) {
+        const arr = new Float32Array(count * 3)
+        for (let i = 0; i < count; i++) {
+          const theta = Math.random() * Math.PI * 2
+          const phi = Math.acos(2 * Math.random() - 1)
+          const r = 12 + Math.random() * 1.5
+          arr[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+          arr[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta)
+          arr[i * 3 + 2] = r * Math.cos(phi)
+        }
+        return arr
+      }
+
+      function generateImageTargets(url, count) {
+        return new Promise((resolve) => {
+          const img = new Image()
+          img.crossOrigin = 'anonymous'
+          img.onload = () => {
+            const canvas2d = document.createElement('canvas')
+            const maxSize = 120
+            const scale = Math.min(maxSize / img.width, maxSize / img.height)
+            canvas2d.width = Math.floor(img.width * scale)
+            canvas2d.height = Math.floor(img.height * scale)
+            const ctx = canvas2d.getContext('2d')
+            ctx.drawImage(img, 0, 0, canvas2d.width, canvas2d.height)
+            const imageData = ctx.getImageData(0, 0, canvas2d.width, canvas2d.height)
+            const arr = new Float32Array(count * 3)
+            const { data, width: w, height: h } = imageData
+
+            for (let i = 0; i < count; i++) {
+              let x = 0, y = 0, brightness = 0
+              for (let a = 0; a < 10; a++) {
+                x = Math.floor(Math.random() * w)
+                y = Math.floor(Math.random() * h)
+                const idx = (y * w + x) * 4
+                brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3 / 255
+                if (brightness > 0.15) break
+              }
+              arr[i * 3] = (x / w - 0.5) * 20
+              arr[i * 3 + 1] = -(y / h - 0.5) * 20
+              arr[i * 3 + 2] = (brightness - 0.5) * 4
+            }
+            resolve(arr)
+          }
+          img.onerror = () => resolve(generateSphereTargets(count))
+          img.src = url
+        })
+      }
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  GEOMETRY + MATERIAL
+      // ═════════════════════════════════════════════════════════════════════
+      let geometry, material, points
+      let initialPositions, targetPositions
+
+      async function buildScene() {
+        if (points) {
+          scene.remove(points)
+          geometry.dispose()
+          material.dispose()
+        }
+
+        const count = PARTICLE_COUNT
+        initialPositions = generateInitialPositions(count)
+        targetPositions = TARGET_URL
+          ? await generateImageTargets(TARGET_URL, count)
+          : generateSphereTargets(count)
+
+        geometry = new THREE.BufferGeometry()
+
+        const sizes = new Float32Array(count)
+        const phaseOffsets = new Float32Array(count)
+        for (let i = 0; i < count; i++) {
+          sizes[i] = 1.5 + Math.random() * 2.5
+          phaseOffsets[i] = Math.random() * Math.PI * 2
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(initialPositions.slice(), 3))
+        geometry.setAttribute('aInitialPos', new THREE.BufferAttribute(initialPositions, 3))
+        geometry.setAttribute('aTargetPos', new THREE.BufferAttribute(targetPositions, 3))
+        geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1))
+        geometry.setAttribute('aPhaseOffset', new THREE.BufferAttribute(phaseOffsets, 1))
+
+        const brand = new THREE.Color(BRAND_COLOR)
+        material = new THREE.ShaderMaterial({
+          uniforms: {
+            uProgress: { value: 0 },
+            uTime: { value: 0 },
+            uConvergence: { value: 0 },
+            uBreath: { value: 0 },
+            uGrace: { value: 0 },
+            uBrandColor: { value: brand },
+            uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+          },
+          vertexShader,
+          fragmentShader,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        })
+
+        points = new THREE.Points(geometry, material)
+        scene.add(points)
+      }
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  ANIMATION LOOP
+      // ═════════════════════════════════════════════════════════════════════
+      let startTime = performance.now()
+      let isPlaying = true
+      let animationId = 0
+
+      function smoothstep(edge0, edge1, x) {
+        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
+        return t * t * (3 - 2 * t)
+      }
+
+      const phaseNameEl = document.getElementById('phase-name')
+      const pctEl = document.getElementById('pct')
+      const timeEl = document.getElementById('time')
+      const timelineFill = document.getElementById('timeline-fill')
+
+      function animate() {
+        animationId = requestAnimationFrame(animate)
+        if (!isPlaying) { renderer.render(scene, camera); return }
+
+        const elapsed = performance.now() - startTime
+        const rawProgress = (elapsed / ESTIMATED_DURATION) * 100
+        const progress = Math.min(rawProgress, 150)
+
+        const phaseName =
+          progress < 15 ? 'Dormant Drift' :
+          progress < 30 ? 'Attraction Wake' :
+          progress < 85 ? 'Convergence Surge' :
+          progress < 95 ? 'Lock & Resolve' :
+          progress < 100 ? 'Image Hold' :
+          'Overtime Grace'
+
+        phaseNameEl.textContent = phaseName
+        pctEl.textContent = progress.toFixed(1) + '%'
+        timeEl.textContent = `${(elapsed/1000).toFixed(1)}s / ${(ESTIMATED_DURATION/1000).toFixed(1)}s`
+        timelineFill.style.width = Math.min(progress, 100) + '%'
+
+        const convergence = smoothstep(30, 85, progress)
+        material.uniforms.uConvergence.value = convergence
+        material.uniforms.uProgress.value = progress / 100
+        material.uniforms.uTime.value = elapsed * 0.001
+        material.uniforms.uBreath.value = smoothstep(95, 100, progress)
+        material.uniforms.uGrace.value = Math.max(0, (progress - 100) / 50) * 0.25
+
+        // Camera orbit (slows as convergence rises)
+        const orbitAngle = elapsed * 0.0003 * (1 - convergence * 0.8)
+        const orbitRadius = 35 - convergence * 5
+        camera.position.x = Math.sin(orbitAngle) * orbitRadius
+        camera.position.z = Math.cos(orbitAngle) * orbitRadius
+        camera.position.y = Math.sin(elapsed * 0.0001) * 3 * (1 - convergence)
+        camera.lookAt(0, 0, 0)
+
+        renderer.render(scene, camera)
+      }
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  RESIZE
+      // ═════════════════════════════════════════════════════════════════════
+      function resize() {
+        const wrap = document.getElementById('canvas-wrap')
+        const w = wrap.clientWidth
+        const h = wrap.clientHeight
+        renderer.setSize(w, h, false)
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+      }
+      window.addEventListener('resize', resize)
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  CONTROLS
+      // ═════════════════════════════════════════════════════════════════════
+      document.getElementById('play-btn').addEventListener('click', (e) => {
+        isPlaying = !isPlaying
+        e.target.textContent = isPlaying ? 'Pause' : 'Play'
+      })
+
+      document.getElementById('restart-btn').addEventListener('click', () => {
+        startTime = performance.now()
+        if (!isPlaying) {
+          isPlaying = true
+          document.getElementById('play-btn').textContent = 'Pause'
+        }
+      })
+
+      const durationSlider = document.getElementById('duration-slider')
+      const durationVal = document.getElementById('duration-val')
+      durationSlider.addEventListener('input', (e) => {
+        ESTIMATED_DURATION = parseInt(e.target.value)
+        durationVal.textContent = (ESTIMATED_DURATION / 1000) + 's'
+      })
+
+      const particleSlider = document.getElementById('particle-slider')
+      const particleVal = document.getElementById('particle-val')
+      particleSlider.addEventListener('input', (e) => {
+        particleVal.textContent = (parseInt(e.target.value) / 1000) + 'k'
+      })
+      particleSlider.addEventListener('change', async (e) => {
+        PARTICLE_COUNT = parseInt(e.target.value)
+        await buildScene()
+        startTime = performance.now()
+      })
+
+      const targetUrlInput = document.getElementById('target-url')
+      targetUrlInput.addEventListener('change', async (e) => {
+        TARGET_URL = e.target.value.trim()
+        await buildScene()
+        startTime = performance.now()
+      })
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  INIT
+      // ═════════════════════════════════════════════════════════════════════
+      async function init() {
+        resize()
+        await buildScene()
+        startTime = performance.now()
+        animate()
+      }
+
+      init()
+    </script>
+  </body>
+</html>
