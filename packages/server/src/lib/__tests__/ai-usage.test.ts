@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from "bun:test"
-import { ollamaUsage, openAiUsage, estimateUsage } from "../ai-usage"
+import { ollamaUsage, openAiUsage, estimateUsage, resolveRequestId } from "../ai-usage"
 
 describe("ollamaUsage", () => {
   test("reads counts from a non-streamed body", () => {
@@ -212,6 +212,33 @@ describe("token details — the text/audio split", () => {
     // kinds apart even in principle. Neither may fabricate a breakdown.
     expect(ollamaUsage({ prompt_eval_count: 32, eval_count: 5 })?.details).toBeUndefined()
     expect(estimateUsage("hello", "hi").details).toBeUndefined()
+  })
+})
+
+describe("resolveRequestId — the idempotency key", () => {
+  test("a supplied key is used verbatim", () => {
+    // OpenAI's response id, so a redelivered response.done collides on the
+    // unique index rather than billing the same turn twice.
+    expect(resolveRequestId("openai_resp_C9xk2")).toBe("openai_resp_C9xk2")
+  })
+
+  test("a blank key never becomes the key", () => {
+    // This is the dangerous case, not the harmless one: a constant key lands
+    // the first row and then collides forever, and a collision is read as
+    // "already recorded" — so every turn after the first would bill nothing.
+    for (const blank of ["", "   ", null, undefined]) {
+      expect(resolveRequestId(blank)).not.toBe("")
+      expect(resolveRequestId(blank).trim().length).toBeGreaterThan(0)
+    }
+  })
+
+  test("generated keys differ between turns", () => {
+    const keys = new Set(Array.from({ length: 50 }, () => resolveRequestId(null)))
+    expect(keys.size).toBe(50)
+  })
+
+  test("two turns supplying different response ids stay distinct", () => {
+    expect(resolveRequestId("openai_resp_a")).not.toBe(resolveRequestId("openai_resp_b"))
   })
 })
 

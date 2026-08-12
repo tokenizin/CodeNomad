@@ -1778,10 +1778,18 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
           session.responseInProgress = false
           // Realtime reports usage on this event and nowhere else, under
           // input_tokens/output_tokens rather than prompt/completion.
+          //
+          // The two case labels above are the GA and legacy names for the same
+          // event, so only one should ever arrive — but "should" is not what a
+          // ledger runs on. Keying the row on OpenAI's own response id means a
+          // redelivery under either name collides on the unique index instead
+          // of billing the turn twice. Absent id falls back to a generated key:
+          // a constant one would swallow every turn after the first.
           meterVoiceTurn({
             ctx: session,
             modelId: REALTIME_MODEL,
             provider: "openai",
+            requestId: parsed.response?.id ? `openai_${parsed.response.id}` : undefined,
             usage: openAiUsage(parsed.response),
           })
           onResponseDone?.()

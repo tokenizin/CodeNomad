@@ -86,6 +86,20 @@ describe("every voice engine feeds the session-end hook equally", () => {
     }
   })
 
+  test("openai keys its row on the response id, not on chance", () => {
+    // `response.done` and `response.completed` are the GA and legacy names for
+    // one event. Only one should arrive — but if both ever did, a generated key
+    // would put two rows in the ledger for a single turn. The provider's own id
+    // is what lets the unique index reject the second.
+    const source = readFileSync(join(DIR, "openai-realtime.ts"), "utf8")
+    const [call] = source.match(/meterVoiceTurn\(\{[\s\S]*?\n\s*\}\)/g) ?? []
+    expect(call).toBeDefined()
+    expect(
+      /requestId:[^\n]*response[^\n]*\bid\b/.test(call!),
+      "openai-realtime.ts meters without keying on the response id, so a redelivered response.done would bill twice",
+    ).toBe(true)
+  })
+
   test("no engine reads the billed model off the session", () => {
     // Deepgram and local resolve their LLM per turn through a fallback chain,
     // so `session.lastModelUsed` is the *previous* turn's model at best. The

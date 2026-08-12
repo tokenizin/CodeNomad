@@ -172,6 +172,8 @@ export function meterVoiceTurn(args: {
   eventType?: AiUsageEventType
   /** Counts the provider reported, or null to fall back to an estimate. */
   usage?: ResolvedUsage | null
+  /** The provider's own id for this response, when it has one. See below. */
+  requestId?: string | null
   promptText?: string
   completionText?: string
 }): void {
@@ -185,6 +187,7 @@ export function meterVoiceTurn(args: {
     modelId: args.modelId,
     provider: args.provider,
     eventType: args.eventType,
+    requestId: args.requestId ?? undefined,
     usage,
   })
 }
@@ -202,6 +205,7 @@ export interface VoiceMeterInput {
   modelId: string
   provider?: string | null
   eventType?: AiUsageEventType
+  /** Idempotency key. Supply the provider's response id to make replays safe. */
   requestId?: string
   usage: ResolvedUsage
 }
@@ -211,13 +215,27 @@ function fk(id: string | null | undefined): string | null {
 }
 
 /**
+ * Settle on the idempotency key for a row.
+ *
+ * A key the provider owns — its response id — makes a redelivered event collide
+ * on the unique index instead of billing the turn twice. A blank one must fall
+ * back to a fresh key rather than being used as-is: a constant key lands the
+ * first row and then collides forever, and since a collision is treated as
+ * "already recorded", every turn after the first would silently bill nothing.
+ */
+export function resolveRequestId(supplied?: string | null): string {
+  const key = typeof supplied === 'string' ? supplied.trim() : ''
+  return key || `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
  * Record one voice turn's usage. Returns true when a row landed.
  *
  * Never throws: callers are inside an audio pipeline where an exception would
  * cut off the conversation mid-sentence.
  */
 export async function recordAiUsage(input: VoiceMeterInput): Promise<boolean> {
-  const requestId = input.requestId ?? `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  const requestId = resolveRequestId(input.requestId)
 
   try {
     const db = getTokidappDb()
