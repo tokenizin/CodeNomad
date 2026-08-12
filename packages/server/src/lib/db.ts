@@ -27,14 +27,21 @@ interface TokiDAPPMessageTable {
 
 interface TokiDAPPAudioRecordingTable {
   id: string
-  createdAt: Date
-  updatedAt: Date
   sessionId: string
+  userId: string
+  durationMs: number | null
+  mimeType: string
+  sampleRate: number | null
+  channels: number | null
   blobUrl: string
-  duration: number | null
-  format: string | null
-  status: string | null
-  userId: string | null
+  blobSize: number | null
+  blobHash: string | null
+  transcript: string | null
+  transcriptStatus: string | null
+  transcriptModel: string | null
+  summary: string | null
+  createdAt: Date
+  expiresAt: Date | null
 }
 
 interface TokiDAPPDeploymentTable {
@@ -50,12 +57,19 @@ interface TokiDAPPDeploymentTable {
 
 interface TokiDAPPAgentSessionTable {
   id: string
-  createdAt: Date
-  updatedAt: Date
-  sessionId: string
-  agentType: string | null
-  workspaceId: string | null
-  status: string | null
+  tokidappSessionId: string
+  agentType: string
+  status: string
+  model: string | null
+  provider: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  audioInputMs: number | null
+  audioOutputMs: number | null
+  connectedAt: Date
+  disconnectedAt: Date | null
+  reconnectCount: number | null
+  metadata: unknown | null
 }
 
 interface TokiDAPPTaskTable {

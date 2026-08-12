@@ -6,6 +6,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test"
 
 const updateWiki = mock(async () => "ok")
 const createRecording = mock(async () => {})
+const endAgentSession = mock(async () => {})
 
 mock.module("../codebase-tools", () => ({
   updateWikiFromSession: updateWiki,
@@ -13,6 +14,7 @@ mock.module("../codebase-tools", () => ({
 
 mock.module("../../../../lib/tokidapp-queries", () => ({
   createRecording,
+  endAgentSession,
 }))
 
 import {
@@ -44,6 +46,7 @@ describe("onVoiceSessionEnd", () => {
     resetVoiceSessionEndState()
     updateWiki.mockClear()
     createRecording.mockClear()
+    endAgentSession.mockClear()
   })
 
   test("writes wiki from transcript", () => {
@@ -106,13 +109,18 @@ describe("onVoiceSessionEnd", () => {
     const arg = createRecording.mock.calls[0][0] as {
       sessionId: string
       userId?: string
-      duration?: number
-      status?: string
+      durationMs?: number
+      mimeType?: string
     }
     expect(arg.sessionId).toBe("tokidapp_1")
     expect(arg.userId).toBe("user_1")
-    expect(arg.duration).toBe(12_000)
-    expect(arg.status).toBe("voice-session")
+    // Field names are the real column names. They previously read `duration`
+    // and `format`/`status`, which the table has no columns for — every insert
+    // raised 42703 and the caller's catch swallowed it.
+    expect(arg.durationMs).toBe(12_000)
+    expect(arg.mimeType).toBe("audio/pcm")
+    expect(arg).not.toHaveProperty("status")
+    expect(arg).not.toHaveProperty("duration")
   })
 
   test("recording is idempotent per sessionId", () => {
@@ -137,5 +145,69 @@ describe("onVoiceSessionEnd", () => {
       reason: "socket-close",
     })
     expect(updateWiki).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * The agent-session row is what per-session settlement prices. Leaving it open
+ * makes a finished session look live and its usage rows unsettleable.
+ */
+describe("onVoiceSessionEnd — agent session close", () => {
+  beforeEach(() => {
+    resetVoiceSessionEndState()
+    updateWiki.mockClear()
+    createRecording.mockClear()
+    endAgentSession.mockClear()
+  })
+
+  test("closes the agent session and forwards audio milliseconds", () => {
+    onVoiceSessionEnd({
+      sessionId: "voice_a1",
+      engine: "openai",
+      agentSessionId: "agent_1",
+      audioInputMs: 3100,
+      audioOutputMs: 900,
+    })
+    expect(endAgentSession).toHaveBeenCalledTimes(1)
+    expect(endAgentSession.mock.calls[0]).toEqual([
+      "agent_1",
+      { audioInputMs: 3100, audioOutputMs: 900 },
+    ] as never)
+  })
+
+  test("closes on socket-close too — a dropped tab still ends the session", () => {
+    onVoiceSessionEnd({
+      sessionId: "voice_a2",
+      engine: "deepgram",
+      agentSessionId: "agent_2",
+      reason: "socket-close",
+    })
+    expect(endAgentSession).toHaveBeenCalledTimes(1)
+  })
+
+  test("a fallback is not an end — the session continues on another engine", () => {
+    onVoiceSessionEnd({
+      sessionId: "voice_a3",
+      engine: "ornith",
+      agentSessionId: "agent_3",
+      reason: "fallback",
+    })
+    expect(endAgentSession).not.toHaveBeenCalled()
+  })
+
+  test("idempotent per agentSessionId across repeated teardowns", () => {
+    for (let i = 0; i < 3; i++) {
+      onVoiceSessionEnd({
+        sessionId: `voice_a4_${i}`,
+        engine: "local",
+        agentSessionId: "agent_4",
+      })
+    }
+    expect(endAgentSession).toHaveBeenCalledTimes(1)
+  })
+
+  test("no agentSessionId is a no-op, not a crash", () => {
+    onVoiceSessionEnd({ sessionId: "voice_a5", engine: "openai" })
+    expect(endAgentSession).not.toHaveBeenCalled()
   })
 })

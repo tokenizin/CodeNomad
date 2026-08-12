@@ -11,7 +11,7 @@
  */
 
 import { updateWikiFromSession } from "./codebase-tools"
-import { createRecording } from "../../../lib/tokidapp-queries"
+import { createRecording, endAgentSession } from "../../../lib/tokidapp-queries"
 
 export type VoiceEngineId = "openai" | "deepgram" | "ornith" | "local"
 
@@ -30,10 +30,15 @@ export interface VoiceSessionEndContext {
   userId?: string
   durationMs?: number
   reason?: VoiceSessionEndReason
+  /** TokiDAPPAgentSession row opened at connect. Closed here if present. */
+  agentSessionId?: string | null
+  audioInputMs?: number
+  audioOutputMs?: number
 }
 
 const wikiEnded = new Set<string>()
 const recordingEnded = new Set<string>()
+const agentSessionEnded = new Set<string>()
 
 export function joinVoiceTranscript(
   transcript?: string | string[] | null,
@@ -47,6 +52,7 @@ export function joinVoiceTranscript(
 export function resetVoiceSessionEndState(): void {
   wikiEnded.clear()
   recordingEnded.clear()
+  agentSessionEnded.clear()
 }
 
 /**
@@ -73,15 +79,27 @@ export function onVoiceSessionEnd(ctx: VoiceSessionEndContext): void {
       id: recordingId,
       sessionId: chatId,
       blobUrl: "",
-      duration: ctx.durationMs,
-      format: "audio/pcm",
-      status: "voice-session",
+      durationMs: ctx.durationMs,
+      mimeType: "audio/pcm",
       userId: ctx.userId,
     }).catch((err) => {
       console.error(
         "[voice-session-end] recording metadata failed:",
         (err as Error).message,
       )
+    })
+  }
+
+  // Stamp disconnectedAt so the session stops looking live and its usage rows
+  // become a closed set the settlement pass can price.
+  const agentId = ctx.agentSessionId?.trim()
+  if (agentId && !agentSessionEnded.has(agentId)) {
+    agentSessionEnded.add(agentId)
+    // A socket close is an ordinary tab close, not a failure — every teardown
+    // that reaches here is DISCONNECTED. ERROR is for engines that actually errored.
+    void endAgentSession(agentId, {
+      audioInputMs: ctx.audioInputMs,
+      audioOutputMs: ctx.audioOutputMs,
     })
   }
 }

@@ -166,29 +166,127 @@ export async function findRecordingById(id: string) {
     .executeTakeFirst()
 }
 
+/**
+ * Persist recording metadata.
+ *
+ * Column names here are the real ones (`durationMs`, `mimeType`) — an earlier
+ * version wrote `duration`/`format`/`status`/`updatedAt`, none of which exist
+ * on the table, so every insert raised 42703 and was swallowed by the caller's
+ * catch. `userId` is NOT NULL; when the caller doesn't have one it is read
+ * from the owning session rather than defaulted to null.
+ */
 export async function createRecording(data: {
   id: string
   sessionId: string
   blobUrl: string
-  duration?: number
-  format?: string
-  status?: string
+  durationMs?: number
+  mimeType?: string
   userId?: string
 }): Promise<void> {
   const db = getTokidappDb()
+
+  let userId = data.userId
+  if (!userId) {
+    const owner = await db
+      .selectFrom('TokiDAPPSession')
+      .select('userId')
+      .where('id', '=', data.sessionId)
+      .executeTakeFirst()
+    userId = owner?.userId
+  }
+  if (!userId) {
+    throw new Error(
+      `createRecording: no userId for session ${data.sessionId} (TokiDAPPAudioRecording.userId is NOT NULL)`,
+    )
+  }
+
   await db.insertInto('TokiDAPPAudioRecording')
     .values({
       id: data.id,
       sessionId: data.sessionId,
+      userId,
       blobUrl: data.blobUrl,
-      duration: data.duration ?? null,
-      format: data.format ?? null,
-      status: data.status ?? null,
-      userId: data.userId ?? null,
+      durationMs: data.durationMs ?? null,
+      mimeType: data.mimeType ?? 'audio/webm',
       createdAt: new Date(),
-      updatedAt: new Date(),
     })
     .execute()
+}
+
+// ─── Voice agent sessions ────────────────────────────────────
+// One row per realtime voice connection. Settlement is per-session, so a voice
+// session needs a row to attribute its tokens and audio milliseconds to.
+
+/**
+ * Open an agent-session row for a realtime voice connection.
+ * Returns the row id, or null if it could not be written — callers treat a
+ * missing row as "unattributed usage", never as a reason to drop the call.
+ */
+export type AgentSessionType =
+  | 'FULL_CONCIERGE'
+  | 'LIGHTWEIGHT'
+  | 'BUILDMATE'
+  | 'OPENCODE'
+  | 'OPENCODER'
+  | 'OPENAGENT'
+
+/** Terminal states are ERROR and DISCONNECTED — there is no COMPLETED. */
+export type AgentSessionStatus = 'ACTIVE' | 'IDLE' | 'ERROR' | 'DISCONNECTED'
+
+export async function createAgentSession(data: {
+  id: string
+  tokidappSessionId: string
+  agentType: AgentSessionType
+  model?: string | null
+  provider?: string | null
+}): Promise<string | null> {
+  try {
+    const db = getTokidappDb()
+    await db.insertInto('TokiDAPPAgentSession')
+      .values({
+        id: data.id,
+        tokidappSessionId: data.tokidappSessionId,
+        agentType: data.agentType,
+        status: 'ACTIVE',
+        model: data.model ?? null,
+        provider: data.provider ?? null,
+        connectedAt: new Date(),
+      })
+      .execute()
+    return data.id
+  } catch (err) {
+    console.error('[tokidapp-queries] createAgentSession failed:', (err as Error).message)
+    return null
+  }
+}
+
+/**
+ * Close an agent-session row. `disconnectedAt` is only ever set once — a
+ * reconnect that re-ends the same id must not overwrite the first close.
+ */
+export async function endAgentSession(
+  id: string,
+  data: {
+    status?: AgentSessionStatus
+    audioInputMs?: number
+    audioOutputMs?: number
+  } = {},
+): Promise<void> {
+  try {
+    const db = getTokidappDb()
+    await db.updateTable('TokiDAPPAgentSession')
+      .set({
+        status: data.status ?? 'DISCONNECTED',
+        disconnectedAt: new Date(),
+        ...(data.audioInputMs != null ? { audioInputMs: data.audioInputMs } : {}),
+        ...(data.audioOutputMs != null ? { audioOutputMs: data.audioOutputMs } : {}),
+      })
+      .where('id', '=', id)
+      .where('disconnectedAt', 'is', null)
+      .execute()
+  } catch (err) {
+    console.error('[tokidapp-queries] endAgentSession failed:', (err as Error).message)
+  }
 }
 
 export async function deleteRecordingsBySession(sessionId: string): Promise<void> {

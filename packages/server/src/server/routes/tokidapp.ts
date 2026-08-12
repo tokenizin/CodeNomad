@@ -1976,9 +1976,8 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           id: recording.id,
           sessionId: recording.sessionId,
           blobUrl: recording.blobUrl,
-          duration: recording.duration,
-          format: 'webm',
-          status: 'completed',
+          durationMs: recording.duration,
+          mimeType: 'audio/webm',
         })
       } catch (dbErr) {
         request.log.warn({ err: dbErr }, 'DB unavailable, recording persisted locally only')
