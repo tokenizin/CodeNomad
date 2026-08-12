@@ -26,6 +26,10 @@ import {
   createWhisperSTTConnection,
   type WhisperSTTConnection,
 } from "./whisper-stt"
+import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
 
 /** Tracks one active session per user — prevents two sessions for the same
  *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
@@ -650,9 +654,18 @@ function generateSessionId(): string {
   return `ornith_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 }
 
-function cleanupSession(sessionId: string): void {
+function cleanupSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+): void {
   const session = sessions.get(sessionId)
   if (session) {
+    onVoiceSessionEnd({
+      sessionId,
+      engine: "ornith",
+      transcript: session.transcript,
+      reason,
+    })
     try {
       session.tts?.close()
     } catch {
@@ -679,6 +692,13 @@ function cleanupSession(sessionId: string): void {
     }
   }
   clearLatency(sessionId)
+}
+
+export function removeOrnithSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+): void {
+  cleanupSession(sessionId, reason)
 }
 
 // ── WebSocket Connection ────────────────────────────────────
@@ -820,10 +840,6 @@ export function createOrnithSession(
 
 export function getOrnithSession(sessionId: string): OrnithSession | undefined {
   return sessions.get(sessionId)
-}
-
-export function removeOrnithSession(sessionId: string): void {
-  cleanupSession(sessionId)
 }
 
 // ── Audio Processing ────────────────────────────────────────

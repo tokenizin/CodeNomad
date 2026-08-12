@@ -35,6 +35,7 @@ import {
   cleanupAllOrnithSessions,
 } from "../../plugins/tokidapp/concierge/ornith-realtime"
 import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession, isEngineAvailable } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
+import type { VoiceSessionEndReason } from "../../plugins/tokidapp/concierge/voice-session-end"
 import type { VoiceEngine as FallbackVoiceEngine } from "../../plugins/tokidapp/concierge/voice-fallback"
 import {
   describeFallback,
@@ -494,6 +495,37 @@ function clearEngineAttempts(sessionId: string): void {
 }
 
 /**
+ * Tear down every server voice engine for this sessionId.
+ * Each end* is a no-op when that engine has no session. Wiki/recording run
+ * once via onVoiceSessionEnd (skipped when reason is `fallback`).
+ */
+function teardownAllVoiceEngines(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "socket-close",
+): void {
+  try {
+    endVoiceSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    endDeepgramSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    removeOrnithSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    endOrchestratorVoiceSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Drop one tier down the fallback chain after `from` failed.
  *
  * Replaces the previous one-shot OpenAI→local hop: each failure descends a
@@ -538,16 +570,7 @@ function descendVoiceEngine(
   markEngineAttempted(sessionId, next)
 
   // Tear down the failed engine before starting the next one.
-  try {
-    endVoiceSession(sessionId)
-  } catch {
-    /* ignore */
-  }
-  try {
-    endDeepgramSession(sessionId)
-  } catch {
-    /* ignore */
-  }
+  teardownAllVoiceEngines(sessionId, "fallback")
 
   // Tell the client which tier it is on now, before any audio arrives.
   socketRef.send(
@@ -745,7 +768,7 @@ async function startVoiceRealtimeSession(
   console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
   if (existingVoice && existingVoice !== voice) {
     console.log("[voice-ws] voice changed, ending existing session")
-    endVoiceSession(sessionId)
+    endVoiceSession(sessionId, "replace")
   }
   resetInputAudio(sessionId)
   const notifyReady = () => {
@@ -879,8 +902,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     }
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
-    endVoiceSession(sessionId)
-    endDeepgramSession(sessionId)
+    teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
   }
 
@@ -1097,18 +1119,10 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "voice_disconnect") {
-        // Full teardown of the voice session — close Realtime WS and/or Deepgram,
-        // clear audio buffers, and reset state. The WebSocket itself stays
-        // open so the client can re-connect with voice_start if needed.
-        if (activeEngine === "deepgram") {
-          endDeepgramSession(sessionId)
-        } else if (activeEngine === "local") {
-          endOrchestratorVoiceSession(sessionId)
-        } else if (activeEngine === "ornith") {
-          removeOrnithSession(sessionId)
-        } else {
-          endVoiceSession(sessionId)
-        }
+        // Full teardown of the voice session — close every engine, clear
+        // audio buffers, and reset state. The WebSocket itself stays open
+        // so the client can re-connect with voice_start if needed.
+        teardownAllVoiceEngines(sessionId, "complete")
         clearAudioBuffer(sessionId)
         socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
         return
@@ -2818,8 +2832,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     }
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
-    endVoiceSession(sessionId)
-    endDeepgramSession(sessionId)
+    teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
   }
 
@@ -2996,15 +3009,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_disconnect") {
-            if (activeEngine === "deepgram") {
-              endDeepgramSession(sessionId)
-            } else if (activeEngine === "local") {
-              endOrchestratorVoiceSession(sessionId)
-            } else if (activeEngine === "ornith") {
-              removeOrnithSession(sessionId)
-            } else {
-              endVoiceSession(sessionId)
-            }
+            teardownAllVoiceEngines(sessionId, "complete")
             clearAudioBuffer(sessionId)
             socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
             return

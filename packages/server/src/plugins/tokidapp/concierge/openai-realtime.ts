@@ -47,6 +47,10 @@ import {
   suggestRepairLinks,
 } from "./codebase-tools"
 import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
+import {
   createTask,
   checkTaskStatus,
   voiceAskUserPickOne,
@@ -2070,14 +2074,18 @@ export function startVoiceSession(sessionId: string): boolean {
   return false // caller should create a new session
 }
 
-export function endVoiceSession(sessionId: string) {
+export function endVoiceSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+) {
   const session = sessions.get(sessionId)
   if (session) {
-    // Fire-and-forget: update wiki with session transcript before closing
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
+    onVoiceSessionEnd({
+      sessionId,
+      engine: "openai",
+      transcript: session.transcript,
+      reason,
+    })
 
     // Remove listeners before closing so the old session's async close handler
     // doesn't accidentally delete a newly-created session with the same ID.
@@ -2110,7 +2118,7 @@ export function ensureSingleUserSession(sessionId: string): boolean {
   const existingSessionId = activeUserSessions.get(userId)
   if (existingSessionId && existingSessionId !== sessionId) {
     // Another session exists for this user — end it before creating a new one
-    endVoiceSession(existingSessionId)
+    endVoiceSession(existingSessionId, "replace")
   }
 
   activeUserSessions.set(userId, sessionId)

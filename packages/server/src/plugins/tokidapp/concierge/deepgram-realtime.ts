@@ -85,7 +85,11 @@ import { parseInput, resolveActions, formatParseSummary } from "./commands-route
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
-import { createMessage, createMessages, createRecording, findMessagesBySession } from "../../../lib/tokidapp-queries"
+import { createMessage, createMessages, findMessagesBySession } from "../../../lib/tokidapp-queries"
+import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 // knowledge-cache is used by the caller to build enrichedInstructions — no direct import needed here
 
@@ -1321,41 +1325,8 @@ export async function createDeepgramSession(
   /**
    * Destroy the session — close STT/TTS connections, clean up state.
    */
-  sessionWithMethods.destroy = () => {
-    console.log("[deepgram-realtime] Destroying session:", sessionId)
-    session.connected = false
-
-    // Save audio recording metadata to DB (fire-and-forget)
-    if (session.chatSessionId) {
-      const recordingId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-      createRecording({
-        id: recordingId,
-        sessionId: session.chatSessionId!,
-        blobUrl: "", // Will be populated when audio blob is uploaded
-        duration: Date.now() - session.createdAt,
-        format: "audio/pcm",
-        status: "voice-session",
-        userId: userId || undefined,
-      }).catch((err) => {
-        console.error("[deepgram-realtime] Failed to save recording:", err.message)
-      })
-    }
-
-    // Fire-and-forget: update wiki with session transcript
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
-
-    // Close connections
-    stt.close()
-    tts.close()
-
-    // Clean up buffer
-    audioBuffer.reset()
-
-    // Remove from sessions map
-    sessions.delete(sessionId)
+  sessionWithMethods.destroy = (reason: VoiceSessionEndReason = "complete") => {
+    finishDeepgramSession(sessionId, reason, userId)
   }
 
   return sessionWithMethods as DeepgramSession
@@ -1638,19 +1609,51 @@ export function getDeepgramSession(sessionId: string): DeepgramSession | undefin
   return sessions.get(sessionId)
 }
 
-export function endDeepgramSession(sessionId: string): void {
+function finishDeepgramSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+  userId?: string,
+): void {
   const session = sessions.get(sessionId)
-  if (session) {
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
-    session.connected = false
+  if (!session) return
+
+  onVoiceSessionEnd({
+    sessionId,
+    engine: "deepgram",
+    transcript: session.transcript,
+    chatSessionId: session.chatSessionId,
+    userId,
+    durationMs: Date.now() - session.createdAt,
+    reason,
+  })
+
+  session.connected = false
+  try {
     session.stt.close()
-    session.tts.close()
-    session.audioBuffer.reset()
-    sessions.delete(sessionId)
+  } catch {
+    /* ignore */
   }
+  try {
+    session.tts.close()
+  } catch {
+    /* ignore */
+  }
+  session.audioBuffer.reset()
+  sessions.delete(sessionId)
+}
+
+export function endDeepgramSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+): void {
+  const session = sessions.get(sessionId) as
+    | (DeepgramSession & { destroy?: (r?: VoiceSessionEndReason) => void })
+    | undefined
+  if (session?.destroy) {
+    session.destroy(reason)
+    return
+  }
+  finishDeepgramSession(sessionId, reason)
 }
 
 export function hasActiveDeepgramSession(sessionId: string): boolean {

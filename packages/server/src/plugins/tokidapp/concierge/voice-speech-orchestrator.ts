@@ -57,6 +57,10 @@ import type { RealtimeVoiceId } from "./realtime-voices"
 import type { DeepgramVoiceId } from "./deepgram-speech"
 import { sanitizeAsrText, sanitizeSpeechText, stripThinkingContent, isFillerTranscript, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import type WebSocket from "ws"
+import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
 
 // ── Engine Types ───────────────────────────────────────────────────────
 
@@ -556,6 +560,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const localePlan = planVoiceLocales({ locale, interpret })
   const piperProfile = pickPiperVoiceForLocale(voiceKey, locale === "auto" ? "en" : locale)
   const piperResolved = resolvePiperModelAndSynthesis(piperProfile.id)
+  const createdAt = Date.now()
 
   // Status management
   let currentStatus: VoiceSessionStatus = "connecting"
@@ -895,6 +900,14 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     },
 
     destroy() {
+      onVoiceSessionEnd({
+        sessionId,
+        engine: "local",
+        transcript,
+        chatSessionId,
+        durationMs: Date.now() - createdAt,
+        reason: localEndReasons.get(sessionId) ?? "complete",
+      })
       connected = false
       stt.close()
       tts.close()
@@ -965,6 +978,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
 /** Module-level greeting dedup for local engine. */
 const localGreetingPlayed = new Set<string>()
+const localEndReasons = new Map<string, VoiceSessionEndReason>()
 
 // ── Deepgram Engine Adapter ────────────────────────────────────────────
 
@@ -1246,11 +1260,19 @@ export function getVoiceSession(sessionId: string): VoiceSession | undefined {
 /**
  * Destroy a session and remove it from the active sessions map.
  */
-export function endVoiceSession(sessionId: string): void {
-  const session = activeSessions.get(sessionId)
-  if (session) {
-    session.destroy()
-    activeSessions.delete(sessionId)
+export function endVoiceSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+): void {
+  localEndReasons.set(sessionId, reason)
+  try {
+    const session = activeSessions.get(sessionId)
+    if (session) {
+      session.destroy()
+      activeSessions.delete(sessionId)
+    }
+  } finally {
+    localEndReasons.delete(sessionId)
   }
 }
 
