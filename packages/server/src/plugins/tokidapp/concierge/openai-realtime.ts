@@ -50,6 +50,8 @@ import {
   onVoiceSessionEnd,
   type VoiceSessionEndReason,
 } from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import { openAiUsage, meterVoiceTurn } from "../../../lib/ai-usage"
 import {
   createTask,
   checkTaskStatus,
@@ -159,6 +161,15 @@ interface RealtimeSession {
   heartbeatTimer?: ReturnType<typeof setInterval>
   /** Consecutive heartbeats emitted with no work in flight, to avoid nagging. */
   idleHeartbeats: number
+  /** StarWorld chat session this voice call belongs to. Held on the session —
+   *  not just taken as a create-time argument — because teardown happens in
+   *  endVoiceSession(), which only has the sessionId to work from. */
+  chatSessionId?: string
+  userId?: string
+  /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
+  agentSessionId?: string
+  /** Epoch ms at connect, for the session's billable wall-clock duration. */
+  connectedAt: number
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -1535,6 +1546,9 @@ export function createRealtimeSession(
       transcript: [],
       lastActivityAt: Date.now(),
       idleHeartbeats: 0,
+      chatSessionId,
+      userId,
+      connectedAt: Date.now(),
     }
   }
 
@@ -1565,6 +1579,9 @@ export function createRealtimeSession(
     sendToClient,
     lastActivityAt: Date.now(),
     idleHeartbeats: 0,
+    chatSessionId,
+    userId,
+    connectedAt: Date.now(),
   }
 
   /** Send response.create, guarding against concurrent responses */
@@ -1759,6 +1776,14 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
         case "response.done":
         case "response.completed":
           session.responseInProgress = false
+          // Realtime reports usage on this event and nowhere else, under
+          // input_tokens/output_tokens rather than prompt/completion.
+          meterVoiceTurn({
+            ctx: session,
+            modelId: REALTIME_MODEL,
+            provider: "openai",
+            usage: openAiUsage(parsed.response),
+          })
           onResponseDone?.()
           // With VAD, the server auto-resumes listening after response completes.
           // Notify client that voice is ready again.
@@ -1950,6 +1975,17 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
   })
 
   sessions.set(sessionId, session)
+
+  // Open the accounting row alongside the socket. Fire-and-forget: the
+  // conversation must not wait on, or fail because of, a database write.
+  void openVoiceAgentSession({
+    chatSessionId,
+    engine: "openai",
+    model: REALTIME_MODEL,
+  }).then((agentSessionId) => {
+    if (agentSessionId) session.agentSessionId = agentSessionId
+  })
+
   return session
 }
 
@@ -2084,6 +2120,10 @@ export function endVoiceSession(
       sessionId,
       engine: "openai",
       transcript: session.transcript,
+      chatSessionId: session.chatSessionId,
+      userId: session.userId,
+      agentSessionId: session.agentSessionId,
+      durationMs: Date.now() - session.connectedAt,
       reason,
     })
 

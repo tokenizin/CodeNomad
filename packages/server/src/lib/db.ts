@@ -72,6 +72,36 @@ interface TokiDAPPAgentSessionTable {
   metadata: unknown | null
 }
 
+interface AiUsageEventTable {
+  id: string
+  userId: string
+  tokidappSessionId: string | null
+  agentSessionId: string | null
+  modelId: string
+  provider: string | null
+  eventType: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** PROVIDER_REPORTED or ESTIMATED — measured counts vs guessed ones. */
+  usageSource: string
+  /**
+   * Text/audio split, null when the provider reported no breakdown. Null and 0
+   * mean different things to a pricer: null is "unknown, use the flat rate",
+   * 0 is "measured, and there was no audio".
+   */
+  promptTextTokens: number | null
+  promptAudioTokens: number | null
+  completionTextTokens: number | null
+  completionAudioTokens: number | null
+  /** Cached prompt tokens — a discounted *subset* of promptTokens, not an addition. */
+  promptCachedTokens: number | null
+  starXpCost: string | null
+  /** Idempotency key: a retried generation must not double-count. */
+  requestId: string
+  createdAt: Date
+}
+
 interface TokiDAPPTaskTable {
   id: string
   createdAt: Date
@@ -191,6 +221,7 @@ export interface TokiDAPPDB {
   TokiDAPPEventLog: TokiDAPPEventLogTable
   TokiDAPPPublishment: TokiDAPPPublishmentTable
   TokiDAPPFileArtifact: TokiDAPPFileArtifactTable
+  AiUsageEvent: AiUsageEventTable
 }
 
 export type DB = Kysely<TokiDAPPDB>

@@ -30,6 +30,12 @@ import {
   onVoiceSessionEnd,
   type VoiceSessionEndReason,
 } from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import {
+  ollamaUsage,
+  meterVoiceTurn,
+  type ResolvedUsage,
+} from "../../../lib/ai-usage"
 
 /** Tracks one active session per user — prevents two sessions for the same
  *  user across the voice WS and tokidapp WS (e.g. voice_abc + tokidapp_abc).
@@ -172,6 +178,12 @@ interface OrnithSession {
   tts?: LocalTTSConnection
   /** Local STT: whisper.cpp or faster-whisper (no OpenAI). */
   stt?: LocalSTTConnection | WhisperSTTConnection
+  /** Held on the session so teardown, which only has a sessionId, can attribute. */
+  chatSessionId?: string
+  userId?: string
+  /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
+  agentSessionId?: string
+  connectedAt: number
 }
 
 const sessions = new Map<string, OrnithSession>()
@@ -664,6 +676,10 @@ function cleanupSession(
       sessionId,
       engine: "ornith",
       transcript: session.transcript,
+      chatSessionId: session.chatSessionId,
+      userId: session.userId,
+      agentSessionId: session.agentSessionId,
+      durationMs: Date.now() - session.connectedAt,
       reason,
     })
     try {
@@ -708,6 +724,9 @@ export interface CreateOrnithSessionOptions {
   sendToClient?: (msg: string) => void
   locale?: "en" | "id" | "auto"
   interpret?: boolean
+  /** StarWorld chat session — what the conversation's usage is attributed to. */
+  chatSessionId?: string
+  userId?: string
 }
 
 export function createOrnithSession(
@@ -746,7 +765,20 @@ export function createOrnithSession(
     pendingResponseQueue: [],
     transcript: [],
     sendToClient: opts.sendToClient,
+    chatSessionId: opts.chatSessionId,
+    userId: opts.userId,
+    connectedAt: connectionStart,
   }
+
+  // Open the accounting row alongside the session. Fire-and-forget — voice
+  // must not wait on, or fail because of, a database write.
+  void openVoiceAgentSession({
+    chatSessionId: opts.chatSessionId,
+    engine: "ornith",
+    model: ORNITH_MODEL,
+  }).then((agentSessionId) => {
+    if (agentSessionId) session.agentSessionId = agentSessionId
+  })
 
   // Local Piper TTS — never OpenAI tts-1
   session.tts = createLocalTTSConnection(
@@ -1044,6 +1076,9 @@ async function handleResponseCreate(
     const reader = response.body.getReader()
     let fullResponse = ''
     let lineBuf = ''
+    // Ollama puts the token counts on the terminal `done` chunk only — read
+    // them as they stream past or they are gone once the loop exits.
+    let usage: ResolvedUsage | null = null
 
     while (true) {
       const { done, value } = await reader.read()
@@ -1067,6 +1102,7 @@ async function handleResponseCreate(
             }
             done?: boolean
           }
+          usage = ollamaUsage(parsed) ?? usage
           const content = parsed.message?.content
           if (content) {
             fullResponse += content
@@ -1096,6 +1132,15 @@ async function handleResponseCreate(
       }
     }
     
+    meterVoiceTurn({
+      ctx: session,
+      modelId: ORNITH_MODEL,
+      provider: "ollama",
+      usage,
+      promptText: lastUserMessage,
+      completionText: fullResponse,
+    })
+
     // Add response to transcript
     if (fullResponse) {
       session.transcript.push(`Assistant: ${fullResponse}`)

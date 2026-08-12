@@ -90,6 +90,12 @@ import {
   onVoiceSessionEnd,
   type VoiceSessionEndReason,
 } from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import {
+  openAiUsage,
+  meterVoiceTurn,
+  type ResolvedUsage,
+} from "../../../lib/ai-usage"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 // knowledge-cache is used by the caller to build enrichedInstructions — no direct import needed here
 
@@ -756,6 +762,8 @@ interface LLMResponse {
   toolCalls: ToolCall[]
   model: string
   latencyMs: number
+  /** Provider-reported token counts, when the provider reported any. */
+  usage?: ResolvedUsage | null
 }
 
 interface LLMProvider {
@@ -867,6 +875,7 @@ async function callLLMProvider(
       toolCalls,
       model: provider.model,
       latencyMs: Date.now() - startTime,
+      usage: openAiUsage(data),
     }
   } finally {
     clearTimeout(timeoutId)
@@ -993,6 +1002,8 @@ export interface DeepgramSession {
   chatSessionId?: string
   /** Optional enriched instructions appended to system prompt. */
   enrichedInstructions?: string
+  /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
+  agentSessionId?: string
 }
 
 const sessions = new Map<string, DeepgramSession>()
@@ -1238,6 +1249,16 @@ export async function createDeepgramSession(
   sessions.set(sessionId, session)
   console.log("[deepgram-realtime] Session created:", sessionId, "voice:", voice)
 
+  // Open the accounting row alongside the session. Fire-and-forget.
+  // model stays null: this engine resolves its LLM per turn through a fallback
+  // chain, so there is no single model to name at connect.
+  void openVoiceAgentSession({
+    chatSessionId,
+    engine: "deepgram",
+  }).then((agentSessionId) => {
+    if (agentSessionId) session.agentSessionId = agentSessionId
+  })
+
   // Play greeting
   if (!voiceGreetingPlayedForChatSession.has(greetKey)) {
     voiceGreetingPlayedForChatSession.add(greetKey)
@@ -1401,6 +1422,17 @@ async function processUserMessage(
     session.llmCallCount++
     session.lastModelUsed = llmResponse.model
 
+    // Model comes off the response, not the session — the fallback chain may
+    // have landed on a different provider than the previous turn did.
+    meterVoiceTurn({
+      ctx: session,
+      modelId: llmResponse.model,
+      provider: "deepgram",
+      usage: llmResponse.usage,
+      promptText: llmMessages.map((m) => m.content).join("\n"),
+      completionText: llmResponse.content,
+    })
+
     // Process tool calls if any
     if (llmResponse.toolCalls.length > 0) {
       // Add assistant message with tool calls to conversation
@@ -1506,6 +1538,17 @@ async function processUserMessage(
 
       const followUpResponse = await callLLMWithFallback(followUpMessages, tools)
       session.llmCallCount++
+
+      // The post-tool synthesis is a second billable generation, not part of the first.
+      meterVoiceTurn({
+        ctx: session,
+        modelId: followUpResponse.model,
+        provider: "deepgram",
+        eventType: "TOOL_CALL",
+        usage: followUpResponse.usage,
+        promptText: followUpMessages.map((m) => m.content).join("\n"),
+        completionText: followUpResponse.content,
+      })
 
       if (followUpResponse.content) {
         session.conversation.push({
@@ -1623,6 +1666,7 @@ function finishDeepgramSession(
     transcript: session.transcript,
     chatSessionId: session.chatSessionId,
     userId,
+    agentSessionId: session.agentSessionId,
     durationMs: Date.now() - session.createdAt,
     reason,
   })

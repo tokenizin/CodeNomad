@@ -61,6 +61,13 @@ import {
   onVoiceSessionEnd,
   type VoiceSessionEndReason,
 } from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import {
+  ollamaUsage,
+  openAiUsage,
+  meterVoiceTurn,
+  type ResolvedUsage,
+} from "../../../lib/ai-usage"
 
 // ── Engine Types ───────────────────────────────────────────────────────
 
@@ -187,6 +194,8 @@ interface LLMResponse {
   toolCalls: ToolCall[]
   model: string
   latencyMs: number
+  /** Provider-reported token counts, when the provider reported any. */
+  usage?: ResolvedUsage | null
 }
 
 // ── Environment Configuration ──────────────────────────────────────────
@@ -301,6 +310,7 @@ async function callLLMProvider(
         toolCalls: [],
         model: provider.model,
         latencyMs: Date.now() - startTime,
+        usage: ollamaUsage(data),
       }
     }
 
@@ -361,6 +371,7 @@ async function callLLMProvider(
       toolCalls,
       model: provider.model,
       latencyMs: Date.now() - startTime,
+      usage: openAiUsage(data),
     }
   } finally {
     clearTimeout(timeoutId)
@@ -561,6 +572,16 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
   const piperProfile = pickPiperVoiceForLocale(voiceKey, locale === "auto" ? "en" : locale)
   const piperResolved = resolvePiperModelAndSynthesis(piperProfile.id)
   const createdAt = Date.now()
+
+  // Accounting row for this conversation, opened alongside the session.
+  // Fire-and-forget: voice must not wait on, or fail because of, a DB write.
+  // model stays null: like deepgram, this engine picks its LLM per turn through
+  // the shared fallback chain, so no single model is true at connect. (The
+  // Piper value in scope here is the TTS voice, not the model being billed.)
+  let agentSessionId: string | undefined
+  void openVoiceAgentSession({ chatSessionId, engine: "local" }).then((id) => {
+    if (id) agentSessionId = id
+  })
 
   // Status management
   let currentStatus: VoiceSessionStatus = "connecting"
@@ -781,6 +802,17 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
         allowCloud: !LOCAL_VOICE_NO_CLOUD ? true : false,
       })
 
+      // Model comes off the response: this chain can fall through from local
+      // Ollama to a cloud model mid-conversation, and the row must say which ran.
+      meterVoiceTurn({
+        ctx: { chatSessionId, userId: params.userId, agentSessionId },
+        modelId: llmResponse.model,
+        provider: llmResponse.model.includes("gpt") ? "openai" : "ollama",
+        usage: llmResponse.usage,
+        promptText: llmMessages.map((m) => m.content).join("\n"),
+        completionText: llmResponse.content,
+      })
+
       if (llmResponse.content) {
         const cleanContent = stripThinkingContent(llmResponse.content)
         if (!cleanContent.trim()) {
@@ -905,6 +937,8 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
         engine: "local",
         transcript,
         chatSessionId,
+        userId: params.userId,
+        agentSessionId,
         durationMs: Date.now() - createdAt,
         reason: localEndReasons.get(sessionId) ?? "complete",
       })
@@ -1126,6 +1160,8 @@ function createOrnithAdapter(params: CreateVoiceSessionParams): VoiceSession {
       sendToClient,
       locale: params.locale || "en",
       interpret: Boolean(params.interpret),
+      chatSessionId: params.chatSessionId,
+      userId: params.userId,
     },
   )
 
