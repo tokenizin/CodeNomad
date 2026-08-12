@@ -1960,14 +1960,18 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       }
 
       const safeSessionId: string = typeof sessionId === "string" ? sessionId : "unknown"
-      const safeDuration: number = typeof duration === "number" ? duration : typeof duration === "string" ? Number(duration) || 0 : 0
+      // `duration` on the wire is MILLISECONDS — same contract the portal's own
+      // /api/tokidapp/recordings route uses, where it is assigned straight to
+      // durationMs. Clients that count in seconds must convert before posting;
+      // this route deliberately does not guess.
+      const safeDurationMs: number = typeof duration === "number" ? duration : typeof duration === "string" ? Number(duration) || 0 : 0
 
       // Build recording object
       const recording = {
         id: crypto.randomUUID(),
         blobUrl: rawBlobUrl as string,
         sessionId: safeSessionId,
-        duration: safeDuration,
+        durationMs: safeDurationMs,
       }
 
       // Persist to DB (non-fatal if unreachable)
@@ -1976,7 +1980,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           id: recording.id,
           sessionId: recording.sessionId,
           blobUrl: recording.blobUrl,
-          durationMs: recording.duration,
+          durationMs: recording.durationMs,
           mimeType: 'audio/webm',
         })
       } catch (dbErr) {
@@ -1988,7 +1992,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
         id: recording.id,
         sessionId: recording.sessionId,
         blobUrl: recording.blobUrl,
-        duration: recording.duration,
+        durationMs: recording.durationMs,
         createdAt: new Date().toISOString(),
       })
 

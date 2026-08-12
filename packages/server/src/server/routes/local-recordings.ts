@@ -6,7 +6,9 @@ export interface LocalRecording {
   id: string
   sessionId: string
   blobUrl: string
-  duration: number
+  /** Milliseconds — same unit and name as the DB branch of GET /recordings,
+   *  so a client can't tell the two apart by field name or scale. */
+  durationMs: number
   createdAt: string
 }
 
