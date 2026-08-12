@@ -289,7 +289,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/quick-login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/tokidapp/status", "/api/tokidapp/files/proxy", "/api/client-connections/pong"])
     const publicApiPrefixes = ["/api/tokidapp/files/local/", "/api/tokidapp/files/generated/"]
-    const publicPagePaths = new Set(["/login", "/auth/starguard"])
+    const publicPagePaths = new Set(["/login", "/auth/starguard", "/constellation"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
     }
@@ -363,6 +363,20 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     reply.code(404).send({ message: "UI bundle missing" })
+  })
+
+  // ── Constellation Convergence — 3D particle animation prototype ───────
+  // Public route (no auth gate) serving the standalone HTML prototype.
+  // The file lives in the UI's public dir and is copied to dist by Vite.
+  // Accessible at /constellation on the tunnel (codenomad.tokenizin.com/constellation).
+  app.get("/constellation", async (request, reply) => {
+    const uiDir = deps.uiStaticDir
+    const htmlPath = path.join(uiDir, "constellation-convergence.html")
+    if (uiDir && fs.existsSync(htmlPath)) {
+      reply.type("text/html").send(fs.readFileSync(htmlPath, "utf-8"))
+      return
+    }
+    reply.code(404).send({ message: "Constellation prototype not found in UI bundle" })
   })
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
