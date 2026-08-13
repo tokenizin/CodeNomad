@@ -102,6 +102,20 @@ interface AiUsageEventTable {
   createdAt: Date
 }
 
+/** Narrow, read-only projection used by the machine-to-machine API. */
+export interface AgentApiKeyRecord {
+  id: string
+  label: string
+  hashedKey: string
+  scopes: string[]
+  allowedAgents: string[]
+  revokedAt: Date | null
+}
+
+interface AgentApiKeyTable extends AgentApiKeyRecord {
+  createdBy: string
+}
+
 interface TokiDAPPTaskTable {
   id: string
   createdAt: Date
@@ -206,6 +220,7 @@ interface TokiDAPPFileArtifactTable {
 // ─── Database Interface ──────────────────────────────────────
 
 export interface TokiDAPPDB {
+  AgentApiKey: AgentApiKeyTable
   TokiDAPPSession: TokiDAPPSessionTable
   TokiDAPPMessage: TokiDAPPMessageTable
   TokiDAPPAudioRecording: TokiDAPPAudioRecordingTable
@@ -252,4 +267,16 @@ export async function closeDb(): Promise<void> {
     await _db.destroy()
     _db = null
   }
+}
+
+/**
+ * Look up an API key on every request.  This deliberately does not cache the
+ * result: revocation must take effect on the next request.
+ */
+export async function findActiveAgentApiKeys(): Promise<AgentApiKeyRecord[]> {
+  return getTokidappDb()
+    .selectFrom("AgentApiKey")
+    .select(["id", "label", "hashedKey", "scopes", "allowedAgents", "revokedAt"])
+    .where("revokedAt", "is", null)
+    .execute()
 }

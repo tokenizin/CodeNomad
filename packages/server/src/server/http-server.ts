@@ -58,6 +58,8 @@ import {
 } from "./instance-proxy-body.js"
 import { isModelRequest, proxyModelRequest } from "./model-throttle-proxy.js"
 import { ModelThrottle } from "../model-throttle.js"
+import { AgentSessionDispatcher, OpenCodeAgentAdapter } from "../lib/agent-session-dispatch.js"
+import { registerAgentSessionRoutes } from "./routes/agent-sessions.js"
 
 // reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
 const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
@@ -109,6 +111,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
   const modelThrottle = new ModelThrottle()
+  const agentSessionDispatcher = new AgentSessionDispatcher(
+    new OpenCodeAgentAdapter(deps.workspaceManager),
+    undefined,
+    deps.logger.child({ component: "agent-sessions" }),
+  )
 
   async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
     const handler = deps.starGuardJwtHandler
@@ -162,7 +169,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      const pathOnly = (request.raw.url ?? request.url).split("?")[0] ?? ""
+      if (pathOnly === "/api/agent-sessions" || pathOnly.startsWith("/api/agent-sessions/")) {
+        apiLogger.trace({ ...base, params: request.params, query: request.query, body: "<redacted>" }, "HTTP request payload")
+      } else {
+        apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      }
     }
     done()
   })
@@ -310,6 +322,13 @@ export function createHttpServer(deps: HttpServerDeps) {
       }
     }
 
+    // Machine-dispatch routes perform their complete API-key gate in the route
+    // so rejected/malformed requests also produce exactly one audit event.
+    // Human cookies are intentionally not accepted by that route.
+    if (pathname === "/api/agent-sessions" || pathname.startsWith("/api/agent-sessions/")) {
+      return
+    }
+
     const session = deps.authManager.getSessionFromRequest(request)
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
@@ -434,6 +453,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerNotificationRoutes(app, { notifyRegistry })
   registerChoiceRoutes(app, { eventBus: deps.eventBus })
   registerWikiLintRoutes(app)
+  registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
   app.get("/api/model-throttle/metrics", async (_request, reply) => {
     reply.send({ config: modelThrottle.getConfig(), metrics: modelThrottle.getMetrics() })
