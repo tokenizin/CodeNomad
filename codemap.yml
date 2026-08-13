@@ -1,6 +1,8 @@
 scope: module
 parent: ../codemap.yml
 entrypoints:
+  - path: packages/server/src/server/routes/agent-sessions.ts
+    description: Scoped machine-authenticated async agent session create/poll API.
   - path: packages/server/src/model-throttle.ts
     description: Process-wide provider/model request gateway and metrics.
   - path: packages/server/src/server/model-throttle-proxy.ts
@@ -9,6 +11,14 @@ sources_of_truth:
   - path: ../docs/architecture/codenomad-model-throttle.md
     description: Gateway scope, defaults, configuration, and measurement contract.
 internals:
+  - path: packages/server/src/lib/agent-api-key-auth.ts
+    description: Per-request salted scrypt API-key verification and scope helpers.
+  - path: packages/server/src/lib/agent-session-dispatch.ts
+    description: Bounded async dispatch registry and fakeable OpenCode adapter.
+  - path: packages/server/src/lib/db.ts
+    description: Shared Kysely/pg helper with narrow AgentApiKey projection lookup.
+  - path: packages/server/__tests__/agent-sessions.test.ts
+    description: Deterministic auth, lifecycle, registry-bound, and redaction tests.
   - path: packages/server/src/model-throttle.test.ts
     description: Deterministic limiter and backpressure tests.
   - path: packages/server/src/model-throttle-harness.ts
