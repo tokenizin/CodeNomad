@@ -14,7 +14,7 @@ const BrandedEmptyState: Component<BrandedEmptyStateProps> = (props) => {
   const { t } = useI18n()
 
   return (
-    <div class={`empty-state ${props.class ?? ""}`.trim()}>
+    <div class={`empty-state ${isPrestixSilo() ? "silo-prestix " : ""}${props.class ?? ""}`.trim()}>
       <div class="empty-state-content">
         <div class="flex flex-col items-center gap-3 mb-6">
           <TokenizinLogo3D

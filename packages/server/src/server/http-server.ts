@@ -1783,7 +1783,7 @@ function getBlockedSideCarRequestHeaders(): Set<string> {
 }
 
 function injectUiRuntimeConfig(html: string): string {
-  const script = `<script>window.__CODENOMAD_AUTH_PROVIDER__=${JSON.stringify(resolveAuthProvider())};window.__STARGUARD_PUBLIC_URL__=${JSON.stringify(resolveStarGuardPublicUrl())};</script>`
+  const script = `<script>window.__CODENOMAD_AUTH_PROVIDER__=${JSON.stringify(resolveAuthProvider())};window.__STARGUARD_PUBLIC_URL__=${JSON.stringify(resolveStarGuardPublicUrl())};(function(){var p=window.__CODENOMAD_AUTH_PROVIDER__;var h=(location.hostname||"").toLowerCase();var prestix=p==="cloudflare-access"||h==="prestix.vip"||h.endsWith(".prestix.vip");document.documentElement.dataset.silo=prestix?"prestix":"tokenizin";})();</script>`
   if (html.includes("</head>")) {
     return html.replace("</head>", `${script}</head>`)
   }

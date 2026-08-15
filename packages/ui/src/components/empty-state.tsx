@@ -15,7 +15,7 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
   const shortcut = `${modifier}+N`
 
   return (
-    <div class="empty-state h-full w-full">
+    <div class={`empty-state h-full w-full${isPrestixSilo() ? " silo-prestix" : ""}`}>
       <div class="empty-state-content max-w-[500px] px-8 py-12 text-center">
         <div class="mb-8 flex justify-center">
           <TokenizinLogo3D

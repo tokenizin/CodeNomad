@@ -614,7 +614,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   return (
     <>
       <div
-        class="folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative"
+        class={`folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative${isPrestixSilo() ? " silo-prestix" : ""}`}
         ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
