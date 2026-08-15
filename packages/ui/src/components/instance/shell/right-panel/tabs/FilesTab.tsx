@@ -1,7 +1,7 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
+import { Copy, RefreshCw, Save, Search, Upload, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 import { ImagePreview } from "../ImagePreview"
@@ -27,11 +27,15 @@ export interface BrowserSelectedBase64 {
   path: string
 }
 
+export interface BrowserFileNode extends FileNode {
+  modifiedAt?: string
+}
+
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
 
   browserPath: Accessor<string>
-  browserEntries: Accessor<FileNode[] | null>
+  browserEntries: Accessor<BrowserFileNode[] | null>
   browserLoading: Accessor<boolean>
   browserError: Accessor<string | null>
 
@@ -50,6 +54,8 @@ interface FilesTabProps {
   onLoadEntries: (path: string) => void
   onRequestOpenFile: (path: string) => void
   onRefresh: () => void
+  uploading: Accessor<boolean>
+  onUploadFiles: (files: FileList | File[]) => void
   onSave: (content: string) => void
   onContentChange: (content: string) => void
   onWordWrapModeChange: (mode: "on" | "off") => void
@@ -68,6 +74,14 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
   const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
   let markdownPreviewRef: HTMLDivElement | undefined
+  let uploadInputRef: HTMLInputElement | undefined
+
+  const formatModifiedAt = (iso?: string) => {
+    if (!iso) return "—"
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return "—"
+    return date.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+  }
 
   createEffect(() => {
     props.browserPath()
@@ -157,6 +171,11 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         <span class="file-list-title">{props.t("instanceShell.filesShell.fileListTitle")}</span>
         <span class="file-list-count">{filteredEntries().length}</span>
       </div>
+      <div class="file-list-columns" aria-hidden="true">
+        <span class="file-list-col-name">{props.t("instanceShell.filesShell.columns.name")}</span>
+        <span class="file-list-col-modified">{props.t("instanceShell.filesShell.columns.modified")}</span>
+        <span class="file-list-col-actions" />
+      </div>
 
       <Show when={props.parentPath()}>
         {(p) => (
@@ -165,6 +184,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               <div class="file-list-item-path" title={p()}>
                 <span class="file-path-text">..</span>
               </div>
+              <span class="file-list-item-modified" />
             </div>
           </div>
         )}
@@ -201,6 +221,9 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 <div class="file-list-item-path" title={item.path}>
                   <span class="file-path-text">{item.name}</span>
                 </div>
+                <span class="file-list-item-modified" title={item.modifiedAt || undefined}>
+                  {formatModifiedAt(item.modifiedAt)}
+                </span>
                 <div class="flex items-center gap-2 shrink-0">
                   <div class="file-list-item-stats">
                     <span class="text-[10px] text-secondary">{item.type}</span>
@@ -396,6 +419,32 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 <RefreshCw class="h-4 w-4 animate-spin" />
               </Show>
             </button>
+            <button
+              type="button"
+              class="files-header-icon-button"
+              title={props.t("instanceShell.filesShell.actions.upload")}
+              aria-label={props.t("instanceShell.filesShell.actions.upload")}
+              disabled={props.browserLoading() || props.uploading()}
+              onClick={() => uploadInputRef?.click()}
+            >
+              <Show when={props.uploading()} fallback={<Upload class="h-4 w-4" />}>
+                <RefreshCw class="h-4 w-4 animate-spin" />
+              </Show>
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              multiple
+              class="sr-only"
+              tabindex="-1"
+              onChange={(event) => {
+                const files = event.currentTarget.files
+                if (files && files.length > 0) {
+                  props.onUploadFiles(files)
+                }
+                event.currentTarget.value = ""
+              }}
+            />
             <button
               type="button"
               class="files-header-icon-button"

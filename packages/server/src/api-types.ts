@@ -250,6 +250,34 @@ export interface WorkspaceFileResponse {
   encoding?: "utf-8" | "base64"
 }
 
+export interface WorkspaceExecRequest {
+  command: string
+  worktree?: string
+}
+
+export interface WorkspaceExecResponse {
+  command: string
+  cwd: string
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  timedOut: boolean
+  durationMs: number
+}
+
+export interface WorkspaceFileUploadItem {
+  name: string
+  contentsBase64: string
+}
+
+export interface WorkspaceFileUploadRequest {
+  files: WorkspaceFileUploadItem[]
+}
+
+export interface WorkspaceFileUploadResponse {
+  uploaded: string[]
+}
+
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
 
 export interface InstanceData {

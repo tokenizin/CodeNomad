@@ -17,7 +17,7 @@ import PushPinIcon from "@suid/icons-material/PushPin"
 import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../server/src/api-types"
+import type { BackgroundProcess, FileSystemEntry } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
@@ -68,6 +68,35 @@ const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 const LazyWikiLintTab = lazy(() => import("./tabs/WikiLintTab"))
 const LazyNotifyHistoryTab = lazy(() => import("./tabs/NotifyHistoryTab"))
 
+type BrowserFileNode = FileNode & { modifiedAt?: string }
+
+function mergeFileModifiedAt(nodes: FileNode[], entries: FileSystemEntry[]): BrowserFileNode[] {
+  const byName = new Map(entries.map((entry) => [entry.name, entry.modifiedAt]))
+  const byPath = new Map(
+    entries.map((entry) => [String(entry.path || "").replace(/\\/g, "/"), entry.modifiedAt]),
+  )
+  return nodes.map((node) => {
+    const pathKey = String(node.path || "").replace(/\\/g, "/")
+    return {
+      ...node,
+      modifiedAt: byPath.get(pathKey) ?? byName.get(String(node.name || "")) ?? undefined,
+    }
+  })
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || "")
+      const comma = result.indexOf(",")
+      resolve(comma >= 0 ? result.slice(comma + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"))
+    reader.readAsDataURL(file)
+  })
+}
+
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
 }
@@ -106,8 +135,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
 
   const [browserPath, setBrowserPath] = createSignal(".")
-  const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
+  const [browserEntries, setBrowserEntries] = createSignal<BrowserFileNode[] | null>(null)
   const [browserLoading, setBrowserLoading] = createSignal(false)
+  const [browserUploading, setBrowserUploading] = createSignal(false)
   const [browserError, setBrowserError] = createSignal<string | null>(null)
   const [browserSelectedPath, setBrowserSelectedPath] = createSignal<string | null>(null)
   const [browserSelectedContent, setBrowserSelectedContent] = createSignal<string | null>(null)
@@ -455,7 +485,16 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     try {
       const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
       setBrowserPath(normalized)
-      const entries = Array.isArray(nodes) ? nodes : []
+      const listed = Array.isArray(nodes) ? nodes : []
+      let entries: BrowserFileNode[] = listed
+      try {
+        const withTimes = await serverApi.listWorkspaceFiles(props.instanceId, normalized, {
+          worktree: worktreeSlugForViewer(),
+        })
+        entries = mergeFileModifiedAt(listed, withTimes)
+      } catch {
+        entries = listed
+      }
       setBrowserEntries(entries)
       if (normalized === ".") {
         setCachedFileList(props.instanceId, normalized, entries)
@@ -594,6 +633,36 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const handleBrowserFileChange = (content: string) => {
     setBrowserSelectedContent(content)
     setBrowserSelectedDirty(true)
+  }
+
+  const uploadBrowserFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList)
+    if (!files.length) return
+    setBrowserUploading(true)
+    try {
+      const payload = await Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          contentsBase64: await fileToBase64(file),
+        })),
+      )
+      const result = await serverApi.uploadWorkspaceFiles(props.instanceId, payload, {
+        path: browserPath(),
+        worktree: worktreeSlugForViewer(),
+      })
+      showToastNotification({
+        message: props.t("instanceShell.filesShell.toast.uploadSuccess", { count: result.uploaded.length }),
+        variant: "success",
+      })
+      await loadBrowserEntries(browserPath())
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : props.t("instanceShell.filesShell.toast.uploadError"),
+        variant: "error",
+      })
+    } finally {
+      setBrowserUploading(false)
+    }
   }
 
   const handleOpenBrowserFileRequest = async (path: string) => {
@@ -909,6 +978,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
               onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
               onRefresh={() => void refreshFilesTab()}
+              uploading={browserUploading}
+              onUploadFiles={(files: FileList | File[]) => void uploadBrowserFiles(files)}
               onSave={(content: string) => void saveBrowserFile(content)}
               onContentChange={(content: string) => handleBrowserFileChange(content)}
               onWordWrapModeChange={setFilesWordWrapMode}

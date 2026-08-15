@@ -1,6 +1,8 @@
+import path from "path"
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
+import { execInDirectory } from "../../workspaces/exec"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
@@ -24,7 +26,42 @@ const WorkspaceCloneSchema = z.object({
 
 const WorkspaceFilesQuerySchema = z.object({
   path: z.string().optional(),
+  worktree: z.string().trim().optional(),
 })
+
+const WorkspaceExecBodySchema = z.object({
+  command: z.string().min(1).max(32_768),
+  worktree: z.string().trim().optional(),
+})
+
+const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024
+const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024
+
+const WorkspaceFileUploadBodySchema = z.object({
+  files: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(255),
+        contentsBase64: z.string().min(1),
+      }),
+    )
+    .min(1)
+    .max(20),
+})
+
+function sanitizeUploadFileName(name: string): string {
+  const base = path.basename(name.replace(/\\/g, "/"))
+  if (!base || base === "." || base === ".." || base.includes("\0")) {
+    throw new Error("Invalid file name")
+  }
+  return base
+}
+
+function joinWorkspaceRelative(directory: string, fileName: string): string {
+  const normalizedDir = directory.replace(/\\/g, "/").replace(/\/+$/, "")
+  if (!normalizedDir || normalizedDir === ".") return fileName
+  return `${normalizedDir}/${fileName}`
+}
 
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
@@ -105,11 +142,92 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; worktree?: string }
   }>("/api/workspaces/:id/files", async (request, reply) => {
     try {
       const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
-      return deps.workspaceManager.listFiles(request.params.id, query.path ?? ".")
+      const relativePath = query.path ?? "."
+      if (query.worktree && query.worktree !== "root") {
+        const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
+        if (!directory) return
+        return deps.workspaceManager.listFilesInDirectory(request.params.id, directory, relativePath)
+      }
+      return deps.workspaceManager.listFiles(request.params.id, relativePath)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string }
+    Body: { command?: string; worktree?: string }
+  }>("/api/workspaces/:id/exec", async (request, reply) => {
+    try {
+      const body = WorkspaceExecBodySchema.parse(request.body ?? {})
+      const command = body.command.trim()
+      if (!command) {
+        reply.code(400)
+        return { error: "Command is required" }
+      }
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+      let cwd = workspace.path
+      if (body.worktree && body.worktree !== "root") {
+        const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, body.worktree, request.log, reply)
+        if (!directory) return
+        cwd = directory
+      }
+      return await execInDirectory(cwd, command)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string }
+    Querystring: { path?: string; worktree?: string }
+    Body: { files?: Array<{ name: string; contentsBase64: string }> }
+  }>("/api/workspaces/:id/files/upload", async (request, reply) => {
+    try {
+      const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
+      const body = WorkspaceFileUploadBodySchema.parse(request.body ?? {})
+      const directory = query.path ?? "."
+      let totalBytes = 0
+      const uploaded: string[] = []
+
+      let writeRoot: string | null = null
+      if (query.worktree && query.worktree !== "root") {
+        writeRoot = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
+        if (!writeRoot) return
+      }
+
+      for (const file of body.files) {
+        const fileName = sanitizeUploadFileName(file.name)
+        const buffer = Buffer.from(file.contentsBase64, "base64")
+        if (!buffer.length) {
+          throw new Error(`File "${fileName}" is empty or not valid base64`)
+        }
+        if (buffer.length > MAX_UPLOAD_FILE_BYTES) {
+          throw new Error(`File "${fileName}" exceeds the 25 MB upload limit`)
+        }
+        totalBytes += buffer.length
+        if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) {
+          throw new Error("Upload exceeds the 50 MB total limit")
+        }
+        const relativePath = joinWorkspaceRelative(directory, fileName)
+        if (writeRoot) {
+          deps.workspaceManager.writeFileBytesInDirectory(request.params.id, writeRoot, relativePath, buffer)
+        } else {
+          deps.workspaceManager.writeFileBytes(request.params.id, relativePath, buffer)
+        }
+        uploaded.push(relativePath)
+      }
+
+      reply.code(201)
+      return { uploaded }
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }

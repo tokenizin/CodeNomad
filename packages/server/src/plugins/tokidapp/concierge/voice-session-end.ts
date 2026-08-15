@@ -101,5 +101,45 @@ export function onVoiceSessionEnd(ctx: VoiceSessionEndContext): void {
       audioInputMs: ctx.audioInputMs,
       audioOutputMs: ctx.audioOutputMs,
     })
+
+    // ── Phase 2 Slice 3: Once-per-session on-chain settlement ──
+    // SCR-2026-08-15-001 §Settlement. After the agent session closes, settle
+    // the accumulated StarXP usage on-chain via StarXpUsageLedger.recordUsage()
+    // on BSC Testnet (97). Fire-and-forget: a settlement failure never blocks
+    // the session from ending — the off-chain mirror is authoritative until
+    // recordUsage() succeeds. Retry logic can be a follow-up.
+    if (ctx.userId) {
+      void settleSessionViaApi(agentId, ctx.userId).catch((err) => {
+        console.error('[voice-session-end] settlement failed (non-fatal):', (err as Error).message)
+      })
+    }
+  }
+}
+
+/**
+ * Settle a voice session's StarXP usage on-chain via the StarWorld settlement API.
+ *
+ * Calls `POST /api/starxp/settlement` on the StarWorld portal with the
+ * `INTERNAL_API_KEY` (server-to-server auth). The API resolves the user's
+ * on-chain address, sums the session's AiUsageEvent.starXpCost, and calls
+ * `StarXpUsageLedger.recordUsage()` on BSC Testnet 97.
+ *
+ * Never throws — the caller (onVoiceSessionEnd) already wraps this in a void.
+ */
+async function settleSessionViaApi(agentSessionId: string, userId: string): Promise<void> {
+  // Lazy import to avoid pulling the starguard client into engines that never settle.
+  const { apiPost } = await import('../orchestrator/starguard-client')
+  const res = await apiPost('/api/starxp/settlement', {
+    userId,
+    sessionId: agentSessionId,
+    // The totalAmount + eventIds are resolved by the StarWorld API from the
+    // AiUsageEvent rows for this session — CodeNomad doesn't need to sum them.
+    // This keeps the settlement logic in one place (StarWorld side).
+    totalAmount: '0', // placeholder — the API resolves the real total from AiUsageEvent rows
+    eventIds: [], // placeholder — the API resolves the real event ids
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    console.warn('[voice-session-end] settlement API returned non-OK:', res.status, text.slice(0, 200))
   }
 }

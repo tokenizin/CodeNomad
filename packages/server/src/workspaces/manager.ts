@@ -145,6 +145,24 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
+  writeFileBytes(workspaceId: string, relativePath: string, contents: Buffer): void {
+    const workspace = this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    browser.writeFileBytes(relativePath, contents)
+  }
+
+  writeFileBytesInDirectory(workspaceId: string, directory: string, relativePath: string, contents: Buffer): void {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    browser.writeFileBytes(relativePath, contents)
+  }
+
+  listFilesInDirectory(workspaceId: string, directory: string, relativePath = "."): FileSystemEntry[] {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    return browser.list(relativePath)
+  }
+
   writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): void {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })

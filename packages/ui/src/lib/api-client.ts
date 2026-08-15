@@ -32,8 +32,10 @@ import type {
   WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
+  WorkspaceExecResponse,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
+  WorkspaceFileUploadResponse,
 
   WorkspaceLogEntry,
   WorkspaceEventPayload,
@@ -327,9 +329,35 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
-  listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  listWorkspaceFiles(id: string, relativePath = ".", options?: { worktree?: string }): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.worktree && options.worktree !== "root") {
+      params.set("worktree", options.worktree)
+    }
     return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
+  },
+  execWorkspaceCommand(id: string, command: string, options?: { worktree?: string }): Promise<WorkspaceExecResponse> {
+    return request<WorkspaceExecResponse>(`/api/workspaces/${encodeURIComponent(id)}/exec`, {
+      method: "POST",
+      body: JSON.stringify({ command, worktree: options?.worktree }),
+    })
+  },
+  uploadWorkspaceFiles(
+    id: string,
+    files: Array<{ name: string; contentsBase64: string }>,
+    options?: { path?: string; worktree?: string },
+  ): Promise<WorkspaceFileUploadResponse> {
+    const params = new URLSearchParams({ path: options?.path ?? "." })
+    if (options?.worktree && options.worktree !== "root") {
+      params.set("worktree", options.worktree)
+    }
+    return request<WorkspaceFileUploadResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/files/upload?${params.toString()}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ files }),
+      },
+    )
   },
   searchWorkspaceFiles(
     id: string,
