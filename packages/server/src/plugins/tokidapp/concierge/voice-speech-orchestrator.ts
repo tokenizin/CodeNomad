@@ -804,6 +804,11 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
       // Model comes off the response: this chain can fall through from local
       // Ollama to a cloud model mid-conversation, and the row must say which ran.
+      // No requestId: this response came back from one awaited fetch, so there
+      // is no redelivery to dedupe. There is also no id worth keying on — the
+      // Ollama branch above uses native /api/chat, which carries none at all,
+      // so a key would appear only on cloud-fallback turns. See resolveRequestId
+      // in lib/ai-usage for the full rule.
       meterVoiceTurn({
         ctx: { chatSessionId, userId: params.userId, agentSessionId },
         modelId: llmResponse.model,

@@ -100,6 +100,28 @@ describe("every voice engine feeds the session-end hook equally", () => {
     ).toBe(true)
   })
 
+  test("the chat-completions engines do not key rows on a provider id", () => {
+    // The opposite of the rule above, for the opposite situation. Keying on a
+    // provider id is only safe when the response can arrive twice AND the id is
+    // unique. Neither holds here: these replies come back from one awaited
+    // fetch, and the chains' primary provider is Ollama's OpenAI-compatible
+    // endpoint, which numbers responses `chatcmpl-<0..999>` — sampled locally
+    // as chatcmpl-8, chatcmpl-41, chatcmpl-666. At ~1000 keys a collision is
+    // better than even odds inside 40 turns, and recordAiUsage treats a
+    // collision as "already recorded", so the turn would bill nothing.
+    for (const file of ["deepgram-realtime.ts", "ornith-realtime.ts", "voice-speech-orchestrator.ts"]) {
+      const source = readFileSync(join(DIR, file), "utf8")
+      const meterCalls = source.match(/meterVoiceTurn\(\{[\s\S]*?\n\s*\}\)/g) ?? []
+      expect(meterCalls.length).toBeGreaterThan(0)
+      for (const call of meterCalls) {
+        expect(
+          /requestId:/.test(call),
+          `${file} keys a usage row on a provider id; on this path that trades a replay that cannot happen for collisions that silently stop billing`,
+        ).toBe(false)
+      }
+    }
+  })
+
   test("no engine reads the billed model off the session", () => {
     // Deepgram and local resolve their LLM per turn through a fallback chain,
     // so `session.lastModelUsed` is the *previous* turn's model at best. The

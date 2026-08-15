@@ -7,7 +7,13 @@
  */
 
 import { describe, test, expect } from "bun:test"
-import { ollamaUsage, openAiUsage, estimateUsage, resolveRequestId } from "../ai-usage"
+import {
+  ollamaUsage,
+  openAiUsage,
+  estimateUsage,
+  resolveRequestId,
+  isRecordableUsage,
+} from "../ai-usage"
 
 describe("ollamaUsage", () => {
   test("reads counts from a non-streamed body", () => {
@@ -212,6 +218,36 @@ describe("token details — the text/audio split", () => {
     // kinds apart even in principle. Neither may fabricate a breakdown.
     expect(ollamaUsage({ prompt_eval_count: 32, eval_count: 5 })?.details).toBeUndefined()
     expect(estimateUsage("hello", "hi").details).toBeUndefined()
+  })
+})
+
+describe("isRecordableUsage — what deserves a ledger row", () => {
+  test("an all-zero estimate is not recorded", () => {
+    // Observed in live traffic: a realtime response.done arrived carrying no
+    // usage block, and the OpenAI call site passes no promptText, so the
+    // fallback produced 0/0/0 ESTIMATED. That row claims a turn was metered
+    // and cost nothing, when in fact nothing was metered.
+    expect(isRecordableUsage(estimateUsage("", ""))).toBe(false)
+  })
+
+  test("a provider-reported zero IS recorded", () => {
+    // The provider actually measured this and said zero. Different claim.
+    expect(
+      isRecordableUsage({
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        usageSource: "PROVIDER_REPORTED",
+      }),
+    ).toBe(true)
+  })
+
+  test("any non-zero estimate is recorded", () => {
+    expect(isRecordableUsage(estimateUsage("some prompt text", ""))).toBe(true)
+  })
+
+  test("a measured turn is recorded", () => {
+    expect(isRecordableUsage(ollamaUsage({ prompt_eval_count: 32, eval_count: 5 })!)).toBe(true)
   })
 })
 

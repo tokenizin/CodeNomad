@@ -222,10 +222,37 @@ function fk(id: string | null | undefined): string | null {
  * back to a fresh key rather than being used as-is: a constant key lands the
  * first row and then collides forever, and since a collision is treated as
  * "already recorded", every turn after the first would silently bill nothing.
+ *
+ * Pass a provider id only when BOTH hold: the response can genuinely arrive
+ * twice, and its id is genuinely unique. Only the Realtime socket event
+ * qualifies. A `/v1/chat/completions` reply fails both tests — it is returned
+ * once from an awaited fetch with no redelivery path, and Ollama's
+ * OpenAI-compatible endpoint (the primary provider in both voice LLM chains)
+ * numbers its responses `chatcmpl-<0..999>`; sampling it locally returns
+ * `chatcmpl-8`, `chatcmpl-41`, `chatcmpl-666`. Across ~1000 keys a collision is
+ * likelier than not inside 40 turns, and a collision reads as "already
+ * recorded" — so keying on it would quietly stop billing mid-session in
+ * exchange for guarding against a replay that cannot happen.
  */
 export function resolveRequestId(supplied?: string | null): string {
   const key = typeof supplied === 'string' ? supplied.trim() : ''
   return key || `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * Whether a resolved usage is worth a row.
+ *
+ * An all-zero *estimate* is not a measurement of nothing, it is the absence of
+ * a measurement: the provider reported no usage and the call site had no text
+ * to fall back on. That is what an interrupted or cancelled realtime response
+ * looks like — the OpenAI site passes no promptText, so `estimateUsage('','')`
+ * yields 0/0/0. Writing it puts a turn in the ledger that reads as "metered,
+ * cost nothing" when it was never metered at all.
+ *
+ * A PROVIDER_REPORTED zero is kept: the provider actually said zero.
+ */
+export function isRecordableUsage(usage: ResolvedUsage): boolean {
+  return usage.totalTokens > 0 || usage.usageSource === 'PROVIDER_REPORTED'
 }
 
 /**
@@ -235,6 +262,7 @@ export function resolveRequestId(supplied?: string | null): string {
  * cut off the conversation mid-sentence.
  */
 export async function recordAiUsage(input: VoiceMeterInput): Promise<boolean> {
+  if (!isRecordableUsage(input.usage)) return false
   const requestId = resolveRequestId(input.requestId)
 
   try {

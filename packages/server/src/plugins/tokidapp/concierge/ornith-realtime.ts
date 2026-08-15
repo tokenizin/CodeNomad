@@ -1132,6 +1132,8 @@ async function handleResponseCreate(
       }
     }
     
+    // No requestId: Ollama's native /api/chat carries no response id at all,
+    // and this stream is consumed once. A generated key is the right one here.
     meterVoiceTurn({
       ctx: session,
       modelId: ORNITH_MODEL,

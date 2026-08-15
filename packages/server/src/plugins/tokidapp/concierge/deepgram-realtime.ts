@@ -1424,6 +1424,10 @@ async function processUserMessage(
 
     // Model comes off the response, not the session — the fallback chain may
     // have landed on a different provider than the previous turn did.
+    // No requestId — deliberately. See resolveRequestId in lib/ai-usage: a
+    // fetch reply has no redelivery path, and this chain's primary provider
+    // numbers responses `chatcmpl-<0..999>`, which as a key would collide
+    // within tens of turns and read as "already recorded".
     meterVoiceTurn({
       ctx: session,
       modelId: llmResponse.model,
