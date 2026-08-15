@@ -3,6 +3,11 @@ import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
 import type { StarGuardJwtHandler } from "../../auth/starguard-jwt"
+import {
+  resolveStarGuardPublicUrl,
+  shouldRedirectLoginToStarGuard,
+  tryBootstrapCloudflareAccessSession,
+} from "../../auth/auth-provider"
 import { isLoopbackAddress } from "../../auth/http-auth"
 
 interface RouteDeps {
@@ -80,12 +85,18 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.header("Pragma", "no-cache")
     reply.header("Expires", "0")
 
-    // Remote visitors without SSO token → send them back to StarGuard.
-    // Local visitors (dev auto-login, token bootstrap) see the login page.
+    // Prestix (Cloudflare Access): trust Cf-Access-Authenticated-User-Email at the edge.
+    if (tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)) {
+      reply.redirect("/")
+      return
+    }
+
+    // Tokenizin (StarGuard SSO): remote visitors without JWT go back to StarWorld portal.
+    // Prestix/local profiles show the CodeNomad login page instead.
     const forwardedFor = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
     const visitorIp = forwardedFor || request.socket.remoteAddress
-    if (!isLoopbackAddress(visitorIp)) {
-      const starguardBase = (process.env.STARGUARD_PUBLIC_URL ?? "https://star-worlds.vercel.app").replace(/\/$/, "")
+    if (!isLoopbackAddress(visitorIp) && shouldRedirectLoginToStarGuard()) {
+      const starguardBase = resolveStarGuardPublicUrl()
       reply.redirect(`${starguardBase}/?codenomad=signin`)
       return
     }

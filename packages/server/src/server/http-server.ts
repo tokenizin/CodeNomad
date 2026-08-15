@@ -43,6 +43,7 @@ import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
+import { resolveAuthProvider, resolveStarGuardPublicUrl, tryBootstrapCloudflareAccessSession } from "../auth/auth-provider.js"
 import type { SpeechService } from "../speech/service.js"
 import { getTokidappDb } from "../lib/db.js"
 import { ClientConnectionManager } from "../clients/connection-manager.js"
@@ -329,7 +330,11 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    const session = deps.authManager.getSessionFromRequest(request)
+    let session = deps.authManager.getSessionFromRequest(request)
+    if (!session) {
+      tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)
+      session = deps.authManager.getSessionFromRequest(request)
+    }
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
@@ -363,7 +368,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   app.get("/", async (request, reply) => {
-    const session = deps.authManager.getSessionFromRequest(request)
+    let session = deps.authManager.getSessionFromRequest(request)
+    if (!session && tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)) {
+      session = deps.authManager.getSessionFromRequest(request)
+    }
     if (!session) {
       reply.redirect("/login")
       return
@@ -377,7 +385,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const uiDir = deps.uiStaticDir
     const indexPath = path.join(uiDir, "index.html")
     if (uiDir && fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
       return
     }
 
@@ -999,12 +1007,19 @@ function setupStaticUi(
     }
 
     if (!session && wantsHtml(request)) {
+      if (tryBootstrapCloudflareAccessSession(request, reply, authManager)) {
+        const bootstrapped = authManager.getSessionFromRequest(request)
+        if (bootstrapped && fs.existsSync(indexPath)) {
+          reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
+          return
+        }
+      }
       reply.redirect("/login")
       return
     }
 
     if (fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
@@ -1765,4 +1780,12 @@ function getBlockedSideCarRequestHeaders(): Set<string> {
     "x-forwarded-port",
     "x-forwarded-proto",
   ])
+}
+
+function injectUiRuntimeConfig(html: string): string {
+  const script = `<script>window.__CODENOMAD_AUTH_PROVIDER__=${JSON.stringify(resolveAuthProvider())};window.__STARGUARD_PUBLIC_URL__=${JSON.stringify(resolveStarGuardPublicUrl())};</script>`
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${script}</head>`)
+  }
+  return `${script}${html}`
 }
