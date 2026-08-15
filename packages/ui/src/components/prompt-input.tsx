@@ -882,6 +882,40 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
+
+  const showToolbarModeToggle = () => {
+    const step = sessionCenterWidthStep()
+    if (step === "narrow") return false
+    if (step === "medium" || step === "wide") return true
+    if (typeof window !== "undefined") return window.innerWidth >= 768
+    return true
+  }
+
+  const ModeToggle = () => (
+    <div class="prompt-mode-toggle" role="group" aria-label={t("promptInput.modeToggle.ariaLabel")}>
+      <button
+        type="button"
+        class={`prompt-mode-toggle-button ${mode() === "normal" ? "is-active" : ""}`}
+        onClick={() => toggleComposerMode("normal")}
+        aria-pressed={mode() === "normal"}
+        title={t("promptInput.modeToggle.chat")}
+      >
+        <MessageSquare class="h-4 w-4" aria-hidden="true" />
+        <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.chat")}</span>
+      </button>
+      <button
+        type="button"
+        class={`prompt-mode-toggle-button ${mode() === "shell" ? "is-active" : ""}`}
+        onClick={() => toggleComposerMode("shell")}
+        aria-pressed={mode() === "shell"}
+        title={t("promptInput.modeToggle.cli")}
+      >
+        <Terminal class="h-4 w-4" aria-hidden="true" />
+        <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.cli")}</span>
+      </button>
+    </div>
+  )
+
   const voiceConversation = useVoiceConversation({
     instanceId: props.instanceId,
     sessionId: props.sessionId,
@@ -915,6 +949,11 @@ export default function PromptInput(props: PromptInputProps) {
 
   return (
     <div class="prompt-input-container">
+      <Show when={showToolbarModeToggle()}>
+        <div class="prompt-composer-toolbar">
+          <ModeToggle />
+        </div>
+      </Show>
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
@@ -1119,28 +1158,9 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-actions">
           <div class="prompt-nav-buttons">
             <div class="prompt-nav-column prompt-nav-column-left">
-              <div class="prompt-mode-toggle" role="group" aria-label={t("promptInput.modeToggle.ariaLabel")}>
-                <button
-                  type="button"
-                  class={`prompt-mode-toggle-button ${mode() === "normal" ? "is-active" : ""}`}
-                  onClick={() => toggleComposerMode("normal")}
-                  aria-pressed={mode() === "normal"}
-                  title={t("promptInput.modeToggle.chat")}
-                >
-                  <MessageSquare class="h-4 w-4" aria-hidden="true" />
-                  <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.chat")}</span>
-                </button>
-                <button
-                  type="button"
-                  class={`prompt-mode-toggle-button ${mode() === "shell" ? "is-active" : ""}`}
-                  onClick={() => toggleComposerMode("shell")}
-                  aria-pressed={mode() === "shell"}
-                  title={t("promptInput.modeToggle.cli")}
-                >
-                  <Terminal class="h-4 w-4" aria-hidden="true" />
-                  <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.cli")}</span>
-                </button>
-              </div>
+              <Show when={!showToolbarModeToggle()}>
+                <ModeToggle />
+              </Show>
               <Show when={showVoiceConversation()}>
                 <VoiceConversationButton
                   instanceId={props.instanceId}
