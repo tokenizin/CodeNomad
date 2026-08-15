@@ -142,6 +142,8 @@ export const instanceMessages = {
   "instanceShell.filesShell.fileListTitle": "File list",
   "instanceShell.filesShell.columns.name": "Name",
   "instanceShell.filesShell.columns.modified": "Modified",
+  "instanceShell.filesShell.sort.name": "Sort by name",
+  "instanceShell.filesShell.sort.modified": "Sort by last modified",
   "instanceShell.filesShell.actions.upload": "Upload into this folder",
   "instanceShell.filesShell.toast.uploadSuccess": "Uploaded {count} file(s)",
   "instanceShell.filesShell.toast.uploadError": "Failed to upload files",

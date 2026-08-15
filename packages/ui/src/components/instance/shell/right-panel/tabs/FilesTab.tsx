@@ -31,6 +31,15 @@ export interface BrowserFileNode extends FileNode {
   modifiedAt?: string
 }
 
+function modifiedTimestamp(iso?: string): number {
+  if (!iso) return 0
+  const value = Date.parse(iso)
+  return Number.isNaN(value) ? 0 : value
+}
+
+type FileSortKey = "name" | "modified"
+type FileSortDir = "asc" | "desc"
+
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
 
@@ -70,6 +79,8 @@ interface FilesTabProps {
 
 const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
+  const [sortKey, setSortKey] = createSignal<FileSortKey>("name")
+  const [sortDir, setSortDir] = createSignal<FileSortDir>("asc")
   const { isDark } = useTheme()
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
   const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
@@ -83,6 +94,25 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     return date.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
   }
 
+  const toggleSort = (key: FileSortKey) => {
+    if (sortKey() === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"))
+      return
+    }
+    setSortKey(key)
+    setSortDir(key === "modified" ? "desc" : "asc")
+  }
+
+  const sortIndicator = (key: FileSortKey) => {
+    if (sortKey() !== key) return ""
+    return sortDir() === "asc" ? " ↑" : " ↓"
+  }
+
+  const columnAriaSort = (key: FileSortKey): "ascending" | "descending" | "none" => {
+    if (sortKey() !== key) return "none"
+    return sortDir() === "asc" ? "ascending" : "descending"
+  }
+
   createEffect(() => {
     props.browserPath()
     setFilterQuery("")
@@ -90,11 +120,25 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
   const sortedEntries = createMemo(() => {
     const entries = props.browserEntries() || []
+    const key = sortKey()
+    const dir = sortDir() === "asc" ? 1 : -1
     return [...entries].sort((a, b) => {
+      if (key === "modified") {
+        const aTime = modifiedTimestamp(a.modifiedAt)
+        const bTime = modifiedTimestamp(b.modifiedAt)
+        if (aTime === 0 && bTime === 0) {
+          return String(a.name || "").localeCompare(String(b.name || ""))
+        }
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        if (aTime !== bTime) return (aTime - bTime) * dir
+        return String(a.name || "").localeCompare(String(b.name || ""))
+      }
+
       const aDir = a.type === "directory" ? 0 : 1
       const bDir = b.type === "directory" ? 0 : 1
       if (aDir !== bDir) return aDir - bDir
-      return String(a.name || "").localeCompare(String(b.name || ""))
+      return String(a.name || "").localeCompare(String(b.name || "")) * dir
     })
   })
 
@@ -171,9 +215,27 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         <span class="file-list-title">{props.t("instanceShell.filesShell.fileListTitle")}</span>
         <span class="file-list-count">{filteredEntries().length}</span>
       </div>
-      <div class="file-list-columns" aria-hidden="true">
-        <span class="file-list-col-name">{props.t("instanceShell.filesShell.columns.name")}</span>
-        <span class="file-list-col-modified">{props.t("instanceShell.filesShell.columns.modified")}</span>
+      <div class="file-list-columns">
+        <button
+          type="button"
+          class={`file-list-col-name file-list-sort ${sortKey() === "name" ? "is-active" : ""}`}
+          aria-sort={columnAriaSort("name")}
+          title={props.t("instanceShell.filesShell.sort.name")}
+          onClick={() => toggleSort("name")}
+        >
+          {props.t("instanceShell.filesShell.columns.name")}
+          {sortIndicator("name")}
+        </button>
+        <button
+          type="button"
+          class={`file-list-col-modified file-list-sort ${sortKey() === "modified" ? "is-active" : ""}`}
+          aria-sort={columnAriaSort("modified")}
+          title={props.t("instanceShell.filesShell.sort.modified")}
+          onClick={() => toggleSort("modified")}
+        >
+          {props.t("instanceShell.filesShell.columns.modified")}
+          {sortIndicator("modified")}
+        </button>
         <span class="file-list-col-actions" />
       </div>
 
