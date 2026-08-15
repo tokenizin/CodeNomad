@@ -1,6 +1,7 @@
 import type { Component, JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import TokenizinLogo3D from "./tokenizin-logo-3d"
+import { PRESTIX_LANDING_COPY, isPrestixSilo } from "../lib/silo-brand"
 
 interface BrandedEmptyStateProps {
   title?: JSX.Element
@@ -19,10 +20,12 @@ const BrandedEmptyState: Component<BrandedEmptyStateProps> = (props) => {
           <TokenizinLogo3D
             width={192}
             height={192}
-            alt={t("messageSection.empty.logoAlt")}
+            alt={isPrestixSilo() ? PRESTIX_LANDING_COPY.logoAlt : t("messageSection.empty.logoAlt")}
             spin
           />
-          <h1 class="empty-state-brand-title text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
+          <h1 class="empty-state-brand-title text-3xl font-semibold text-primary">
+            {isPrestixSilo() ? PRESTIX_LANDING_COPY.brandTitle : t("messageSection.empty.brandTitle")}
+          </h1>
         </div>
         {props.title ? <h3>{props.title}</h3> : null}
         <p>{props.description}</p>

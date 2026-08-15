@@ -2,6 +2,7 @@ import { Component } from "solid-js"
 import { Loader2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import TokenizinLogo3D from "./tokenizin-logo-3d"
+import { PRESTIX_LANDING_COPY, isPrestixSilo } from "../lib/silo-brand"
 
 interface EmptyStateProps {
   onSelectFolder: () => void
@@ -20,13 +21,17 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
           <TokenizinLogo3D
             width={120}
             height={120}
-            alt={t("emptyState.logoAlt")}
+            alt={isPrestixSilo() ? PRESTIX_LANDING_COPY.logoAlt : t("emptyState.logoAlt")}
             spin
           />
         </div>
 
-        <h1 class="empty-state-brand-title mb-3 text-3xl font-semibold">{t("emptyState.brandTitle")}</h1>
-        <p class="mb-8 text-base text-secondary">{t("emptyState.tagline")}</p>
+        <h1 class="empty-state-brand-title mb-3 text-3xl font-semibold">
+          {isPrestixSilo() ? PRESTIX_LANDING_COPY.brandTitle : t("emptyState.brandTitle")}
+        </h1>
+        <p class="mb-8 text-base text-secondary">
+          {isPrestixSilo() ? PRESTIX_LANDING_COPY.emptyTagline : t("emptyState.tagline")}
+        </p>
 
 
         <button
