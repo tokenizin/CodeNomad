@@ -12,6 +12,7 @@
 
 import { updateWikiFromSession } from "./codebase-tools"
 import { createRecording, endAgentSession } from "../../../lib/tokidapp-queries"
+import { debitVoiceSessionUsage } from "../../../lib/starxp-voice-debit"
 
 export type VoiceEngineId = "openai" | "deepgram" | "ornith" | "local"
 
@@ -102,16 +103,39 @@ export function onVoiceSessionEnd(ctx: VoiceSessionEndContext): void {
       audioOutputMs: ctx.audioOutputMs,
     })
 
-    // ── Phase 2 Slice 3: Once-per-session on-chain settlement ──
-    // SCR-2026-08-15-001 §Settlement. After the agent session closes, settle
-    // the accumulated StarXP usage on-chain via StarXpUsageLedger.recordUsage()
-    // on BSC Testnet (97). Fire-and-forget: a settlement failure never blocks
-    // the session from ending — the off-chain mirror is authoritative until
-    // recordUsage() succeeds. Retry logic can be a follow-up.
+    // ── Real per-session StarXp debit, then on-chain settlement ──
+    // Voice usage was previously measured only (AiUsageEvent.starXpCost left
+    // null forever), so every voice session settled for StarXp 0 regardless
+    // of real usage. debitVoiceSessionUsage() prices this session from the
+    // captured audio duration and writes a real AiUsageEvent — must complete
+    // BEFORE settlement, since settlement sums this session's AiUsageEvent
+    // rows. Fire-and-forget from the caller's perspective; the two steps
+    // inside are sequenced so settlement never reads a stale null.
     if (ctx.userId) {
-      void settleSessionViaApi(agentId, ctx.userId).catch((err) => {
-        console.error('[voice-session-end] settlement failed (non-fatal):', (err as Error).message)
-      })
+      const userId = ctx.userId
+      void (async () => {
+        try {
+          await debitVoiceSessionUsage({
+            userId,
+            agentSessionId: agentId,
+            audioInputMs: ctx.audioInputMs ?? 0,
+            audioOutputMs: ctx.audioOutputMs ?? 0,
+            engine: ctx.engine,
+          })
+        } catch (err) {
+          console.error('[voice-session-end] StarXp debit failed (non-fatal):', (err as Error).message)
+        }
+
+        // Phase 2 Slice 3: Once-per-session on-chain settlement.
+        // SCR-2026-08-15-001 §Settlement. Settle the accumulated StarXP usage
+        // on-chain via StarXpUsageLedger.recordUsage() on BSC Testnet (97).
+        // Fire-and-forget: a settlement failure never blocks the session from
+        // ending — the off-chain mirror is authoritative until recordUsage()
+        // succeeds. Retry logic can be a follow-up.
+        await settleSessionViaApi(agentId, userId).catch((err) => {
+          console.error('[voice-session-end] settlement failed (non-fatal):', (err as Error).message)
+        })
+      })()
     }
   }
 }

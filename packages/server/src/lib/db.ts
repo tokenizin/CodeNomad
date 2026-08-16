@@ -72,6 +72,19 @@ interface TokiDAPPAgentSessionTable {
   metadata: unknown | null
 }
 
+interface StarXpUsageLedgerTable {
+  id: string
+  userId: string
+  onChainAddress: string
+  chainId: number
+  /** High-precision StarXP units, decimal string. */
+  credit: string
+  /** High-precision StarXP units, decimal string. */
+  debt: string
+  autoTopUp: boolean
+  updatedAt: Date
+}
+
 interface AiUsageEventTable {
   id: string
   userId: string
@@ -237,6 +250,7 @@ export interface TokiDAPPDB {
   TokiDAPPPublishment: TokiDAPPPublishmentTable
   TokiDAPPFileArtifact: TokiDAPPFileArtifactTable
   AiUsageEvent: AiUsageEventTable
+  StarXpUsageLedger: StarXpUsageLedgerTable
 }
 
 export type DB = Kysely<TokiDAPPDB>
