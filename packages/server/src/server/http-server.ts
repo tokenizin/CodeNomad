@@ -1018,6 +1018,11 @@ function setupStaticUi(
       return
     }
 
+    if (isStaticAssetRequest(url)) {
+      reply.code(404).send({ message: "Not Found" })
+      return
+    }
+
     if (fs.existsSync(indexPath)) {
       reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
     } else {
@@ -1131,6 +1136,13 @@ function isApiRequest(rawUrl: string | null | undefined) {
   if (!rawUrl) return false
   const pathname = rawUrl.split("?")[0] ?? ""
   return pathname === "/api" || pathname.startsWith("/api/")
+}
+
+/** Missing UI bundles must 404 — serving index.html for .js/.css breaks module MIME checks. */
+function isStaticAssetRequest(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false
+  const pathname = rawUrl.split("?")[0] ?? ""
+  return /\.(?:js|mjs|cjs|css|map|wasm|woff2?|ttf|eot|svg|png|jpe?g|webp|ico|json|txt|html|worker\.js)$/i.test(pathname)
 }
 
 function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, string> {
