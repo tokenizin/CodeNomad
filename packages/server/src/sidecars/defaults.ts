@@ -47,6 +47,16 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "starpages-tv-sidecar",
+    kind: "port",
+    name: "StarPAGES TV Sidecar",
+    port: 9950,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ]
 
 /**
