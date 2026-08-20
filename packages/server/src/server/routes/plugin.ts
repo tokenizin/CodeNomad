@@ -18,7 +18,7 @@ interface RouteDeps {
 
 const PluginEventSchema = z.object({
   type: z.string().min(1),
-  properties: z.record(z.unknown()).optional(),
+  properties: z.record(z.string(), z.unknown()).optional(),
 })
 
 const VoiceModeStateSchema = z.object({

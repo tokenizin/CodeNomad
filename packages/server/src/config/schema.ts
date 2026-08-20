@@ -10,29 +10,29 @@ const AgentModelSelectionsSchema = z.record(z.string(), AgentModelSelectionSchem
 
 const PreferencesSchema = z
   .object({
-  showThinkingBlocks: z.boolean().default(false),
-  thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
-  showTimelineTools: z.boolean().default(true),
-  promptSubmitOnEnter: z.boolean().default(false),
+  showThinkingBlocks: z.boolean().optional().default(false),
+  thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).optional().default("expanded"),
+  showTimelineTools: z.boolean().optional().default(true),
+  promptSubmitOnEnter: z.boolean().optional().default(false),
   lastUsedBinary: z.string().optional(),
   locale: z.string().optional(),
-  environmentVariables: z.record(z.string()).default({}),
-  modelRecents: z.array(ModelPreferenceSchema).default([]),
-  modelFavorites: z.array(ModelPreferenceSchema).default([]),
-  modelThinkingSelections: z.record(z.string(), z.string()).default({}),
-  diffViewMode: z.enum(["split", "unified"]).default("split"),
-  toolOutputExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
-  diagnosticsExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
-  showUsageMetrics: z.boolean().default(true),
-  autoCleanupBlankSessions: z.boolean().default(true),
-  listeningMode: z.enum(["local", "all"]).default("local"),
-  logLevel: z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).default("DEBUG"),
+  environmentVariables: z.record(z.string(), z.string()).optional().default({}),
+  modelRecents: z.array(ModelPreferenceSchema).optional().default([]),
+  modelFavorites: z.array(ModelPreferenceSchema).optional().default([]),
+  modelThinkingSelections: z.record(z.string(), z.string()).optional().default({}),
+  diffViewMode: z.enum(["split", "unified"]).optional().default("split"),
+  toolOutputExpansion: z.enum(["expanded", "collapsed"]).optional().default("expanded"),
+  diagnosticsExpansion: z.enum(["expanded", "collapsed"]).optional().default("expanded"),
+  showUsageMetrics: z.boolean().optional().default(true),
+  autoCleanupBlankSessions: z.boolean().optional().default(true),
+  listeningMode: z.enum(["local", "all"]).optional().default("local"),
+  logLevel: z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).optional().default("DEBUG"),
 
   // OS notifications
-  osNotificationsEnabled: z.boolean().default(false),
-  osNotificationsAllowWhenVisible: z.boolean().default(false),
-  notifyOnNeedsInput: z.boolean().default(true),
-  notifyOnIdle: z.boolean().default(true),
+  osNotificationsEnabled: z.boolean().optional().default(false),
+  osNotificationsAllowWhenVisible: z.boolean().optional().default(false),
+  notifyOnNeedsInput: z.boolean().optional().default(true),
+  notifyOnIdle: z.boolean().optional().default(true),
   })
   // Preserve unknown preference keys so newer configs survive older binaries.
   .passthrough()
@@ -50,9 +50,14 @@ const OpenCodeBinarySchema = z.object({
   label: z.string().optional(),
 })
 
+// Zod v4: .default() on an object schema validates the default against the schema's
+// input shape. Because every preference field is now `.optional().default(...)`,
+// we can safely materialize the full default once and reuse it.
+const PREFERENCES_DEFAULTS = PreferencesSchema.parse({})
+
 const ConfigFileSchema = z
   .object({
-    preferences: PreferencesSchema.default({}),
+    preferences: PreferencesSchema.default(PREFERENCES_DEFAULTS),
     recentFolders: z.array(RecentFolderSchema).default([]),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
@@ -63,7 +68,7 @@ const ConfigFileSchema = z
 // On-disk config.yaml only stores stable configuration (not volatile state like recent folders).
 const ConfigYamlSchema = z
   .object({
-    preferences: PreferencesSchema.default({}),
+    preferences: PreferencesSchema.default(PREFERENCES_DEFAULTS),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
   })

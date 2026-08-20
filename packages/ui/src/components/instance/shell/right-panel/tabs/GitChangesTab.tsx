@@ -55,6 +55,9 @@ interface GitChangesTabProps {
   commitSubmitting: Accessor<boolean>
   onCommitMessageInput: (value: string) => void
   onSubmitCommit: () => void
+  onFetchAllRemotes: () => void
+  onMerge: () => void
+  onPull: () => void
   branchLabel: Accessor<string | null>
 
   stagedOpen: Accessor<boolean>
@@ -329,6 +332,32 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                       {props.commitSubmitting()
                         ? props.t("instanceShell.gitChanges.commit.submitting")
                         : props.t("instanceShell.gitChanges.commit.submit")}
+                    </button>
+                  </div>
+                  <div class="git-change-remote-actions">
+                    <button
+                      type="button"
+                      class="git-change-remote-button"
+                      title={props.t("instanceShell.gitChanges.actions.fetchAll")}
+                      onClick={() => props.onFetchAllRemotes()}
+                    >
+                      {props.t("instanceShell.gitChanges.actions.fetchAll")}
+                    </button>
+                    <button
+                      type="button"
+                      class="git-change-remote-button"
+                      title={props.t("instanceShell.gitChanges.actions.merge")}
+                      onClick={() => props.onMerge()}
+                    >
+                      {props.t("instanceShell.gitChanges.actions.merge")}
+                    </button>
+                    <button
+                      type="button"
+                      class="git-change-remote-button"
+                      title={props.t("instanceShell.gitChanges.actions.pull")}
+                      onClick={() => props.onPull()}
+                    >
+                      {props.t("instanceShell.gitChanges.actions.pull")}
                     </button>
                   </div>
                 </div>

@@ -388,6 +388,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     refreshGitStatus,
     insertGitChangeContext,
     submitGitCommit,
+    fetchAllRemotes,
+    mergeChanges,
+    pullChanges,
     stageGitFile,
     unstageGitFile,
   } = useGitChanges({
@@ -751,11 +754,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onInsertContext={insertGitChangeContext}
               onStageFile={stageGitFile}
               onUnstageFile={unstageGitFile}
-              commitMessage={gitCommitMessage}
-              commitSubmitting={gitCommitSubmitting}
-              onCommitMessageInput={setGitCommitMessage}
-              onSubmitCommit={() => void submitGitCommit()}
-              branchLabel={gitChangesBranchLabel}
+               commitMessage={gitCommitMessage}
+               commitSubmitting={gitCommitSubmitting}
+               onCommitMessageInput={setGitCommitMessage}
+               onSubmitCommit={() => void submitGitCommit()}
+               onFetchAllRemotes={() => void fetchAllRemotes()}
+               onMerge={() => void mergeChanges()}
+               onPull={() => void pullChanges()}
+               branchLabel={gitChangesBranchLabel}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {

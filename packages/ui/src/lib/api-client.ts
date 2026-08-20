@@ -25,11 +25,19 @@ import type {
   VoiceModeStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
+  InitGitRepositoryRequest,
+  InitGitRepositoryResponse,
   WorktreeGitCommitRequest,
   WorktreeGitCommitResponse,
   WorktreeGitDiffRequest,
+  WorktreeGitFetchRequest,
+  WorktreeGitFetchResponse,
+  WorktreeGitMergeRequest,
+  WorktreeGitMergeResponse,
   WorktreeGitMutationResponse,
   WorktreeGitPathsRequest,
+  WorktreeGitPullRequest,
+  WorktreeGitPullResponse,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -327,6 +335,12 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
+  initGitRepository(payload: InitGitRepositoryRequest): Promise<InitGitRepositoryResponse> {
+    return request<InitGitRepositoryResponse>("/api/workspaces/new", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
   listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
     return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
@@ -411,6 +425,33 @@ export const serverApi = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    )
+  },
+  fetchWorktreeAllRemotes(id: string, slug: string): Promise<WorktreeGitFetchResponse> {
+    return request<WorktreeGitFetchResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-fetch`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    )
+  },
+  mergeWorktreeChanges(id: string, slug: string, payload?: WorktreeGitMergeRequest): Promise<WorktreeGitMergeResponse> {
+    return request<WorktreeGitMergeResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-merge`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    )
+  },
+  pullWorktreeChanges(id: string, slug: string, payload?: WorktreeGitPullRequest): Promise<WorktreeGitPullResponse> {
+    return request<WorktreeGitPullResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-pull`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
       },
     )
   },

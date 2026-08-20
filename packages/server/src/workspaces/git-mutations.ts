@@ -119,3 +119,26 @@ export async function commitWorktreeChanges(params: { workspaceFolder: string; m
   const commitSha = shaResult.stdout.trim()
   return commitSha ? { commitSha } : {}
 }
+
+export async function fetchWorktreeAllRemotes(params: { workspaceFolder: string }): Promise<string> {
+  return ensureGitCommandSucceeded(runGit(["fetch", "--all"], params.workspaceFolder), "Failed to fetch all remotes")
+}
+
+export async function mergeWorktreeChanges(params: { workspaceFolder: string; source?: string }): Promise<string> {
+  const args = ["merge"]
+  if (params.source?.trim()) {
+    args.push(params.source.trim())
+  }
+  return ensureGitCommandSucceeded(runGit(args, params.workspaceFolder), "Failed to merge changes")
+}
+
+export async function pullWorktreeChanges(params: { workspaceFolder: string; remote?: string; branch?: string }): Promise<string> {
+  const args = ["pull"]
+  if (params.remote?.trim()) {
+    args.push(params.remote.trim())
+    if (params.branch?.trim()) {
+      args.push(params.branch.trim())
+    }
+  }
+  return ensureGitCommandSucceeded(runGit(args, params.workspaceFolder), "Failed to pull changes")
+}

@@ -368,6 +368,54 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
   }
 
+  const fetchAllRemotes = async () => {
+    try {
+      await serverApi.fetchWorktreeAllRemotes(options.instanceId, options.worktreeSlug())
+      await loadGitStatus(true)
+      showToastNotification({
+        message: options.t("instanceShell.gitChanges.fetch.success"),
+        variant: "success",
+      })
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.fetch.error"),
+        variant: "error",
+      })
+    }
+  }
+
+  const mergeChanges = async () => {
+    try {
+      await serverApi.mergeWorktreeChanges(options.instanceId, options.worktreeSlug(), {})
+      await loadGitStatus(true)
+      showToastNotification({
+        message: options.t("instanceShell.gitChanges.merge.success"),
+        variant: "success",
+      })
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.merge.error"),
+        variant: "error",
+      })
+    }
+  }
+
+  const pullChanges = async () => {
+    try {
+      await serverApi.pullWorktreeChanges(options.instanceId, options.worktreeSlug(), {})
+      await loadGitStatus(true)
+      showToastNotification({
+        message: options.t("instanceShell.gitChanges.pull.success"),
+        variant: "success",
+      })
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.pull.error"),
+        variant: "error",
+      })
+    }
+  }
+
   const refreshGitStatus = async () => {
     await loadGitStatus(true)
     const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
@@ -466,6 +514,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
     refreshGitStatus,
     insertGitChangeContext,
     submitGitCommit,
+    fetchAllRemotes,
+    mergeChanges,
+    pullChanges,
     stageGitFile: (item: GitChangeListItem) => void mutateGitFile(item, "stage"),
     unstageGitFile: (item: GitChangeListItem) => void mutateGitFile(item, "unstage"),
   }

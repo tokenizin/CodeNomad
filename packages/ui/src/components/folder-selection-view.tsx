@@ -55,6 +55,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [isCloneDialogOpen, setIsCloneDialogOpen] = createSignal(false)
   const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
+  const [isNewRepoDialogOpen, setIsNewRepoDialogOpen] = createSignal(false)
+  const [isNewRepoDestinationBrowserOpen, setIsNewRepoDestinationBrowserOpen] = createSignal(false)
+  const [newRepoDestinationPath, setNewRepoDestinationPath] = createSignal("")
+  const [newRepoBare, setNewRepoBare] = createSignal(false)
+  const [newRepoInitialCommit, setNewRepoInitialCommit] = createSignal(true)
+  const [newRepoReadmeContent, setNewRepoReadmeContent] = createSignal("")
+  const [newRepoDialogError, setNewRepoDialogError] = createSignal<string | null>(null)
+  const [isCreatingRepository, setIsCreatingRepository] = createSignal(false)
   const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ path: string; name: string; label: string } | null>(null)
   const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   const [cloneRepositoryUrl, setCloneRepositoryUrl] = createSignal("")
@@ -508,6 +516,78 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     setIsCloneDialogOpen(false)
     setIsCloneDestinationBrowserOpen(true)
+  }
+
+  function openNewRepoDialog() {
+    if (isLoading()) return
+    resetNewRepoDialog()
+    setIsNewRepoDialogOpen(true)
+  }
+
+  function handleNewRepoDestinationSelect(path: string) {
+    setIsNewRepoDestinationBrowserOpen(false)
+    setNewRepoDestinationPath(path)
+    setIsNewRepoDialogOpen(true)
+  }
+
+  function handleNewRepoDestinationBrowserClose() {
+    setIsNewRepoDestinationBrowserOpen(false)
+    setIsNewRepoDialogOpen(true)
+  }
+
+  async function handleNewRepoDestinationBrowse() {
+    if (isCreatingRepository()) return
+
+    const defaultPath = newRepoDestinationPath() || folders()[0]?.path
+    if (supportsNativeDialogsInCurrentWindow()) {
+      const selected = await openNativeFolderDialog({
+        title: t("folderSelection.newRepo.dialog.destinationPath"),
+        defaultPath,
+      })
+      if (selected) {
+        setNewRepoDestinationPath(selected)
+      }
+      return
+    }
+
+    setIsNewRepoDialogOpen(false)
+    setIsNewRepoDestinationBrowserOpen(true)
+  }
+
+  async function handleCreateRepository() {
+    if (isCreatingRepository()) return
+    const destinationPath = newRepoDestinationPath().trim()
+    if (!destinationPath) {
+      setNewRepoDialogError(t("folderSelection.newRepo.dialog.errorRequired"))
+      return
+    }
+
+    setIsCreatingRepository(true)
+    setNewRepoDialogError(null)
+    try {
+      const result = await serverApi.initGitRepository({
+        path: destinationPath,
+        bare: newRepoBare(),
+        initialCommit: newRepoInitialCommit(),
+        readmeContent: newRepoReadmeContent() || undefined,
+      })
+      setIsNewRepoDialogOpen(false)
+      resetNewRepoDialog()
+      handleFolderSelect(result.path)
+    } catch (error) {
+      setNewRepoDialogError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsCreatingRepository(false)
+    }
+  }
+
+  function resetNewRepoDialog() {
+    setNewRepoDestinationPath("")
+    setNewRepoBare(false)
+    setNewRepoInitialCommit(true)
+    setNewRepoReadmeContent("")
+    setNewRepoDialogError(null)
+    setIsCreatingRepository(false)
   }
 
   function handleRemove(path: string, e?: Event) {
@@ -1040,6 +1120,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
                   <button
                     type="button"
+                    onClick={openNewRepoDialog}
+                    disabled={props.isLoading}
+                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                  >
+                    <div class="flex items-center gap-2">
+                      <GitBranch class="w-4 h-4" />
+                      <span>{t("folderSelection.newRepo.button")}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => props.onOpenSidecar?.()}
                     class="button-primary w-full flex items-center justify-center text-sm"
                   >
@@ -1237,6 +1329,123 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     <span class="inline-flex items-center gap-2">
                       <Loader2 class="w-4 h-4 animate-spin" />
                       {t("folderSelection.clone.dialog.cloning")}
+                    </span>
+                  </Show>
+                </button>
+              </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog>
+
+      <DirectoryBrowserDialog
+        open={isNewRepoDestinationBrowserOpen()}
+        title={t("folderSelection.newRepo.dialog.destinationPath")}
+        description={t("folderSelection.newRepo.dialog.destinationPath")}
+        initialPath={newRepoDestinationPath() || folders()[0]?.path}
+        onClose={handleNewRepoDestinationBrowserClose}
+        onSelect={handleNewRepoDestinationSelect}
+      />
+
+      <Dialog open={isNewRepoDialogOpen()} onOpenChange={(open) => !open && setIsNewRepoDialogOpen(false)}>
+        <Dialog.Portal>
+          <Dialog.Overlay class="modal-overlay" />
+          <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
+            <Dialog.Content
+              class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5"
+              tabIndex={-1}
+              onInteractOutside={(event) => {
+                if (isNewRepoDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+              onEscapeKeyDown={(event) => {
+                if (isNewRepoDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+            >
+              <div>
+                <Dialog.Title class="text-xl font-semibold text-primary">
+                  {t("folderSelection.newRepo.dialog.title")}
+                </Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-2">
+                  {t("folderSelection.newRepo.dialog.description")}
+                </Dialog.Description>
+              </div>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.newRepo.dialog.destinationPath")}</span>
+                <div class="flex gap-2">
+                  <input
+                    class="selector-input w-full"
+                    value={newRepoDestinationPath()}
+                    onInput={(event) => setNewRepoDestinationPath(event.currentTarget.value)}
+                    placeholder={t("folderSelection.newRepo.dialog.destinationPathPlaceholder")}
+                    disabled={isCreatingRepository()}
+                  />
+                   <button
+                     type="button"
+                     class="selector-button selector-button-secondary w-auto px-4"
+                     disabled={isCreatingRepository()}
+                     onClick={() => void handleNewRepoDestinationBrowse()}
+                   >
+                     {t("folderSelection.newRepo.dialog.browseDestination")}
+                   </button>
+                </div>
+              </label>
+
+              <label class="flex items-start gap-3 text-sm text-secondary">
+                <input
+                  type="checkbox"
+                  checked={newRepoBare()}
+                  disabled={isCreatingRepository()}
+                  onChange={(event) => setNewRepoBare(event.currentTarget.checked)}
+                />
+                <span>{t("folderSelection.newRepo.dialog.bare")}</span>
+              </label>
+
+              <label class="flex items-start gap-3 text-sm text-secondary">
+                <input
+                  type="checkbox"
+                  checked={newRepoInitialCommit()}
+                  disabled={isCreatingRepository()}
+                  onChange={(event) => setNewRepoInitialCommit(event.currentTarget.checked)}
+                />
+                <span>{t("folderSelection.newRepo.dialog.initialCommit")}</span>
+              </label>
+
+              <Show when={newRepoInitialCommit()}>
+                <label class="flex flex-col gap-2 text-sm text-secondary">
+                  <span>{t("folderSelection.newRepo.dialog.readmePlaceholder")}</span>
+                  <textarea
+                    class="selector-input w-full"
+                    rows={4}
+                    value={newRepoReadmeContent()}
+                    onInput={(event) => setNewRepoReadmeContent(event.currentTarget.value)}
+                    placeholder={t("folderSelection.newRepo.dialog.readmePlaceholder")}
+                    disabled={isCreatingRepository()}
+                  />
+                </label>
+              </Show>
+
+              <Show when={newRepoDialogError()}>
+                {(message) => <p class="text-sm text-red-500 break-words">{message()}</p>}
+              </Show>
+
+              <div class="flex items-center justify-end gap-3">
+                <button class="selector-button selector-button-secondary w-auto px-4" disabled={isCreatingRepository()} onClick={() => setIsNewRepoDialogOpen(false)}>
+                  {t("folderSelection.newRepo.dialog.cancel")}
+                </button>
+                <button
+                  class="selector-button selector-button-primary w-auto px-4"
+                  disabled={isCreatingRepository()}
+                  onClick={() => void handleCreateRepository()}
+                >
+                  <Show when={isCreatingRepository()} fallback={<span>{t("folderSelection.newRepo.dialog.create")}</span>}>
+                    <span class="inline-flex items-center gap-2">
+                      <Loader2 class="w-4 h-4 animate-spin" />
+                      {t("folderSelection.newRepo.dialog.creating")}
                     </span>
                   </Show>
                 </button>

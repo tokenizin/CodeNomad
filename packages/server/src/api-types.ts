@@ -50,6 +50,17 @@ export interface WorkspaceCloneResponse {
   path: string
 }
 
+export interface InitGitRepositoryRequest {
+  path: string
+  bare?: boolean
+  initialCommit?: boolean
+  readmeContent?: string
+}
+
+export interface InitGitRepositoryResponse {
+  path: string
+}
+
 export type WorkspaceCreateResponse = WorkspaceDescriptor
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
@@ -138,6 +149,29 @@ export interface WorktreeGitDiffRequest {
   path: string
   originalPath?: string | null
   scope: WorktreeGitDiffScope
+}
+
+export interface WorktreeGitFetchRequest {}
+export interface WorktreeGitFetchResponse {
+  ok: true
+  stdout: string
+}
+
+export interface WorktreeGitMergeRequest {
+  source?: string
+}
+export interface WorktreeGitMergeResponse {
+  ok: true
+  stdout: string
+}
+
+export interface WorktreeGitPullRequest {
+  remote?: string
+  branch?: string
+}
+export interface WorktreeGitPullResponse {
+  ok: true
+  stdout: string
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error"

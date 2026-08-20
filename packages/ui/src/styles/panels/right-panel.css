@@ -319,6 +319,27 @@
   cursor: not-allowed;
 }
 
+.git-change-remote-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.git-change-remote-button {
+  @apply inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.git-change-remote-button:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.git-change-remote-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .git-change-section {
   @apply border-b last:border-b-0;
   border-color: var(--border-base);

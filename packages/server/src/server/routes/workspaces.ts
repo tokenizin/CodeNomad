@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
-import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
+import { commitWorktreeChanges, fetchWorktreeAllRemotes, isGitMutationError, mergeWorktreeChanges, pullWorktreeChanges, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
 import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
@@ -48,6 +48,17 @@ const WorktreeGitPathsBodySchema = z.object({
 
 const WorktreeGitCommitBodySchema = z.object({
   message: z.string().trim().min(1, "Commit message is required"),
+})
+
+const WorktreeGitFetchBodySchema = z.object({})
+
+const WorktreeGitMergeBodySchema = z.object({
+  source: z.string().trim().optional(),
+})
+
+const WorktreeGitPullBodySchema = z.object({
+  remote: z.string().trim().optional(),
+  branch: z.string().trim().optional(),
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
@@ -245,6 +256,53 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
       const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
       return { ok: true as const, ...result }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: Record<string, never>
+  }>("/api/workspaces/:id/worktrees/:slug/git-fetch", async (request, reply) => {
+    try {
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+
+      const stdout = await fetchWorktreeAllRemotes({ workspaceFolder: directory })
+      return { ok: true as const, stdout }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: { source?: string }
+  }>("/api/workspaces/:id/worktrees/:slug/git-merge", async (request, reply) => {
+    try {
+      const body = WorktreeGitMergeBodySchema.parse(request.body ?? {})
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+
+      const stdout = await mergeWorktreeChanges({ workspaceFolder: directory, source: body.source })
+      return { ok: true as const, stdout }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: { remote?: string; branch?: string }
+  }>("/api/workspaces/:id/worktrees/:slug/git-pull", async (request, reply) => {
+    try {
+      const body = WorktreeGitPullBodySchema.parse(request.body ?? {})
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+
+      const stdout = await pullWorktreeChanges({ workspaceFolder: directory, remote: body.remote, branch: body.branch })
+      return { ok: true as const, stdout }
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
