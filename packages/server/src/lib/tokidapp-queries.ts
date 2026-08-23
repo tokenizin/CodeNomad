@@ -53,6 +53,13 @@ export async function findSessionById(id: string): Promise<SessionRow | null> {
   return { ...session, messageCount: count?.count ?? 0 }
 }
 
+/** Generate a cuid-like id (c + base36 timestamp + random suffix). */
+function generateCuid(): string {
+  const ts = Date.now().toString(36)
+  const rand = Math.random().toString(36).substring(2, 10)
+  return `c${ts}${rand}`
+}
+
 export async function createSession(data: {
   id: string
   userId: string
@@ -70,6 +77,84 @@ export async function createSession(data: {
       updatedAt: new Date(),
     })
     .execute()
+}
+
+/**
+ * Create a session row with an auto-generated id. Mirrors the sidecar's
+ * `routes/session.ts` behavior: ensures the User row exists, then inserts.
+ */
+export async function createSessionAutoId(userId: string): Promise<string> {
+  const db = getTokidappDb()
+  const id = generateCuid()
+  await db.insertInto('TokiDAPPSession')
+    .values({
+      id,
+      userId,
+      status: 'ACTIVE',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .execute()
+  return id
+}
+
+/**
+ * Ensure a User row exists before creating a session (FK safety net).
+ * Mirrors scripts/tokidapp-server/routes/session.ts → ensureUserExists().
+ * Handles cross-environment JWTs whose userId may not exist locally.
+ */
+export async function ensureUserExists(
+  userId: string,
+  walletAddress?: string | null,
+  role?: string | null,
+  email?: string | null,
+): Promise<void> {
+  if (!userId) return
+  const db = getTokidappDb()
+  const walletAddr = (walletAddress || '').toLowerCase()
+
+  try {
+    const existing = await db.selectFrom('User').select('id').where('id', '=', userId).executeTakeFirst()
+    if (existing) return
+  } catch {
+    return
+  }
+
+  if (walletAddr) {
+    try {
+      const byWallet = await db.selectFrom('User').select('id').where('walletAddress', '=', walletAddr).executeTakeFirst()
+      if (byWallet && byWallet.id !== userId) {
+        console.warn(`[tokidapp-queries] User exists under different id; JWT userId=%s != %s`, userId, byWallet.id)
+        return
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  try {
+    await db.insertInto('User')
+      .values({
+        id: userId,
+        walletAddress: walletAddr || null,
+        role: role || null,
+        email: email || null,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastLoginAt: new Date(),
+      })
+      .onConflict((oc) => oc.column('id').doUpdateSet({
+        lastLoginAt: new Date(),
+      }))
+      .execute()
+  } catch (err: any) {
+    if (err?.code === '23505' && err?.constraint?.toLowerCase().includes('walletaddress')) {
+      console.warn(`[tokidapp-queries] walletAddress unique collision; userId=%s wallet=%s`, userId, walletAddr)
+    } else {
+      console.warn('[tokidapp-queries] User upsert failed (non-critical):', err?.message || String(err))
+    }
+  }
 }
 
 export async function updateSession(id: string, data: {
@@ -145,6 +230,148 @@ export async function createMessages(data: Array<{
       updatedAt: now,
     })))
     .execute()
+}
+
+// ─── Session title auto-set ──────────────────────────────────
+/**
+ * Auto-set session title from first user message.
+ * Mirrors scripts/tokidapp-server/routes/messages.ts → POST.
+ */
+export async function setSessionTitleFromFirstMessage(sessionId: string): Promise<void> {
+  const db = getTokidappDb()
+  try {
+    const session = await db.selectFrom('TokiDAPPSession')
+      .select(['id', 'title'])
+      .where('id', '=', sessionId)
+      .executeTakeFirst()
+    if (session && !session.title) {
+      const firstUserMsg = await db.selectFrom('TokiDAPPMessage')
+        .select('content')
+        .where('sessionId', '=', sessionId)
+        .where('role', '=', 'USER')
+        .orderBy('createdAt', 'asc')
+        .limit(1)
+        .executeTakeFirst()
+      if (firstUserMsg) {
+        const title = firstUserMsg.content.slice(0, 120).replace(/\n/g, ' ')
+        await db.updateTable('TokiDAPPSession')
+          .set({ title, updatedAt: new Date() })
+          .where('id', '=', sessionId)
+          .execute()
+      }
+    }
+  } catch {
+    // non-critical
+  }
+}
+
+// ─── Messages with pagination ────────────────────────────────
+export async function findMessagesBySessionPaginated(
+  sessionId: string,
+  limit = 500,
+  offset = 0,
+): Promise<{ messages: MessageRow[]; total: number }> {
+  const db = getTokidappDb()
+  const [messages, totalRow] = await Promise.all([
+    db.selectFrom('TokiDAPPMessage')
+      .where('sessionId', '=', sessionId)
+      .orderBy('createdAt', 'asc')
+      .limit(limit)
+      .offset(offset)
+      .selectAll()
+      .execute(),
+    db.selectFrom('TokiDAPPMessage')
+      .select(db.fn.countAll<number>().as('count'))
+      .where('sessionId', '=', sessionId)
+      .executeTakeFirst(),
+  ])
+  return { messages, total: totalRow?.count ?? 0 }
+}
+
+// ─── Session delete (cascade) ────────────────────────────────
+export async function deleteSession(id: string): Promise<boolean> {
+  const db = getTokidappDb()
+  try {
+    await db.deleteFrom('TokiDAPPSession')
+      .where('id', '=', id)
+      .execute()
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ─── Session finalize ────────────────────────────────────────
+/**
+ * Finalize a session: set endedAt and status=ENDED.
+ * Returns the transcript text for blob upload.
+ */
+export async function finalizeSession(id: string): Promise<{ transcript: string; endedAt: Date } | null> {
+  const db = getTokidappDb()
+  const session = await db.selectFrom('TokiDAPPSession')
+    .where('id', '=', id)
+    .selectAll()
+    .executeTakeFirst()
+  if (!session) return null
+
+  // Build transcript from messages
+  const messages = await db.selectFrom('TokiDAPPMessage')
+    .select(['role', 'content'])
+    .where('sessionId', '=', id)
+    .orderBy('createdAt', 'asc')
+    .execute()
+
+  const transcript = messages
+    .filter(m => m.content?.trim())
+    .filter(m => {
+      const r = m.role.toUpperCase()
+      return r === 'USER' || r === 'ASSISTANT'
+    })
+    .map(m => {
+      const label = m.role.toUpperCase() === 'USER' ? 'User' : 'Assistant'
+      return `${label}: ${m.content.trim()}`
+    })
+    .join('\n\n')
+
+  const endedAt = new Date()
+  await db.updateTable('TokiDAPPSession')
+    .set({ status: 'ENDED', endedAt, updatedAt: endedAt })
+    .where('id', '=', id)
+    .execute()
+
+  return { transcript, endedAt }
+}
+
+// ─── Purge empty sessions ───────────────────────────────────
+export async function purgeEmptySessions(userId: string, ids?: string[]): Promise<string[]> {
+  const db = getTokidappDb()
+  const where: Record<string, unknown> = { userId, status: 'ACTIVE' }
+  if (ids && ids.length > 0) {
+    where.id = { in: ids }
+  }
+  // Use raw query for complex filtering
+  const sessions = await db.selectFrom('TokiDAPPSession')
+    .select('id')
+    .where('userId', '=', userId)
+    .where('status', '=', 'ACTIVE')
+    .execute()
+
+  const emptied: string[] = []
+  for (const s of sessions) {
+    const msgCount = await db.selectFrom('TokiDAPPMessage')
+      .select(db.fn.countAll<number>().as('count'))
+      .where('sessionId', '=', s.id)
+      .executeTakeFirst()
+    const recCount = await db.selectFrom('TokiDAPPAudioRecording')
+      .select(db.fn.countAll<number>().as('count'))
+      .where('sessionId', '=', s.id)
+      .executeTakeFirst()
+    if ((msgCount?.count ?? 0) === 0 && (recCount?.count ?? 0) === 0) {
+      await db.deleteFrom('TokiDAPPSession').where('id', '=', s.id).execute()
+      emptied.push(s.id)
+    }
+  }
+  return emptied
 }
 
 // ─── Recordings ──────────────────────────────────────────────

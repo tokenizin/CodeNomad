@@ -67,7 +67,10 @@ import {
   createRecording,
   findApprovalsByOrchestrator,
   createEvent,
+  createSessionAutoId,
+  ensureUserExists,
 } from "../../lib/tokidapp-queries"
+import { resolveVoiceWsUrl } from "../../lib/tokidapp/voice-ws-url"
 import { addLocalRecording, getLocalRecordings } from "./local-recordings"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 import {
@@ -1853,7 +1856,7 @@ async function getWorkflowDefinitions(): Promise<any[]> {
 
 // ── Routes ────────────────────────────────────────────────────
 
-export function registerTokidappRoutes(app: FastifyInstance) {
+export function registerTokidappRoutes(app: FastifyInstance, starGuardJwtHandler?: StarGuardJwtHandler) {
   // Proxy: serve workflow definitions from StarGuard with local cache
   app.get("/api/tokidapp/workflows", async () => {
     const workflows = await getWorkflowDefinitions()
@@ -1886,31 +1889,54 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     }
   })
 
-  // Session creation — proxy to tokidapp sidecar on :8548
-  // The sidecar has full DB access; this keeps auth handling and route logic unified.
+  // Session creation — direct DB call (no :8548 proxy)
+  // Creates a TokiDAPPSession row and returns a WebSocket URL for the Realtime voice loop.
   app.post("/api/tokidapp/session", async (request, reply) => {
     try {
-      const sidecarUrl = "http://127.0.0.1:8548/api/tokidapp/session"
-      const rawBody = request.body as Record<string, unknown> | undefined
       const authHeader = (request.headers.authorization ?? "") as string
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
 
-      const sidecarRes = await fetch(sidecarUrl, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: authHeader,
-        },
-        body: rawBody ? JSON.stringify(rawBody) : "{}",
-        signal: AbortSignal.timeout(10_000),
-      })
+      if (!token) {
+        reply.code(401)
+        return { error: "Unauthorized" }
+      }
 
-      const data: unknown = await sidecarRes.json()
-      reply.code(sidecarRes.status)
-      return data
+      if (!starGuardJwtHandler) {
+        reply.code(503)
+        return { error: "Auth not configured" }
+      }
+
+      const payload = await starGuardJwtHandler.verify(token)
+      if (!payload) {
+        reply.code(401)
+        return { error: "Invalid or expired token" }
+      }
+
+      const userId = payload.userId
+      if (!userId) {
+        reply.code(401)
+        return { error: "Invalid token payload" }
+      }
+
+      // Ensure User row exists (FK safety net for cross-environment JWTs)
+      await ensureUserExists(
+        userId,
+        payload.walletAddress,
+        payload.role,
+        payload.email,
+      )
+
+      // Create session row
+      const sessionId = await createSessionAutoId(userId)
+
+      // Mint WS URL pointing back at CodeNomad's voice WebSocket
+      const wsUrl = await resolveVoiceWsUrl(userId, token)
+
+      return { sessionId, wsUrl }
     } catch (error) {
-      request.log.error({ err: error }, "TokiDAPP session proxy to sidecar failed")
-      reply.code(502)
-      return { error: "Sidecar unavailable" }
+      request.log.error({ err: error }, "TokiDAPP session creation failed")
+      reply.code(500)
+      return { error: "Session creation failed" }
     }
   })
 

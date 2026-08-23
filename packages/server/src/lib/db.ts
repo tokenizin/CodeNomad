@@ -13,6 +13,22 @@ interface TokiDAPPSessionTable {
   userId: string
   title: string | null
   status: string | null
+  endedAt: Date | null
+  metadata: string | null
+}
+
+// Minimal User subset — only the columns session creation needs to verify.
+// The full User model lives in ZenStack; this is just enough to ensure a
+// stub row exists so TokiDAPPSession.userId FK never fails on a fresh DB.
+interface UserTable {
+  id: string
+  walletAddress: string | null
+  role: string | null
+  email: string | null
+  isActive: boolean | null
+  createdAt: Date | null
+  updatedAt: Date | null
+  lastLoginAt: Date | null
 }
 
 interface TokiDAPPMessageTable {
@@ -23,6 +39,11 @@ interface TokiDAPPMessageTable {
   role: string
   content: string
   sources: string | null
+  contentType: string | null
+  toolCallId: string | null
+  toolName: string | null
+  toolStatus: string | null
+  metadata: string | null
 }
 
 interface TokiDAPPAudioRecordingTable {
@@ -137,6 +158,11 @@ interface TokiDAPPTaskTable {
   title: string | null
   status: string | null
   assignedTo: string | null
+  description: string | null
+  agentType: string | null
+  priority: number | null
+  scheduledFor: Date | null
+  assignedToUserId: string | null
   completedAt: Date | null
 }
 
@@ -157,6 +183,7 @@ interface TokiDAPPWorkflowDefinitionTable {
   name: string | null
   dagConfig: string | null
   enabled: boolean
+  voiceProfileId: string | null
 }
 
 interface TokiDAPPWorkflowSessionTable {
@@ -196,6 +223,7 @@ interface TokiDAPPApprovalRequestTable {
   orchestratorSessionId: string | null
   status: string | null
   assignedTo: string | null
+  assignedToUserId: string | null
   title: string | null
   description: string | null
 }
@@ -230,10 +258,72 @@ interface TokiDAPPFileArtifactTable {
   extractedText: string | null
 }
 
+interface CausalNodeRecordTable {
+  id: string
+  createdAt: Date
+  updatedAt: Date
+  sessionId: string | null
+  orchestratorId: string | null
+  nodeType: string | null
+  content: string | null
+  status: string | null
+  metadata: string | null
+}
+
+interface CausalEdgeRecordTable {
+  id: string
+  createdAt: Date
+  updatedAt: Date
+  sourceNodeId: string
+  targetNodeId: string
+  edgeType: string | null
+  label: string | null
+}
+
+interface TokiDAPPWorkflowStepDefinitionTable {
+  id: string
+  createdAt: Date
+  updatedAt: Date
+  workflowId: string
+  order: number
+  title: string | null
+  assistantScript: string | null
+  mandatoryFieldKeys: string | null
+  toolActionHint: string | null
+  agentType: string | null
+  nodeType: string | null
+  parallelGroup: string | null
+  dependencies: string | null
+  isActive: boolean
+}
+
+interface AIProviderTable {
+  id: string
+  createdAt: Date
+  updatedAt: Date
+  kind: string
+  label: string
+  enabled: boolean
+  config: string | null
+}
+
+interface AIModelTable {
+  id: string
+  createdAt: Date
+  updatedAt: Date
+  modelId: string
+  name: string
+  providerId: string
+  capabilities: string[] | null
+  contextWindow: number | null
+  enabled: boolean
+}
+
 // ─── Database Interface ──────────────────────────────────────
 
 export interface TokiDAPPDB {
   AgentApiKey: AgentApiKeyTable
+  User: UserTable
   TokiDAPPSession: TokiDAPPSessionTable
   TokiDAPPMessage: TokiDAPPMessageTable
   TokiDAPPAudioRecording: TokiDAPPAudioRecordingTable
@@ -251,6 +341,11 @@ export interface TokiDAPPDB {
   TokiDAPPFileArtifact: TokiDAPPFileArtifactTable
   AiUsageEvent: AiUsageEventTable
   StarXpUsageLedger: StarXpUsageLedgerTable
+  CausalNodeRecord: CausalNodeRecordTable
+  CausalEdgeRecord: CausalEdgeRecordTable
+  TokiDAPPWorkflowStepDefinition: TokiDAPPWorkflowStepDefinitionTable
+  AIProvider: AIProviderTable
+  AIModel: AIModelTable
 }
 
 export type DB = Kysely<TokiDAPPDB>

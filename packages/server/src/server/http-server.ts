@@ -27,6 +27,8 @@ import { registerWorktreeRoutes } from "./routes/worktrees.js"
 import { registerSpeechRoutes } from "./routes/speech.js"
 import { registerLocalLlmRoutes } from "./routes/local-llm.js"
 import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp.js"  
+import { registerSidecarProxyMiddleware } from "./routes/sidecar-proxy-middleware.js"
+import { registerTokidappDirectRoutes } from "./routes/tokidapp-direct.js"  
 import { registerRemoteServerRoutes } from "./routes/remote-servers.js"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy.js"
 import { registerSideCarRoutes } from "./routes/sidecars.js"
@@ -466,9 +468,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.get("/api/model-throttle/metrics", async (_request, reply) => {
     reply.send({ config: modelThrottle.getConfig(), metrics: modelThrottle.getMetrics() })
   })
-  registerTokidappRoutes(app)
+  registerTokidappRoutes(app, deps.starGuardJwtHandler)
   registerRecordingRoutes(app)
   registerFileUploadRoutes(app)
+  // Direct DB-backed routes (registered BEFORE sidecar proxy to take precedence)
+  registerTokidappDirectRoutes(app, deps.starGuardJwtHandler)
+  registerSidecarProxyMiddleware(app)
 
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
