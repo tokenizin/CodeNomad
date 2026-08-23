@@ -12,7 +12,8 @@ import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
-import { requestData } from "../opencode-api"
+import { OpencodeApiError, requestData } from "../opencode-api"
+import { getOpencodeErrorTag, getSessionWorkspacePayload } from "../../stores/session-actions"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
@@ -332,13 +333,23 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await requestData(
-            instance.client.session.revert({
-              sessionID: sessionId,
-              messageID,
-            }),
-            "session.revert",
-          )
+          const workspacePayload = await getSessionWorkspacePayload(instance.id, sessionId)
+          const result = await instance.client.session.revert({
+            sessionID: sessionId,
+            messageID,
+            ...workspacePayload,
+          })
+
+          // A 409 here is SessionBusyError: the message is still actively
+          // being streamed into. Revert did NOT happen, so this must surface
+          // as a real failure.
+          const errorTag = getOpencodeErrorTag((result as { error?: unknown } | undefined)?.error)
+          if (errorTag === "SessionBusyError") {
+            log.info("revert: session busy, message still streaming", { instanceId: instance.id, sessionId, messageID })
+            throw new OpencodeApiError("Can't revert — the session is still generating. Stop it first, then try again.")
+          }
+
+          await requestData(Promise.resolve(result), "session.revert")
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

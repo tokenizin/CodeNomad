@@ -655,6 +655,8 @@ export {
   deleteMessage,
   deleteMessagePart,
   executeCustomCommand,
+  getOpencodeErrorTag,
+  getSessionWorkspacePayload,
   pauseSession,
   renameSession,
   runShellCommand,
