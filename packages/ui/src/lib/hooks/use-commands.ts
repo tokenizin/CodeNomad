@@ -14,6 +14,7 @@ import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
 import { OpencodeApiError, requestData } from "../opencode-api"
 import { getOpencodeErrorTag, getSessionWorkspacePayload } from "../../stores/session-actions"
+import { registerBuiltInCommand } from "../../stores/commands"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
@@ -259,6 +260,72 @@ export function useCommands(options: UseCommandsOptions) {
           })
         }
 
+      },
+    })
+
+    // Register /compress as a built-in slash command (alias for compact)
+    registerBuiltInCommand("compress", {
+      label: tGlobal("commands.compactSession.label"),
+      description: tGlobal("commands.compactSession.description"),
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+
+        const sessions = getSessions(instance.id)
+        const session = sessions.find((s) => s.id === sessionId)
+        if (!session) return
+
+        try {
+          await requestData(
+            instance.client.session.summarize({
+              sessionID: sessionId,
+              providerID: session.model.providerId,
+              modelID: session.model.modelId,
+            }),
+            "session.summarize",
+          )
+        } catch (error) {
+          log.error("Failed to compact session (/compress)", error)
+          const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
+          showAlertDialog(tGlobal("commands.compactSession.alert.message", { message }), {
+            title: tGlobal("commands.compactSession.alert.title"),
+            variant: "error",
+          })
+        }
+      },
+    })
+
+    // Register /compact as a built-in slash command
+    registerBuiltInCommand("compact", {
+      label: tGlobal("commands.compactSession.label"),
+      description: tGlobal("commands.compactSession.description"),
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+
+        const sessions = getSessions(instance.id)
+        const session = sessions.find((s) => s.id === sessionId)
+        if (!session) return
+
+        try {
+          await requestData(
+            instance.client.session.summarize({
+              sessionID: sessionId,
+              providerID: session.model.providerId,
+              modelID: session.model.modelId,
+            }),
+            "session.summarize",
+          )
+        } catch (error) {
+          log.error("Failed to compact session (/compact)", error)
+          const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
+          showAlertDialog(tGlobal("commands.compactSession.alert.message", { message }), {
+            title: tGlobal("commands.compactSession.alert.title"),
+            variant: "error",
+          })
+        }
       },
     })
 

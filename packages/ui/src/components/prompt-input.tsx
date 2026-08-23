@@ -9,7 +9,7 @@ import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../stores/wor
 import type { WorkspaceExecResponse } from "../../../server/src/api-types"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
-import { getCommands } from "../stores/commands"
+import { getCommands, getBuiltInCommands, registerBuiltInCommand, unregisterBuiltInCommand } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -358,7 +358,7 @@ export default function PromptInput(props: PromptInputProps) {
     setPrompt,
     getTextarea: () => textareaRef ?? null,
     instanceAgents,
-    commands: () => getCommands(props.instanceId),
+    commands: () => [...getCommands(props.instanceId), ...Array.from(getBuiltInCommands().entries()).map(([name, cmd]) => ({ name, description: cmd.description } as any))],
   })
 
   const {
@@ -612,7 +612,8 @@ export default function PromptInput(props: PromptInputProps) {
     const isKnownSlashCommand =
       isSlashCandidate &&
       commandName.length > 0 &&
-      getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
+      (getCommands(props.instanceId).some((cmd) => cmd.name === commandName) ||
+        getBuiltInCommands().has(commandName))
 
     const submission = preparePromptSubmission({
       mode: isKnownSlashCommand ? "slash" : isShellMode ? "shell" : "message",
@@ -663,6 +664,12 @@ export default function PromptInput(props: PromptInputProps) {
       if (isKnownSlashCommand) {
         if (props.onCommand) {
           await props.onCommand(commandName, resolvedCommandArgs)
+        } else if (getBuiltInCommands().has(commandName)) {
+          // Execute built-in slash command action
+          const builtIn = getBuiltInCommands().get(commandName)
+          if (builtIn) {
+            await builtIn.action()
+          }
         } else {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
