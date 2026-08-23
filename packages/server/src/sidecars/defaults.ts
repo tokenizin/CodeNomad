@@ -57,6 +57,16 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "payment-sidecar",
+    kind: "port",
+    name: "Payment Sidecar",
+    port: 9965,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ]
 
 /**
