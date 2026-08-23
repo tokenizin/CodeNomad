@@ -496,14 +496,6 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     return { items, total: items.length }
   })
 
-  // ── Workflows (GET — list) ─────────────────────────────────
-  app.get("/api/tokidapp/workflows", async (_request, reply) => {
-    // Proxy to StarGuard for workflow definitions (cached)
-    // This route is already handled in tokidapp.ts — skip here
-    reply.code(404)
-    return { error: "Not found" }
-  })
-
   // ── Events (GET — list) ─────────────────────────────────────
   app.get("/api/tokidapp/events", async (request, reply) => {
     const auth = await requireAuth(request, reply, starGuardJwtHandler)
@@ -770,24 +762,6 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
       .execute()
 
     return { ok: true }
-  })
-
-  // ── Approvals (GET — list) ──────────────────────────────────
-  app.get("/api/tokidapp/approvals", async (request, reply) => {
-    const auth = await requireAuth(request, reply, starGuardJwtHandler)
-    if (!auth) return
-
-    const query = request.query as Record<string, string>
-    const orchestratorId = query.orchestratorId
-    const status = query.status
-
-    const db = getTokidappDb()
-    let baseQuery = db.selectFrom("TokiDAPPApprovalRequest").orderBy("createdAt", "desc")
-    if (orchestratorId) baseQuery = baseQuery.where("orchestratorSessionId", "=", orchestratorId)
-    if (status) baseQuery = baseQuery.where("status", "=", status)
-
-    const approvals = await baseQuery.selectAll().execute()
-    return approvals
   })
 
   // ── Approvals (POST — create) ───────────────────────────────
