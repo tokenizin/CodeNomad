@@ -24,6 +24,7 @@ import { registerStorageRoutes } from "./routes/storage.js"
 import { registerPluginRoutes } from "./routes/plugin.js"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes.js"
 import { registerWorktreeRoutes } from "./routes/worktrees.js"
+import { registerLeaseRoutes } from "./routes/leases.js"
 import { registerSpeechRoutes } from "./routes/speech.js"
 import { registerLocalLlmRoutes } from "./routes/local-llm.js"
 import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp.js"  
@@ -421,6 +422,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     connectionManager: deps.clientConnectionManager,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerLeaseRoutes(app, { getLeaseManager: () => deps.workspaceManager.getLeaseManager(), logger: apiLogger })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,

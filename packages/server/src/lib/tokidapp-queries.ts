@@ -176,7 +176,13 @@ export interface MessageRow {
   sessionId: string
   role: string
   content: string
-  sources: string | null
+  contentType: string
+  toolCallId: string | null
+  toolName: string | null
+  toolStatus: string | null
+  tokenCount: number | null
+  audioRecordingId: string | null
+  metadata: unknown | null
 }
 
 export async function findMessagesBySession(sessionId: string): Promise<MessageRow[]> {
@@ -193,7 +199,7 @@ export async function createMessage(data: {
   sessionId: string
   role: string
   content: string
-  sources?: string
+  contentType?: string
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPMessage')
@@ -202,9 +208,8 @@ export async function createMessage(data: {
       sessionId: data.sessionId,
       role: data.role,
       content: data.content,
-      sources: data.sources ?? null,
+      contentType: data.contentType ?? 'text',
       createdAt: new Date(),
-      updatedAt: new Date(),
     })
     .execute()
 }
@@ -214,7 +219,7 @@ export async function createMessages(data: Array<{
   sessionId: string
   role: string
   content: string
-  sources?: string
+  contentType?: string
 }>): Promise<void> {
   if (data.length === 0) return
   const db = getTokidappDb()
@@ -225,9 +230,8 @@ export async function createMessages(data: Array<{
       sessionId: d.sessionId,
       role: d.role,
       content: d.content,
-      sources: d.sources ?? null,
+      contentType: d.contentType ?? 'text',
       createdAt: now,
-      updatedAt: now,
     })))
     .execute()
 }
@@ -335,7 +339,7 @@ export async function finalizeSession(id: string): Promise<{ transcript: string;
 
   const endedAt = new Date()
   await db.updateTable('TokiDAPPSession')
-    .set({ status: 'ENDED', endedAt, updatedAt: endedAt })
+    .set({ status: 'ARCHIVED', endedAt, updatedAt: endedAt })
     .where('id', '=', id)
     .execute()
 
@@ -553,19 +557,19 @@ export async function findOrchestratorById(id: string) {
 
   const [nodes, approvals, events, publishments] = await Promise.all([
     db.selectFrom('TokiDAPPOrchestratorNode')
-      .where('orchestratorSessionId', '=', id)
+      .where('orchestratorId', '=', id)
       .selectAll()
       .execute(),
     db.selectFrom('TokiDAPPApprovalRequest')
-      .where('orchestratorSessionId', '=', id)
+      .where('orchestratorId', '=', id)
       .selectAll()
       .execute(),
     db.selectFrom('TokiDAPPEventLog')
-      .where('sessionId', '=', session.sessionId)
+      .where('orchestratorId', '=', id)
       .selectAll()
       .execute(),
     db.selectFrom('TokiDAPPPublishment')
-      .where('orchestratorSessionId', '=', id)
+      .where('orchestratorId', '=', id)
       .selectAll()
       .execute(),
   ])
@@ -578,18 +582,21 @@ export async function createOrchestratorSession(data: {
   sessionId: string
   status?: string
   lifecyclePhase?: string
-  metadata?: string
-  nodes?: string
+  voiceMode?: boolean
+  greetingPlayed?: boolean
+  metadata?: unknown
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPOrchestratorSession')
     .values({
       id: data.id,
       sessionId: data.sessionId,
-      status: data.status ?? null,
+      status: data.status ?? 'active',
       lifecyclePhase: data.lifecyclePhase ?? null,
-      metadata: data.metadata ?? null,
-      nodes: data.nodes ?? null,
+      voiceMode: data.voiceMode ?? true,
+      greetingPlayed: data.greetingPlayed ?? false,
+      currentDagId: null,
+      metadata: data.metadata ? JSON.stringify(data.metadata) : null,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
@@ -599,8 +606,8 @@ export async function createOrchestratorSession(data: {
 export async function updateOrchestratorSession(id: string, data: {
   status?: string
   lifecyclePhase?: string
-  metadata?: string
-  nodes?: string
+  currentDagId?: string
+  greetingPlayed?: boolean
 }): Promise<void> {
   const db = getTokidappDb()
   await db.updateTable('TokiDAPPOrchestratorSession')
@@ -630,19 +637,29 @@ export async function findTaskById(id: string) {
 
 export async function createTask(data: {
   id: string
-  sessionId?: string
-  title?: string
+  sessionId: string
+  userId: string
+  title: string
+  description?: string
+  agentType?: string
   status?: string
-  assignedTo?: string
+  priority?: number
+  assignedToUserId?: string
+  scheduledFor?: Date | null
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPTask')
     .values({
       id: data.id,
-      sessionId: data.sessionId ?? null,
-      title: data.title ?? null,
-      status: data.status ?? null,
-      assignedTo: data.assignedTo ?? null,
+      sessionId: data.sessionId,
+      userId: data.userId,
+      title: data.title,
+      description: data.description ?? null,
+      agentType: data.agentType ?? 'OPENCODE',
+      status: data.status ?? 'PENDING',
+      priority: data.priority ?? 0,
+      assignedToUserId: data.assignedToUserId ?? null,
+      scheduledFor: data.scheduledFor ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
@@ -652,7 +669,7 @@ export async function createTask(data: {
 export async function updateTask(id: string, data: {
   title?: string
   status?: string
-  assignedTo?: string
+  assignedToUserId?: string | null
   completedAt?: Date | null
 }): Promise<void> {
   const db = getTokidappDb()
@@ -664,10 +681,10 @@ export async function updateTask(id: string, data: {
 
 // ─── Approvals ───────────────────────────────────────────────
 
-export async function findApprovalsByOrchestrator(orchestratorSessionId: string) {
+export async function findApprovalsByOrchestrator(orchestratorId: string) {
   const db = getTokidappDb()
   return db.selectFrom('TokiDAPPApprovalRequest')
-    .where('orchestratorSessionId', '=', orchestratorSessionId)
+    .where('orchestratorId', '=', orchestratorId)
     .orderBy('createdAt', 'desc')
     .selectAll()
     .execute()
@@ -683,21 +700,25 @@ export async function findApprovalById(id: string) {
 
 export async function createApproval(data: {
   id: string
-  orchestratorSessionId?: string
-  status?: string
-  assignedTo?: string
-  title?: string
+  orchestratorId: string
+  title: string
   description?: string
+  status?: string
+  priority?: number
+  assignedToUserId?: string
+  nodeId?: string
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPApprovalRequest')
     .values({
       id: data.id,
-      orchestratorSessionId: data.orchestratorSessionId ?? null,
-      status: data.status ?? null,
-      assignedTo: data.assignedTo ?? null,
-      title: data.title ?? null,
+      orchestratorId: data.orchestratorId,
+      nodeId: data.nodeId ?? null,
+      title: data.title,
       description: data.description ?? null,
+      status: data.status ?? 'PENDING',
+      priority: data.priority ?? 0,
+      assignedToUserId: data.assignedToUserId ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
@@ -706,9 +727,10 @@ export async function createApproval(data: {
 
 export async function updateApproval(id: string, data: {
   status?: string
-  assignedTo?: string
-  title?: string
-  description?: string
+  decision?: string
+  comment?: string
+  decidedByUserId?: string
+  decidedAt?: Date
 }): Promise<void> {
   const db = getTokidappDb()
   await db.updateTable('TokiDAPPApprovalRequest')
@@ -719,10 +741,10 @@ export async function updateApproval(id: string, data: {
 
 // ─── Events ──────────────────────────────────────────────────
 
-export async function findEventsBySession(sessionId: string) {
+export async function findEventsByOrchestrator(orchestratorId: string) {
   const db = getTokidappDb()
   return db.selectFrom('TokiDAPPEventLog')
-    .where('sessionId', '=', sessionId)
+    .where('orchestratorId', '=', orchestratorId)
     .orderBy('createdAt', 'desc')
     .selectAll()
     .execute()
@@ -730,19 +752,30 @@ export async function findEventsBySession(sessionId: string) {
 
 export async function createEvent(data: {
   id: string
-  sessionId?: string
+  orchestratorId?: string
+  nodeId?: string
   eventType: string
-  data?: string
+  severity?: string
+  title: string
+  description?: string
+  metadata?: unknown
+  correlationId?: string
+  source?: string
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPEventLog')
     .values({
       id: data.id,
-      sessionId: data.sessionId ?? null,
+      orchestratorId: data.orchestratorId ?? null,
+      nodeId: data.nodeId ?? null,
       eventType: data.eventType,
-      data: data.data ?? null,
+      severity: data.severity ?? 'INFO',
+      title: data.title,
+      description: data.description ?? null,
+      metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+      correlationId: data.correlationId ?? null,
+      source: data.source ?? 'codenomad',
       createdAt: new Date(),
-      updatedAt: new Date(),
     })
     .execute()
 }
@@ -753,7 +786,7 @@ export async function findDeploymentsBySession(sessionId: string) {
   const db = getTokidappDb()
   return db.selectFrom('TokiDAPPDeployment')
     .where('sessionId', '=', sessionId)
-    .orderBy('createdAt', 'desc')
+    .orderBy('startedAt', 'desc')
     .selectAll()
     .execute()
 }
@@ -761,22 +794,23 @@ export async function findDeploymentsBySession(sessionId: string) {
 export async function createDeployment(data: {
   id: string
   sessionId: string
+  userId: string
   status?: string
   commitHash?: string
   commitMsg?: string
-  buildLog?: string
+  branch?: string
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPDeployment')
     .values({
       id: data.id,
       sessionId: data.sessionId,
-      status: data.status ?? null,
+      userId: data.userId,
+      status: data.status ?? 'PENDING',
       commitHash: data.commitHash ?? null,
       commitMsg: data.commitMsg ?? null,
-      buildLog: data.buildLog ?? null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      branch: data.branch ?? null,
+      startedAt: new Date(),
     })
     .execute()
 }
@@ -803,8 +837,10 @@ export async function createWorkflow(data: {
   id: string
   slug: string
   name: string
-  dagConfig?: string
-  enabled?: boolean
+  defaultModeId?: string
+  toolExecutionMode?: string
+  summaryForPrompt?: string
+  isActive?: boolean
 }): Promise<void> {
   const db = getTokidappDb()
   await db.insertInto('TokiDAPPWorkflowDefinition')
@@ -812,8 +848,11 @@ export async function createWorkflow(data: {
       id: data.id,
       slug: data.slug,
       name: data.name,
-      dagConfig: data.dagConfig ?? null,
-      enabled: data.enabled ?? true,
+      defaultModeId: data.defaultModeId ?? 'default',
+      toolExecutionMode: data.toolExecutionMode ?? 'auto',
+      summaryForPrompt: data.summaryForPrompt ?? null,
+      isActive: data.isActive ?? true,
+      version: 1,
       createdAt: new Date(),
       updatedAt: new Date(),
     })

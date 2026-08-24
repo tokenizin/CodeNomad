@@ -154,6 +154,26 @@ function parseVoiceLocale(raw: unknown): "en" | "id" | "auto" {
  *  The tunnel has the blob proxy route and doesn't require JWT auth. */
 const TUNNEL_PUBLIC_URL = (process.env.TUNNEL_PUBLIC_URL || "https://chat.tokenizin.com").replace(/\/+$/, "")
 
+/** TokiDAPPEventType is a Postgres enum — unknown labels raise 22P02. */
+const VALID_DB_EVENT_TYPES = new Set([
+  "ORCHESTRATOR_CREATED", "ORCHESTRATOR_GREETED", "INTENT_CLASSIFIED",
+  "DAG_BUILT", "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED",
+  "NODE_RETRY", "NODE_SKIPPED", "APPROVAL_REQUESTED", "APPROVAL_APPROVED",
+  "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "BROADCAST_SENT",
+  "LIFECYCLE_PHASE", "ERROR", "HEALING_ACTION", "WORKFLOW_COMPLETED",
+])
+const VALID_DB_SEVERITIES = new Set(["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"])
+
+function toDbEventType(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_DB_EVENT_TYPES.has(v) ? v : "LIFECYCLE_PHASE"
+}
+
+function toDbSeverity(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_DB_SEVERITIES.has(v) ? v : "INFO"
+}
+
 /** WS registry keys (tokidapp_*, voice_*) — not StarWorld TokiDAPPSession ids. */
 function isWsTransportSessionKey(id: string): boolean {
   return id.startsWith("tokidapp_") || id.startsWith("voice_")
@@ -3584,9 +3604,11 @@ async function handleOrchestrateMessage(
         // Also persist event to DB (fire-and-forget, non-fatal)
         createEvent({
           id: crypto.randomUUID(),
-          sessionId: orchestratorId,
-          eventType: eventType || "orchestrator_event",
-          data: JSON.stringify({ orchestratorId, eventType, severity, title, metadata }),
+          orchestratorId,
+          eventType: toDbEventType(eventType),
+          severity: toDbSeverity(severity),
+          title: title || "Orchestrator event",
+          metadata,
         }).catch((e: Error) => {
           console.error("[tokidapp] Failed to create event:", e.message)
         })

@@ -72,6 +72,31 @@ function mapRole(role: string): string {
   return ROLE_MAP[role] || "SYSTEM"
 }
 
+// ── Event enum guards ────────────────────────────────────────
+// TokiDAPPEventType and TokiDAPPEventSeverity are Postgres enums —
+// an unknown label raises 22P02, so unrecognised input is coerced
+// to a valid member rather than passed through.
+
+const VALID_EVENT_TYPES = new Set([
+  "ORCHESTRATOR_CREATED", "ORCHESTRATOR_GREETED", "INTENT_CLASSIFIED",
+  "DAG_BUILT", "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED",
+  "NODE_RETRY", "NODE_SKIPPED", "APPROVAL_REQUESTED", "APPROVAL_APPROVED",
+  "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "BROADCAST_SENT",
+  "LIFECYCLE_PHASE", "ERROR", "HEALING_ACTION", "WORKFLOW_COMPLETED",
+])
+
+const VALID_SEVERITIES = new Set(["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"])
+
+function coerceEventType(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_EVENT_TYPES.has(v) ? v : "LIFECYCLE_PHASE"
+}
+
+function coerceSeverity(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_SEVERITIES.has(v) ? v : "INFO"
+}
+
 // ── Routes ───────────────────────────────────────────────────
 
 export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtHandler?: StarGuardJwtHandler) {
@@ -378,7 +403,7 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
             toolStatus: input.toolStatus ? String(input.toolStatus) : null,
             metadata: input.metadata ? JSON.stringify(input.metadata) : null,
             createdAt: input.createdAt ? new Date(String(input.createdAt)) : now,
-            updatedAt: now,
+            contentType: input.contentType ? String(input.contentType) : "text",
           })
           .execute()
         saved.push(id)
@@ -456,7 +481,7 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
       for (const orch of orchestrators) {
         const approvals = await db.selectFrom("TokiDAPPApprovalRequest")
           .select(["id", "title", "status"])
-          .where("orchestratorSessionId", "=", orch.id)
+          .where("orchestratorId", "=", orch.id)
           .where("status", "=", "PENDING")
           .execute()
 
@@ -515,8 +540,9 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
 
     const db = getTokidappDb()
     let baseQuery = db.selectFrom("TokiDAPPEventLog").orderBy("createdAt", "desc").limit(limit)
-    if (orchestratorId) baseQuery = baseQuery.where("sessionId", "=", orchestratorId)
+    if (orchestratorId) baseQuery = baseQuery.where("orchestratorId", "=", orchestratorId)
     if (eventType) baseQuery = baseQuery.where("eventType", "=", eventType)
+    if (severity) baseQuery = baseQuery.where("severity", "=", severity)
 
     const events = await baseQuery.selectAll().execute()
     return events
@@ -528,11 +554,17 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     if (!auth) return
 
     const body = (request.body ?? {}) as Record<string, unknown>
-    const { sessionId, eventType, data } = body
+    const { orchestratorId, eventType, title, severity, description, metadata, nodeId } = body
 
-    if (!sessionId || !eventType) {
+    // TokiDAPPEventLog.orchestratorId is NOT NULL — an event always belongs
+    // to an orchestrator run, so a missing id is a 400 rather than a 500.
+    if (!orchestratorId) {
       reply.code(400)
-      return { error: "sessionId and eventType required" }
+      return { error: "orchestratorId is required" }
+    }
+    if (!eventType || !title) {
+      reply.code(400)
+      return { error: "eventType and title required" }
     }
 
     const db = getTokidappDb()
@@ -540,11 +572,16 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     await db.insertInto("TokiDAPPEventLog")
       .values({
         id,
-        sessionId: String(sessionId),
-        eventType: String(eventType),
-        data: data ? JSON.stringify(data) : null,
+        orchestratorId: String(orchestratorId),
+        nodeId: nodeId ? String(nodeId) : null,
+        eventType: coerceEventType(eventType),
+        severity: coerceSeverity(severity),
+        title: String(title),
+        description: description ? String(description) : null,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+        correlationId: null,
+        source: "codenomad-direct",
         createdAt: new Date(),
-        updatedAt: new Date(),
       })
       .execute()
 
@@ -588,6 +625,7 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
       .values({
         id,
         sessionId: String(sessionId),
+        userId: auth.userId,
         title: String(title),
         description: description ? String(description) : null,
         agentType: agentType ? String(agentType) : "OPENCODE",
@@ -770,11 +808,11 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     if (!auth) return
 
     const body = (request.body ?? {}) as Record<string, unknown>
-    const { orchestratorSessionId, title, description, assignedToUserId } = body
+    const { orchestratorId, title, description, assignedToUserId } = body
 
-    if (!orchestratorSessionId || !title) {
+    if (!orchestratorId || !title) {
       reply.code(400)
-      return { error: "orchestratorSessionId and title required" }
+      return { error: "orchestratorId and title required" }
     }
 
     const db = getTokidappDb()
@@ -782,11 +820,13 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     await db.insertInto("TokiDAPPApprovalRequest")
       .values({
         id,
-        orchestratorSessionId: String(orchestratorSessionId),
+        orchestratorId: String(orchestratorId),
+        nodeId: null,
         title: String(title),
         description: description ? String(description) : null,
-        assignedToUserId: assignedToUserId ? String(assignedToUserId) : null,
         status: "PENDING",
+        priority: 0,
+        assignedToUserId: assignedToUserId ? String(assignedToUserId) : null,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
@@ -830,7 +870,7 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
 
     const db = getTokidappDb()
     const existing = await db.selectFrom("TokiDAPPApprovalRequest")
-      .select(["id", "status"])
+      .select(["id", "status", "orchestratorId"])
       .where("id", "=", id)
       .executeTakeFirst()
 
@@ -844,20 +884,38 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
       return { error: `Approval already ${existing.status}` }
     }
 
+    const decidedAt = new Date()
     await db.updateTable("TokiDAPPApprovalRequest")
-      .set({ status: String(status), updatedAt: new Date() })
+      .set({
+        status: String(status),
+        decision: String(status),
+        comment: comment ? String(comment) : null,
+        decidedByUserId: auth.userId,
+        decidedAt,
+        updatedAt: decidedAt,
+      })
       .where("id", "=", id)
       .execute()
 
-    // Log the decision event
+    // Log the decision event. orchestratorId is NOT NULL, so it comes from the
+    // approval row rather than being left null.
     await db.insertInto("TokiDAPPEventLog")
       .values({
         id: crypto.randomUUID(),
-        sessionId: id,
-        eventType: "APPROVAL_DECISION",
-        data: JSON.stringify({ approvalId: id, status, comment, decidedBy: auth.userId }),
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        orchestratorId: existing.orchestratorId,
+        nodeId: null,
+        eventType: String(status) === "APPROVED"
+          ? "APPROVAL_APPROVED"
+          : String(status) === "REJECTED"
+            ? "APPROVAL_REJECTED"
+            : "APPROVAL_EXPIRED",
+        severity: "INFO",
+        title: `Approval ${status}`,
+        description: comment ? String(comment) : null,
+        metadata: JSON.stringify({ approvalId: id, status, comment, decidedBy: auth.userId }),
+        correlationId: id,
+        source: "codenomad-direct",
+        createdAt: decidedAt,
       })
       .execute()
 
@@ -870,14 +928,14 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
     if (!auth) return
 
     const db = getTokidappDb()
-    const providers = await db.selectFrom("AIProvider")
+    const providers = await db.selectFrom("AiProvider")
       .select(["id", "kind", "label"])
       .where("enabled", "=", true)
       .execute()
 
     const providerMap = new Map(providers.map((p: { id: string; kind: string; label: string }) => [p.id, { kind: p.kind, label: p.label }]))
 
-    const models = await db.selectFrom("AIModel")
+    const models = await db.selectFrom("AiModel")
       .select(["modelId", "name", "providerId", "capabilities", "contextWindow"])
       .where("enabled", "=", true)
       .execute()
@@ -915,7 +973,7 @@ export function registerTokidappDirectRoutes(app: FastifyInstance, starGuardJwtH
 
     const db = getTokidappDb()
     let baseQuery = db.selectFrom("TokiDAPPDeployment")
-      .orderBy("createdAt", "desc")
+      .orderBy("startedAt", "desc")
       .limit(limit)
 
     if (sessionId) {

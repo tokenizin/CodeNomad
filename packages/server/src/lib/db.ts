@@ -14,7 +14,8 @@ interface TokiDAPPSessionTable {
   title: string | null
   status: string | null
   endedAt: Date | null
-  metadata: string | null
+  startedAt: Date | null
+  metadata: unknown | null
 }
 
 // Minimal User subset — only the columns session creation needs to verify.
@@ -34,16 +35,16 @@ interface UserTable {
 interface TokiDAPPMessageTable {
   id: string
   createdAt: Date
-  updatedAt: Date
   sessionId: string
   role: string
   content: string
-  sources: string | null
-  contentType: string | null
+  contentType: string
   toolCallId: string | null
   toolName: string | null
   toolStatus: string | null
-  metadata: string | null
+  tokenCount: number | null
+  audioRecordingId: string | null
+  metadata: unknown | null
 }
 
 interface TokiDAPPAudioRecordingTable {
@@ -67,13 +68,27 @@ interface TokiDAPPAudioRecordingTable {
 
 interface TokiDAPPDeploymentTable {
   id: string
-  createdAt: Date
-  updatedAt: Date
   sessionId: string
-  status: string | null
+  userId: string
+  status: string
   commitHash: string | null
   commitMsg: string | null
-  buildLog: string | null
+  branch: string | null
+  filesChanged: number | null
+  vercelDeployId: string | null
+  vercelUrl: string | null
+  vercelHookId: string | null
+  vercelTarget: string | null
+  buildLogsBlobUrl: string | null
+  buildLogsTruncated: string | null
+  startedAt: Date
+  completedAt: Date | null
+  durationMs: number | null
+  errorMessage: string | null
+  errorDetails: unknown | null
+  rolledBackToDeployId: string | null
+  rolledBackAt: Date | null
+  metadata: unknown | null
 }
 
 interface TokiDAPPAgentSessionTable {
@@ -154,16 +169,18 @@ interface TokiDAPPTaskTable {
   id: string
   createdAt: Date
   updatedAt: Date
-  sessionId: string | null
-  title: string | null
-  status: string | null
-  assignedTo: string | null
+  sessionId: string
+  userId: string
+  title: string
   description: string | null
-  agentType: string | null
+  agentType: string
+  status: string
   priority: number | null
-  scheduledFor: Date | null
   assignedToUserId: string | null
+  scheduledFor: Date | null
   completedAt: Date | null
+  resultSummary: string | null
+  errorMessage: string | null
 }
 
 interface TokiDAPPWorkspaceTable {
@@ -179,11 +196,16 @@ interface TokiDAPPWorkflowDefinitionTable {
   id: string
   createdAt: Date
   updatedAt: Date
-  slug: string | null
-  name: string | null
-  dagConfig: string | null
-  enabled: boolean
+  slug: string
+  name: string
+  defaultModeId: string
+  stagePathnameHint: string | null
+  toolExecutionMode: string
+  entryAppPath: string | null
+  summaryForPrompt: string | null
   voiceProfileId: string | null
+  isActive: boolean
+  version: number
 }
 
 interface TokiDAPPWorkflowSessionTable {
@@ -200,50 +222,82 @@ interface TokiDAPPOrchestratorSessionTable {
   createdAt: Date
   updatedAt: Date
   sessionId: string
-  status: string | null
+  greetingPlayed: boolean
+  voiceMode: boolean
+  currentDagId: string | null
+  status: string
   lifecyclePhase: string | null
-  metadata: string | null
-  nodes: string | null
+  metadata: unknown | null
 }
 
 interface TokiDAPPOrchestratorNodeTable {
   id: string
   createdAt: Date
   updatedAt: Date
-  orchestratorSessionId: string
-  nodeType: string | null
-  status: string | null
-  data: string | null
+  orchestratorId: string
+  order: number
+  title: string
+  nodeType: string
+  toolName: string | null
+  toolInput: unknown | null
+  toolOutput: unknown | null
+  status: string
+  parallelGroup: string | null
+  dependencies: string[] | null
+  maxRetries: number
+  retryCount: number
+  timeoutMs: number | null
+  assignedAgentId: string | null
+  agentType: string | null
+  errorMessage: string | null
+  startedAt: Date | null
+  completedAt: Date | null
+  durationMs: number | null
+  metadata: unknown | null
 }
 
 interface TokiDAPPApprovalRequestTable {
   id: string
   createdAt: Date
   updatedAt: Date
-  orchestratorSessionId: string | null
-  status: string | null
-  assignedTo: string | null
-  assignedToUserId: string | null
-  title: string | null
+  orchestratorId: string
+  nodeId: string | null
+  title: string
   description: string | null
+  contextSnapshot: unknown | null
+  status: string
+  priority: number | null
+  assignedToUserId: string | null
+  decidedByUserId: string | null
+  decision: string | null
+  comment: string | null
+  expiresAt: Date | null
+  autoApproveAfter: Date | null
+  decidedAt: Date | null
 }
 
 interface TokiDAPPEventLogTable {
   id: string
   createdAt: Date
-  updatedAt: Date
-  sessionId: string | null
-  eventType: string | null
-  data: string | null
+  orchestratorId: string | null
+  nodeId: string | null
+  eventType: string
+  severity: string
+  title: string
+  description: string | null
+  metadata: unknown | null
+  correlationId: string | null
+  source: string | null
 }
 
 interface TokiDAPPPublishmentTable {
   id: string
-  createdAt: Date
-  updatedAt: Date
-  orchestratorSessionId: string | null
-  status: string | null
-  publicationUri: string | null
+  orchestratorId: string
+  channel: string
+  eventType: string
+  payload: unknown | null
+  recipientCount: number
+  publishedAt: Date
 }
 
 interface TokiDAPPFileArtifactTable {
@@ -261,23 +315,27 @@ interface TokiDAPPFileArtifactTable {
 interface CausalNodeRecordTable {
   id: string
   createdAt: Date
-  updatedAt: Date
   sessionId: string | null
   orchestratorId: string | null
-  nodeType: string | null
-  content: string | null
+  nodeType: string
+  label: string
+  description: string | null
+  confidence: number | null
   status: string | null
-  metadata: string | null
+  evidence: string | null
+  vulnerability: string | null
+  sourceTool: string | null
+  sourceStepId: string | null
 }
 
 interface CausalEdgeRecordTable {
   id: string
   createdAt: Date
-  updatedAt: Date
+  sessionId: string | null
   sourceNodeId: string
   targetNodeId: string
-  edgeType: string | null
-  label: string | null
+  label: string
+  description: string | null
 }
 
 interface TokiDAPPWorkflowStepDefinitionTable {
@@ -286,36 +344,36 @@ interface TokiDAPPWorkflowStepDefinitionTable {
   updatedAt: Date
   workflowId: string
   order: number
-  title: string | null
+  title: string
   assistantScript: string | null
-  mandatoryFieldKeys: string | null
+  mandatoryFieldKeys: string[] | null
   toolActionHint: string | null
   agentType: string | null
   nodeType: string | null
   parallelGroup: string | null
-  dependencies: string | null
+  dependencies: string[] | null
   isActive: boolean
 }
 
-interface AIProviderTable {
+interface AiProviderTable {
   id: string
   createdAt: Date
   updatedAt: Date
   kind: string
   label: string
+  config: unknown | null
   enabled: boolean
-  config: string | null
 }
 
-interface AIModelTable {
+interface AiModelTable {
   id: string
   createdAt: Date
   updatedAt: Date
-  modelId: string
-  name: string
   providerId: string
-  capabilities: string[] | null
+  name: string
+  modelId: string
   contextWindow: number | null
+  capabilities: string[] | null
   enabled: boolean
 }
 
@@ -344,8 +402,8 @@ export interface TokiDAPPDB {
   CausalNodeRecord: CausalNodeRecordTable
   CausalEdgeRecord: CausalEdgeRecordTable
   TokiDAPPWorkflowStepDefinition: TokiDAPPWorkflowStepDefinitionTable
-  AIProvider: AIProviderTable
-  AIModel: AIModelTable
+  AiProvider: AiProviderTable
+  AiModel: AiModelTable
 }
 
 export type DB = Kysely<TokiDAPPDB>

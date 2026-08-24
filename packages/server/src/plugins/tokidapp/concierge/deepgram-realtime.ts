@@ -1493,7 +1493,7 @@ async function processUserMessage(
         // Persist tool result to DB (fire-and-forget)
         if (session.chatSessionId) {
           const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "tool", content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 500)}`, sources: toolCall.id }).catch((err) => {
+          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "tool", content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 500)}` }).catch((err) => {
             console.error("[deepgram-realtime] Failed to persist tool result:", err.message)
           })
         }
