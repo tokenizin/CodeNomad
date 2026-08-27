@@ -2116,17 +2116,18 @@ export async function lintWiki(): Promise<string> {
     const resolveLink = (link: { target: string; alias?: string }): string | null => {
       // 1. Exact page path match
       if (existingPages.has(link.target)) return link.target
-      // 2. Trailing-name match
-      if (existingPageNames.has(normalizeTarget(link.target))) {
-        return pageNameByName(normalizeTarget(link.target), relFiles)
-      }
-      // 3. StableId match (the alias often holds the stableId)
+      // 2. StableId match via alias (must precede display-name match — e.g.
+      //    [[Real World Assets|SC.layer.rwa]] vs domains/Real World Assets.md)
       if (link.alias && stableIdToPage.has(link.alias)) {
         return stableIdToPage.get(link.alias)!
       }
-      // 4. The target itself may be a stableId
+      // 3. The target itself may be a stableId
       if (stableIdToPage.has(link.target)) {
         return stableIdToPage.get(link.target)!
+      }
+      // 4. Trailing-name match (ambiguous when multiple pages share a title)
+      if (existingPageNames.has(normalizeTarget(link.target))) {
+        return pageNameByName(normalizeTarget(link.target), relFiles)
       }
       return null
     }
