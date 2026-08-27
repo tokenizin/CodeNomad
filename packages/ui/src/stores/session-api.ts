@@ -789,10 +789,10 @@ async function fetchProviders(instanceId: string): Promise<void> {
 
   try {
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    // Do not PATCH /config to sync Ollama models: project opencode.json IDs often
-    // diverge from live tags (hermes3 vs hermes3:latest), PATCH does not persist into
-    // the project provider layer, and the retry loop surfaces as console 400s.
-    // Live models are merged client-side via mergeLocalLlmProviders().
+    // Do not PATCH /config to sync Ollama models: PATCH does not persist into the
+    // project provider layer and used to spam console 400s. Client merge intersects
+    // OpenCode catalog keys with live /api/tags so the picker never offers a tag
+    // OpenCode getModel cannot resolve (ProviderModelNotFoundError).
     const response = await rootClient.config.providers()
     if (!response.data) return
 

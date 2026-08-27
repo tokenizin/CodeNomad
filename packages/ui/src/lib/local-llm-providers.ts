@@ -88,35 +88,73 @@ export function mergeLocalLlmListedProviders<T extends { id: string; name: strin
   return next
 }
 
+/** Strip trailing `:latest` so hermes3 matches hermes3:latest. */
+export function normalizeOllamaModelId(id: string): string {
+  return id.replace(/:latest$/i, "")
+}
+
+/** True when a live /api/tags id matches an OpenCode provider model key. */
+export function ollamaModelIdsMatch(liveId: string, configId: string): boolean {
+  if (liveId === configId) return true
+  const live = normalizeOllamaModelId(liveId)
+  const config = normalizeOllamaModelId(configId)
+  return live === config || liveId === config || `${config}:latest` === liveId
+}
+
+/**
+ * Merge live Ollama tags into the OpenCode provider list for the picker.
+ *
+ * Only models that appear in BOTH OpenCode's catalog (session create / getModel)
+ * and live `/api/tags` are shown. Live-only tags (e.g. a 70B pulled but never
+ * declared in opencode.json) caused ProviderModelNotFoundError when selected.
+ * Keep OpenCode model `id` (catalog key); prefer live display name when present.
+ * `:latest` alias matching avoids wiping hermes3 when live only has hermes3:latest.
+ */
 export function mergeLocalLlmProviders(existing: Provider[], localProvider: Provider | null): Provider[] {
   if (!localProvider) {
     return existing
   }
 
   const index = existing.findIndex((provider) => provider.id === localProvider.id)
-  // Live Ollama tags are the source of truth for model IDs (e.g. hermes3:latest).
-  // Do not intersect with opencode.json keys — those often omit the :latest suffix and
-  // would wipe the picker. OpenCode PATCH /config also does not persist project-file
-  // provider models, so client-side merge is the reliable path.
-  const merged: Provider = {
-    id: localProvider.id,
-    name: localProvider.name,
-    defaultModelId: localProvider.defaultModelId,
-    models: localProvider.models,
-  }
-
+  // No OpenCode ollama provider → do not invent a live-only catalog (inference would fail).
   if (index === -1) {
-    return [merged, ...existing]
+    return existing
   }
 
   const current = existing[index]
+  const liveModels = localProvider.models
+  const intersected = current.models
+    .map((configModel) => {
+      const liveMatch = liveModels.find((live) => ollamaModelIdsMatch(live.id, configModel.id))
+      if (!liveMatch) return null
+      return {
+        ...configModel,
+        // Catalog id must stay OpenCode's key for POST /session { providerID, id }.
+        id: configModel.id,
+        name: liveMatch.name || configModel.name,
+        providerId: localProvider.id,
+      }
+    })
+    .filter((model): model is NonNullable<typeof model> => model !== null)
+
+  const defaultCandidates = [
+    current.defaultModelId,
+    localProvider.defaultModelId,
+    intersected[0]?.id,
+  ].filter((id): id is string => Boolean(id))
+
+  const defaultModelId =
+    defaultCandidates.find((candidate) =>
+      intersected.some((model) => ollamaModelIdsMatch(model.id, candidate) || model.id === candidate),
+    ) ?? current.defaultModelId
+
   return existing.map((provider, providerIndex) =>
     providerIndex === index
       ? {
           ...current,
-          name: merged.name || current.name,
-          defaultModelId: merged.defaultModelId || current.defaultModelId,
-          models: merged.models,
+          name: localProvider.name || current.name,
+          defaultModelId,
+          models: intersected,
         }
       : provider,
   )
