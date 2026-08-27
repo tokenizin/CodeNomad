@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "fs"
 import { spawn } from "child_process"
 import { readFile } from "fs/promises"
 import path from "path"
@@ -307,6 +308,17 @@ async function resolveUnstagedBeforePath(params: {
   return readGitIndexBlob(params.workspaceFolder, params.normalizedOriginalPath)
 }
 
+async function isSubmodule(directory: string, subPath: string): Promise<boolean> {
+  const target = path.join(directory, ...subPath.split("/"))
+  if (!existsSync(path.join(target, ".git"))) return false
+  try {
+    const stat = statSync(path.join(target, ".git"))
+    // Submodule .git can be a file (gitdir link) or a real directory
+    if (stat.isDirectory()) return true
+  } catch { /* ignore */ }
+  return false
+}
+
 export async function getWorktreeGitDiff(params: {
   workspaceFolder: string
   path: string
@@ -315,6 +327,12 @@ export async function getWorktreeGitDiff(params: {
 }): Promise<WorktreeGitDiffResponse> {
   const normalizedPath = normalizeGitWorktreeRelativePath(params.path)
   const normalizedOriginalPath = params.originalPath ? normalizeGitWorktreeRelativePath(params.originalPath) : null
+
+  // Submodule directories cannot be diffed via `git show HEAD:` — HEAD only knows a commit SHA, not the submodule's contents.
+  // Return a valid empty diff so the editor does not treat this as an error.
+  if (await isSubmodule(params.workspaceFolder, normalizedPath)) {
+    return { path: normalizedPath, originalPath: normalizedOriginalPath, scope: params.scope, before: "", after: "" }
+  }
 
   const trackedMetadata = await getTrackedDiffMetadata({
     workspaceFolder: params.workspaceFolder,
