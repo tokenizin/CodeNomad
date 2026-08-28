@@ -77,6 +77,26 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "deepseek",
+    kind: "port",
+    name: "DeepSeek V4 Flash (MLX OptiQ)",
+    port: 8082,
+    insecure: true,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "ollama",
+    kind: "port",
+    name: "Ollama",
+    port: 11434,
+    insecure: true,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ]
 
 /**
