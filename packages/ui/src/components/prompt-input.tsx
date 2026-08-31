@@ -986,7 +986,7 @@ export default function PromptInput(props: PromptInputProps) {
                 void handleSend()
               }}
               agents={instanceAgents()}
-              commands={getCommands(props.instanceId)}
+              commands={[...getCommands(props.instanceId), ...Array.from(getBuiltInCommands().entries()).map(([name, cmd]) => ({ name, description: cmd.description } as any))]}
               instanceClient={instance()!.client}
               searchQuery={searchQuery()}
               textareaRef={textareaRef}
