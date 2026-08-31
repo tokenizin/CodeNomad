@@ -46,6 +46,7 @@ import {
   TERMINAL_VOICE_ENGINE,
 } from "../../plugins/tokidapp/concierge/voice-fallback"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
+import { buildAgentPersonaInstructions } from "../../plugins/tokidapp/concierge/agent-personas"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
 import { buildVaultSessionContext } from "../../plugins/tokidapp/concierge/codebase-tools"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
@@ -785,10 +786,11 @@ async function startVoiceRealtimeSession(
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
   chatSessionId?: string,
+  agentId?: string,
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
   const existingVoice = getRealtimeSessionVoice(sessionId)
-  console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
+  console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice, "agentId:", agentId)
   if (existingVoice && existingVoice !== voice) {
     console.log("[voice-ws] voice changed, ending existing session")
     endVoiceSession(sessionId, "replace")
@@ -806,7 +808,13 @@ async function startVoiceRealtimeSession(
   if (!getRealtimeSession(sessionId)) {
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
 
-    const enrichedInstructions = await buildVoiceEnrichedInstructions(userId)
+    const baseInstructions = await buildVoiceEnrichedInstructions(userId)
+
+    // Inject agent persona instructions if an agent is selected
+    const personaInstructions = buildAgentPersonaInstructions(agentId)
+
+    // Combine: digest + session context + persona
+    const enrichedInstructions = [baseInstructions, personaInstructions].filter(Boolean).join("\n\n")
 
     createRealtimeSession(
       sessionId,
@@ -1031,6 +1039,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               msg.voice,
               socketRef,
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+              typeof msg.agentId === "string" ? msg.agentId : undefined,
             )
           } else {
             console.log("[voice-ws] REALTIME_ENABLED is false — descending the fallback chain")
@@ -2967,6 +2976,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   typeof msg.tokidappSessionId === "string"
                     ? msg.tokidappSessionId
                     : dbSessionId ?? undefined,
+                  typeof msg.agentId === "string" ? msg.agentId : undefined,
                 )
               } else {
                 console.log("[tokidapp-ws] REALTIME_ENABLED is false — falling back to local voice")
