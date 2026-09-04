@@ -28,6 +28,7 @@ import {
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
+import { reportAiUsage } from "./ai-usage-report"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
 /** Tracks one active session per user — prevents two sessions for the same
@@ -746,6 +747,26 @@ export function createRealtimeSession(
           }
           // Flush audio chunks that were buffered during response generation
           flushPendingForSession(session)
+
+          // Report this turn's token usage to StarGuard for StarXP billing.
+          // Fire-and-forget: never block audio flow on a metering call.
+          // response.done carries usage under `response.usage` (input/output
+          // token counts, per OpenAI's Realtime API) when the turn completed
+          // normally — absent on a cancelled/errored response, which is fine
+          // to skip (nothing was actually generated to bill).
+          {
+            const turnUserId = getUserIdFromSessionId(session.sessionId)
+            const usagePayload = parsed.response
+            if (turnUserId && usagePayload?.usage) {
+              void reportAiUsage({
+                userId: turnUserId,
+                modelId: REALTIME_MODEL,
+                provider: "openai-realtime",
+                requestId: usagePayload.id ? `realtime_${usagePayload.id}` : `realtime_${session.sessionId}_${Date.now()}`,
+                raw: { usage: usagePayload.usage },
+              })
+            }
+          }
           break
 
         case "conversation.item.created":
