@@ -28,6 +28,7 @@ import {
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
+import { createApprovalRequest, waitForApprovalDecision } from "../orchestrator/approval-queue"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
 /** Tracks one active session per user — prevents two sessions for the same
@@ -497,12 +498,26 @@ async function executeTool(
           createdAt: new Date().toISOString(),
         }
 
-        // Execute DAG with default callbacks (no WS socket in voice context — results returned inline)
+        // Execute DAG with default callbacks (no WS socket in voice context — results returned inline).
+        // onApprovalRequired MUST go through the real approval queue, not auto-approve: it's the only
+        // gate between a spoken command and destructive tools (trigger_deploy, commit_push,
+        // rollback_deploy) reachable via the full_deploy/feature_generation/deploy_only templates.
+        // waitForApprovalDecision fails closed (returns "rejected") on its 5-minute timeout, so an
+        // unanswered approval blocks the action rather than allowing it.
+        //
+        // Known follow-up: this blocks the voice tool call for up to 5 minutes with no interim
+        // spoken feedback if a human hasn't approved yet. Fixing that needs the orchestrator to
+        // support a genuine async pause/resume (today "pending" just throws inside
+        // executeApprovalGate and retries) — out of scope for this fix, which is about closing the
+        // auto-approve hole, not redesigning the voice UX around approvals.
         const result = await executeDAG(orchestratorId, dag, {
           onNodeStart: () => {},
           onNodeComplete: () => {},
           onNodeFail: () => {},
-          onApprovalRequired: async () => "approved",
+          onApprovalRequired: async (node: DAGNode, ctx: Record<string, unknown>) => {
+            const approvalId = await createApprovalRequest(orchestratorId, node, ctx)
+            return await waitForApprovalDecision(approvalId)
+          },
           onBroadcast: () => {},
           onLog: () => {},
         })
