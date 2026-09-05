@@ -4,6 +4,7 @@ import { toFile } from "openai/uploads"
 import type { SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../../api-types"
 import type { Logger } from "../../logger"
 import type { NormalizedSpeechSettings, SpeechSynthesisStreamResponse, SynthesizeSpeechInput, TranscribeAudioInput } from "../service"
+import { reportAiUsage } from "../../billing/ai-usage-report"
 
 interface OpenAICompatibleSpeechProviderOptions {
   settings: NormalizedSpeechSettings
@@ -31,7 +32,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
+  async transcribe(input: TranscribeAudioInput, userId: string | null): Promise<SpeechTranscriptionResponse> {
     const client = this.createClient()
     const startedAt = Date.now()
     const extension = extensionForMime(input.mimeType)
@@ -49,6 +50,22 @@ export class OpenAICompatibleSpeechProvider {
     )
 
     const response = await this.requestTranscription(client, buffer, filename, input)
+
+    // Fire-and-forget — never let a metering report delay or fail a
+    // transcription that already succeeded. Token-priced (the response
+    // carries real usage for gpt-4o-mini-transcribe), so this always
+    // reports regardless of which OpenAI-compatible backend served it —
+    // same flat placeholder rate every other token-priced call in this
+    // system uses (see /api/internal/ai-usage-event's module doc).
+    if (userId) {
+      void reportAiUsage({
+        userId,
+        modelId: this.options.settings.sttModel,
+        provider: this.options.settings.provider,
+        requestId: `codenomad_speech_stt_${crypto.randomUUID()}`,
+        raw: response,
+      })
+    }
 
     return {
       text: typeof response?.text === "string" ? response.text : "",
@@ -95,7 +112,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
+  async synthesize(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -111,13 +128,14 @@ export class OpenAICompatibleSpeechProvider {
     const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
 
     const audioBuffer = Buffer.from(await response.arrayBuffer())
+    this.reportTtsUsage(userId, input.text)
     return {
       audioBase64: audioBuffer.toString("base64"),
       mimeType,
     }
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+  async synthesizeStream(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisStreamResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -130,6 +148,7 @@ export class OpenAICompatibleSpeechProvider {
     )
 
     const response = await this.requestSpeechAudio(input.text, format)
+    this.reportTtsUsage(userId, input.text)
     if (!response.body) {
       throw new Error("Speech provider did not return a stream.")
     }
@@ -208,6 +227,30 @@ export class OpenAICompatibleSpeechProvider {
     return new OpenAI({
       apiKey: settings.apiKey,
       baseURL: settings.baseUrl,
+    })
+  }
+
+  /**
+   * Fire-and-forget character-count usage report for a TTS call — never let
+   * a metering report delay or fail audio that already synthesized
+   * successfully.
+   *
+   * Only reports when `baseUrl` is unset, i.e. this really went to OpenAI's
+   * own `api.openai.com` (the default — see requestSpeechAudio). StarGuard's
+   * tts-1/tts-1-hd per-character pricing is OpenAI's own published rate; a
+   * custom baseUrl means a different (possibly self-hosted, possibly free)
+   * backend, which that rate doesn't describe, so this skips reporting
+   * entirely rather than mislabel an unverified call as OpenAI's.
+   */
+  private reportTtsUsage(userId: string | null, text: string): void {
+    if (!userId) return
+    if (this.options.settings.baseUrl) return
+    void reportAiUsage({
+      userId,
+      modelId: this.options.settings.ttsModel,
+      provider: "openai",
+      requestId: `codenomad_speech_tts_${crypto.randomUUID()}`,
+      characterCount: text.length,
     })
   }
 }

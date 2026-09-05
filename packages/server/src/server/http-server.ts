@@ -37,6 +37,7 @@ import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
 import type { StarGuardJwtHandler } from "../auth/starguard-jwt"
+import { resolveStarGuardUser } from "../auth/starguard-jwt"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
@@ -95,24 +96,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const sseLogger = deps.logger.child({ component: "sse" })
 
   async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
-    const handler = deps.starGuardJwtHandler
-    if (!handler?.isEnabled()) return false
-
-    let token: string | null = null
-    const authHeader = Array.isArray(request.headers.authorization)
-      ? request.headers.authorization[0]
-      : request.headers.authorization
-    if (authHeader?.startsWith("Bearer ")) {
-      token = authHeader.slice("Bearer ".length).trim()
-    }
-
-    if (!token) {
-      const query = request.query as { token?: string; starguard_token?: string } | undefined
-      token = query?.starguard_token?.trim() || query?.token?.trim() || null
-    }
-
-    if (!token) return false
-    const payload = await handler.verify(token)
+    const payload = await resolveStarGuardUser(request, deps.starGuardJwtHandler)
     return payload !== null
   }
 
@@ -318,7 +302,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
-  registerSpeechRoutes(app, { speechService: deps.speechService })
+  registerSpeechRoutes(app, { speechService: deps.speechService, starGuardJwtHandler: deps.starGuardJwtHandler })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })

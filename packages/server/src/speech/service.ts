@@ -39,9 +39,10 @@ export interface SpeechSynthesisStreamResponse {
 
 export interface SpeechProvider {
   getCapabilities(): SpeechCapabilitiesResponse
-  transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse>
-  synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
-  synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse>
+  /** `userId` (from a verified StarGuard JWT) attributes usage to a real account for billing — null skips reporting entirely. */
+  transcribe(input: TranscribeAudioInput, userId: string | null): Promise<SpeechTranscriptionResponse>
+  synthesize(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisResponse>
+  synthesizeStream(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisStreamResponse>
 }
 
 export interface NormalizedSpeechSettings {
@@ -69,16 +70,16 @@ export class SpeechService {
     return this.createProvider().getCapabilities()
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
-    return this.createProvider().transcribe(input)
+  async transcribe(input: TranscribeAudioInput, userId: string | null): Promise<SpeechTranscriptionResponse> {
+    return this.createProvider().transcribe(input, userId)
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
-    return this.createProvider().synthesize(input)
+  async synthesize(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisResponse> {
+    return this.createProvider().synthesize(input, userId)
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
-    return this.createProvider().synthesizeStream(input)
+  async synthesizeStream(input: SynthesizeSpeechInput, userId: string | null): Promise<SpeechSynthesisStreamResponse> {
+    return this.createProvider().synthesizeStream(input, userId)
   }
 
   private createProvider(): SpeechProvider {

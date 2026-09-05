@@ -28,7 +28,7 @@ import {
 } from "./codebase-tools"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
-import { reportAiUsage } from "./ai-usage-report"
+import { reportAiUsage } from "../../../billing/ai-usage-report"
 import type { DAGNode, DAGDefinition } from "../orchestrator/types"
 
 /** Tracks one active session per user — prevents two sessions for the same
