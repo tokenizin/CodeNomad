@@ -67,6 +67,7 @@ import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { parseInput, resolveActions, formatParseSummary } from "./commands-router"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
+import { checkAgentReputation } from "./reputation-checker"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 
@@ -995,6 +996,18 @@ const tools = [
   },
   // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────────
   ...voiceOrchestratorToolDefinitions,
+  {
+    type: "function",
+    name: "check_agent_reputation",
+    description: "Look up an external AI agent's on-chain reputation score from the three.ws registry before engaging it. Returns trust score, completed tasks, disputes, and staked amount.",
+    parameters: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", description: "The agent identifier on the three.ws registry (e.g. 'agent_xyz123')" },
+      },
+      required: ["agent_id"],
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -1088,6 +1101,11 @@ export async function executeTool(
       case "assign_task": {
         const { prompt } = JSON.parse(argsStr)
         return await assignTask(prompt, config.starguardBase)
+      }
+
+      case "check_agent_reputation": {
+        const { agent_id } = JSON.parse(argsStr)
+        return await checkAgentReputation(agent_id)
       }
 
       case "rollback_deploy": {
@@ -1339,11 +1357,22 @@ export async function executeTool(
               },
             }
           : {
-              // No tokidapp WS — fall back to silent execution
+              // No tokidapp WS — fall back to refusing destructive nodes.
+              // Same gate as the WS-connected path: an unattended voice session
+              // must never auto-approve commit_push, trigger_deploy, etc.
               onNodeStart: () => {},
               onNodeComplete: () => {},
               onNodeFail: () => {},
-              onApprovalRequired: async () => "approved" as const,
+              onApprovalRequired: async (node: { toolName?: string; title?: string }) => {
+                const toolName = String((node as { toolName?: string }).toolName ?? "")
+                if (!isDestructiveVoiceNode(toolName)) {
+                  return "approved" as const
+                }
+                console.warn(
+                  `[realtime] refusing destructive node "${node.title}" (${toolName}) on the voice fallback path (no WS)`,
+                )
+                return "rejected" as const
+              },
               onBroadcast: () => {},
               onLog: () => {},
               onCausalGraphUpdate: () => {},

@@ -543,6 +543,12 @@ async function routeToTool(toolName: string, input: Record<string, unknown>, nod
     case 'validate':
       return await callLightweightConcierge(nodeTitle, input)
 
+    case 'check_agent_reputation': {
+      const { checkAgentReputation } = await import('../concierge/reputation-checker.js')
+      const agentId = (input.agent_id as string) || (input.agentId as string) || ''
+      return await checkAgentReputation(agentId)
+    }
+
     default:
       return `Unknown tool: ${toolName}`
   }
