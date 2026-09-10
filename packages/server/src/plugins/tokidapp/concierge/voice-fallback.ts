@@ -196,6 +196,8 @@ export function isVoiceFallbackError(
       return matchesAny(m, LOCAL_FALLBACK_PATTERNS)
     case "ornith":
       return matchesAny(m, [...LOCAL_FALLBACK_PATTERNS, "ornith"])
+    case "nomadworks-pma":
+      return matchesAny(m, [...OPENAI_FALLBACK_PATTERNS, "xai", "grok", "x.ai"])
     default:
       return false
   }

@@ -29,6 +29,8 @@ import {
 } from "./ornith-realtime"
 import {
   createNomadWorksPmaSession,
+  VOICE_PMA_LLM_PROVIDER,
+  XAI_API_KEY,
 } from "./nomadworks-pma-realtime"
 import {
   createLocalSTTConnection,
@@ -1307,6 +1309,9 @@ export function isEngineAvailable(engine: VoiceEngine): boolean {
       // Local engines don't require API keys — they use on-device models.
       // Availability depends on the Python processes being installed.
       return true
+    case "nomadworks-pma":
+      // Composite adapter — available when the configured provider has credentials.
+      return VOICE_PMA_LLM_PROVIDER === "grok" ? !!XAI_API_KEY : true
     default:
       return false
   }

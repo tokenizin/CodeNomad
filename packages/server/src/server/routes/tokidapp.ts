@@ -755,6 +755,8 @@ async function startNomadWorksPMAVoiceSession(
     interpret?: boolean
   },
 ): Promise<void> {
+  // Voice validation is the adapter's responsibility; normalize here.
+  const voice = typeof requestedVoice === "string" ? requestedVoice : undefined
   try {
     ensureSingleUserSession(sessionId)
     endOrchestratorVoiceSession(sessionId)
@@ -762,7 +764,7 @@ async function startNomadWorksPMAVoiceSession(
     const session = await createAndRegisterVoiceSession({
       engine: "nomadworks-pma",
       sessionId,
-      voice: typeof requestedVoice === "string" ? requestedVoice : undefined,
+      voice,
       locale: opts?.locale || "en",
       interpret: Boolean(opts?.interpret),
       userId: sessionId.startsWith("voice_") ? sessionId.slice(6) : sessionId,
@@ -832,7 +834,7 @@ async function startNomadWorksPMAVoiceSession(
     socketRef.send(
       JSON.stringify({
         type: "voice_ready",
-        voice: requestedVoice || "marin",
+        voice: voice || "marin",
         engine: "nomadworks-pma",
         sessionId,
         locale: opts?.locale || "en",
