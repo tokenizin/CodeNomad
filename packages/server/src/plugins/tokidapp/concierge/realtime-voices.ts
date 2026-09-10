@@ -65,6 +65,17 @@ export function normalizeRealtimeVoice(raw: unknown): RealtimeVoiceId {
   return DEFAULT_REALTIME_VOICE
 }
 
+/** Server-side canonical union of supported realtime voice engines.
+ * The `nomadworks-pma` engine is a composite adapter that routes
+ * through the PMA-specific voice orchestrator (OpenAI fallback / Grok xAI).
+ */
+export type VoiceEngine =
+  | "openai"
+  | "deepgram"
+  | "local"
+  | "ornith"
+  | "nomadworks-pma"
+
 export function normalizeOrnithVoice(raw: unknown): OrnithVoiceId {
   if (typeof raw === "string") {
     const id = raw.trim().toLowerCase()

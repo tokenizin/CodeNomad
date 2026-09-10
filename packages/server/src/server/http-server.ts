@@ -24,9 +24,12 @@ import { registerStorageRoutes } from "./routes/storage.js"
 import { registerPluginRoutes } from "./routes/plugin.js"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes.js"
 import { registerWorktreeRoutes } from "./routes/worktrees.js"
+import { registerLeaseRoutes } from "./routes/leases.js"
 import { registerSpeechRoutes } from "./routes/speech.js"
 import { registerLocalLlmRoutes } from "./routes/local-llm.js"
 import { registerTokidappRoutes, registerTokidappWebSocket, registerVoiceRealtimeWebSocket, registerRecordingRoutes, registerFileUploadRoutes } from "./routes/tokidapp.js"  
+import { registerSidecarProxyMiddleware } from "./routes/sidecar-proxy-middleware.js"
+import { registerTokidappDirectRoutes } from "./routes/tokidapp-direct.js"  
 import { registerRemoteServerRoutes } from "./routes/remote-servers.js"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy.js"
 import { registerSideCarRoutes } from "./routes/sidecars.js"
@@ -40,9 +43,11 @@ import { registerAuthRoutes } from "./routes/auth.js"
 import { registerNotificationRoutes } from "./routes/notifications.js"
 import { registerChoiceRoutes } from "./routes/choices.js"
 import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
+import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
+import { resolveAuthProvider, resolveStarGuardPublicUrl, tryBootstrapCloudflareAccessSession } from "../auth/auth-provider.js"
 import type { SpeechService } from "../speech/service.js"
 import { getTokidappDb } from "../lib/db.js"
 import { ClientConnectionManager } from "../clients/connection-manager.js"
@@ -58,6 +63,9 @@ import {
 } from "./instance-proxy-body.js"
 import { isModelRequest, proxyModelRequest } from "./model-throttle-proxy.js"
 import { ModelThrottle } from "../model-throttle.js"
+import { validateNomadWorksPMAConfig } from "../plugins/tokidapp/concierge/nomadworks-pma-realtime.js"
+import { AgentSessionDispatcher, OpenCodeAgentAdapter } from "../lib/agent-session-dispatch.js"
+import { registerAgentSessionRoutes } from "./routes/agent-sessions.js"
 
 // reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
 const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
@@ -109,6 +117,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
   const modelThrottle = new ModelThrottle()
+  const agentSessionDispatcher = new AgentSessionDispatcher(
+    new OpenCodeAgentAdapter(deps.workspaceManager),
+    undefined,
+    deps.logger.child({ component: "agent-sessions" }),
+  )
 
   async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
     const handler = deps.starGuardJwtHandler
@@ -162,7 +175,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      const pathOnly = (request.raw.url ?? request.url).split("?")[0] ?? ""
+      if (pathOnly === "/api/agent-sessions" || pathOnly.startsWith("/api/agent-sessions/")) {
+        apiLogger.trace({ ...base, params: request.params, query: request.query, body: "<redacted>" }, "HTTP request payload")
+      } else {
+        apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      }
     }
     done()
   })
@@ -177,6 +195,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       process.env.STARGUARD_BASE_URL,
       process.env.NEXT_PUBLIC_APP_URL,
       "https://star-worlds.vercel.app",
+      "https://chat.tokenizin.com",
     ]
     for (const candidate of candidates) {
       if (!candidate?.trim()) continue
@@ -289,7 +308,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/quick-login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/tokidapp/status", "/api/tokidapp/files/proxy", "/api/client-connections/pong"])
     const publicApiPrefixes = ["/api/tokidapp/files/local/", "/api/tokidapp/files/generated/"]
-    const publicPagePaths = new Set(["/login", "/auth/starguard"])
+    const publicPagePaths = new Set(["/login", "/auth/starguard", "/constellation"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
     }
@@ -310,7 +329,18 @@ export function createHttpServer(deps: HttpServerDeps) {
       }
     }
 
-    const session = deps.authManager.getSessionFromRequest(request)
+    // Machine-dispatch routes perform their complete API-key gate in the route
+    // so rejected/malformed requests also produce exactly one audit event.
+    // Human cookies are intentionally not accepted by that route.
+    if (pathname === "/api/agent-sessions" || pathname.startsWith("/api/agent-sessions/")) {
+      return
+    }
+
+    let session = deps.authManager.getSessionFromRequest(request)
+    if (!session) {
+      tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)
+      session = deps.authManager.getSessionFromRequest(request)
+    }
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
@@ -344,7 +374,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   app.get("/", async (request, reply) => {
-    const session = deps.authManager.getSessionFromRequest(request)
+    let session = deps.authManager.getSessionFromRequest(request)
+    if (!session && tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)) {
+      session = deps.authManager.getSessionFromRequest(request)
+    }
     if (!session) {
       reply.redirect("/login")
       return
@@ -358,11 +391,25 @@ export function createHttpServer(deps: HttpServerDeps) {
     const uiDir = deps.uiStaticDir
     const indexPath = path.join(uiDir, "index.html")
     if (uiDir && fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
       return
     }
 
     reply.code(404).send({ message: "UI bundle missing" })
+  })
+
+  // ── Constellation Convergence — 3D particle animation prototype ───────
+  // Public route (no auth gate) serving the standalone HTML prototype.
+  // The file lives in the UI's public dir and is copied to dist by Vite.
+  // Accessible at /constellation on the tunnel (codenomad.tokenizin.com/constellation).
+  app.get("/constellation", async (request, reply) => {
+    const uiDir = deps.uiStaticDir
+    const htmlPath = path.join(uiDir, "constellation-convergence.html")
+    if (uiDir && fs.existsSync(htmlPath)) {
+      reply.type("text/html").send(fs.readFileSync(htmlPath, "utf-8"))
+      return
+    }
+    reply.code(404).send({ message: "Constellation prototype not found in UI bundle" })
   })
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
@@ -378,6 +425,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     connectionManager: deps.clientConnectionManager,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerLeaseRoutes(app, { getLeaseManager: () => deps.workspaceManager.getLeaseManager(), logger: apiLogger })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -420,13 +468,18 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerNotificationRoutes(app, { notifyRegistry })
   registerChoiceRoutes(app, { eventBus: deps.eventBus })
   registerWikiLintRoutes(app)
+  registerRefreshModelsRoutes(app)
+  registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
   app.get("/api/model-throttle/metrics", async (_request, reply) => {
     reply.send({ config: modelThrottle.getConfig(), metrics: modelThrottle.getMetrics() })
   })
-  registerTokidappRoutes(app)
+  registerTokidappRoutes(app, deps.starGuardJwtHandler)
   registerRecordingRoutes(app)
   registerFileUploadRoutes(app)
+  // Direct DB-backed routes (registered BEFORE sidecar proxy to take precedence)
+  registerTokidappDirectRoutes(app, deps.starGuardJwtHandler)
+  registerSidecarProxyMiddleware(app)
 
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
@@ -450,6 +503,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   return {
     instance: app,
     start: async (): Promise<HttpServerStartResult> => {
+      const pmaValidation = validateNomadWorksPMAConfig()
+      if (!pmaValidation.ok) {
+        const logger = deps.logger.child({ component: "nomadworks-pma" })
+        pmaValidation.errors.forEach((err) => logger.warn(err))
+      }
+
       const attemptListen = async (requestedPort: number) => {
         const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost })
         return { addressInfo, requestedPort }
@@ -965,12 +1024,24 @@ function setupStaticUi(
     }
 
     if (!session && wantsHtml(request)) {
+      if (tryBootstrapCloudflareAccessSession(request, reply, authManager)) {
+        const bootstrapped = authManager.getSessionFromRequest(request)
+        if (bootstrapped && fs.existsSync(indexPath)) {
+          reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
+          return
+        }
+      }
       reply.redirect("/login")
       return
     }
 
+    if (isStaticAssetRequest(url)) {
+      reply.code(404).send({ message: "Not Found" })
+      return
+    }
+
     if (fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
@@ -1082,6 +1153,13 @@ function isApiRequest(rawUrl: string | null | undefined) {
   if (!rawUrl) return false
   const pathname = rawUrl.split("?")[0] ?? ""
   return pathname === "/api" || pathname.startsWith("/api/")
+}
+
+/** Missing UI bundles must 404 — serving index.html for .js/.css breaks module MIME checks. */
+function isStaticAssetRequest(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false
+  const pathname = rawUrl.split("?")[0] ?? ""
+  return /\.(?:js|mjs|cjs|css|map|wasm|woff2?|ttf|eot|svg|png|jpe?g|webp|ico|json|txt|html|worker\.js)$/i.test(pathname)
 }
 
 function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, string> {
@@ -1731,4 +1809,12 @@ function getBlockedSideCarRequestHeaders(): Set<string> {
     "x-forwarded-port",
     "x-forwarded-proto",
   ])
+}
+
+function injectUiRuntimeConfig(html: string): string {
+  const script = `<script>window.__CODENOMAD_AUTH_PROVIDER__=${JSON.stringify(resolveAuthProvider())};window.__STARGUARD_PUBLIC_URL__=${JSON.stringify(resolveStarGuardPublicUrl())};(function(){var p=window.__CODENOMAD_AUTH_PROVIDER__;var h=(location.hostname||"").toLowerCase();var prestix=p==="cloudflare-access"||h==="prestix.vip"||h.endsWith(".prestix.vip");document.documentElement.dataset.silo=prestix?"prestix":"tokenizin";})();</script>`
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${script}</head>`)
+  }
+  return `${script}${html}`
 }

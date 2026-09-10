@@ -11,16 +11,26 @@
  *     ↓
  *   browser   Web Speech API in the client — terminal tier, no server session
  *
- * `ornith` is a peer engine, not a tier: it is selected explicitly and is not in
- * the default chain, but an ornith failure descends into the chain from the top.
+ * `ornith` and `nomadworks-pma` are peer engines, not tiers: they are selected
+ * explicitly and are not in the default chain, but on failure they descend into
+ * the chain from the top.
  *
  * Override with VOICE_FALLBACK_CHAIN, e.g. "openai,local,browser".
  */
 
-export type VoiceEngine = "openai" | "deepgram" | "local" | "ornith" | "browser"
+export type VoiceEngine =
+  | "openai"
+  | "deepgram"
+  | "local"
+  | "ornith"
+  | "nomadworks-pma"
+  | "browser"
 
 /** Engines that can be selected explicitly but are not fallback tiers. */
-const NON_TIER_ENGINES: ReadonlySet<VoiceEngine> = new Set<VoiceEngine>(["ornith"])
+const NON_TIER_ENGINES: ReadonlySet<VoiceEngine> = new Set<VoiceEngine>([
+  "ornith",
+  "nomadworks-pma",
+])
 
 export const DEFAULT_VOICE_FALLBACK_CHAIN: VoiceEngine[] = [
   "openai",
@@ -40,6 +50,7 @@ const VALID_ENGINES: ReadonlySet<string> = new Set([
   "deepgram",
   "local",
   "ornith",
+  "nomadworks-pma",
   "browser",
 ])
 
@@ -204,6 +215,7 @@ const ENGINE_LABELS: Record<VoiceEngine, string> = {
   local: "local Whisper + Piper + Ollama",
   ornith: "Ornith",
   browser: "browser speech (Web Speech API)",
+  "nomadworks-pma": "NomadWorks PMA",
 }
 
 export function describeEngine(engine: VoiceEngine): string {

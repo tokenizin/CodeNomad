@@ -28,6 +28,9 @@ import {
   removeOrnithSession,
 } from "./ornith-realtime"
 import {
+  createNomadWorksPmaSession,
+} from "./nomadworks-pma-realtime"
+import {
   createLocalSTTConnection,
   type LocalSTTConnection,
   type LocalSTTCallbacks,
@@ -61,7 +64,12 @@ import type WebSocket from "ws"
 // ── Engine Types ───────────────────────────────────────────────────────
 
 /** Supported voice engine backends. */
-export type VoiceEngine = "openai" | "local" | "deepgram" | "ornith"
+export type VoiceEngine =
+  | "openai"
+  | "local"
+  | "deepgram"
+  | "ornith"
+  | "nomadworks-pma"
 
 /** Session lifecycle states. */
 export type VoiceSessionStatus =
@@ -1202,6 +1210,9 @@ export async function createVoiceSession(
 
     case "ornith":
       return createOrnithAdapter(params)
+
+    case "nomadworks-pma":
+      return createNomadWorksPmaSession(params)
 
     default: {
       const _exhaustive: never = engine

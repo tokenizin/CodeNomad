@@ -129,12 +129,18 @@ const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.ve
 
 /**
  * Voice engine selection — 'openai' (default, backward-compatible), 'deepgram',
- * 'local', or 'ornith'. The canonical union lives in voice-fallback.ts and also
- * carries the terminal 'browser' tier, which is client-side only and therefore
- * never a valid voice_start request.
+ * 'local', 'ornith', or 'nomadworks-pma'. The canonical union lives in
+ * voice-fallback.ts and also carries the terminal 'browser' tier, which is
+ * client-side only and therefore never a valid voice_start request.
  */
 type VoiceEngine = FallbackVoiceEngine
-const VALID_ENGINES: Set<string> = new Set(["openai", "deepgram", "local", "ornith"])
+const VALID_ENGINES: Set<string> = new Set([
+  "openai",
+  "deepgram",
+  "local",
+  "ornith",
+  "nomadworks-pma",
+])
 
 function parseVoiceEngine(raw: unknown): VoiceEngine {
   if (typeof raw === "string" && VALID_ENGINES.has(raw)) return raw as VoiceEngine
@@ -734,6 +740,117 @@ async function startLocalVoiceSession(
   }
 }
 
+/**
+ * Start a NomadWorks PMA composite voice session through the unified orchestrator.
+ * The actual STT/LLM/TTS delegation is encapsulated in the `nomadworks-pma-realtime`
+ * adapter; this helper only wires the WebSocket callbacks.
+ */
+async function startNomadWorksPMAVoiceSession(
+  sessionId: string,
+  requestedVoice: unknown,
+  socketRef: { send: (msg: string) => void },
+  chatSessionId?: string,
+  opts?: {
+    locale?: "en" | "id" | "auto"
+    interpret?: boolean
+  },
+): Promise<void> {
+  try {
+    ensureSingleUserSession(sessionId)
+    endOrchestratorVoiceSession(sessionId)
+
+    const session = await createAndRegisterVoiceSession({
+      engine: "nomadworks-pma",
+      sessionId,
+      voice: typeof requestedVoice === "string" ? requestedVoice : undefined,
+      locale: opts?.locale || "en",
+      interpret: Boolean(opts?.interpret),
+      userId: sessionId.startsWith("voice_") ? sessionId.slice(6) : sessionId,
+      enrichedInstructions: undefined,
+      chatSessionId,
+      sendToClient: (msg: string) => socketRef.send(msg),
+    })
+
+    session.onTranscript = (text, isFinal) => {
+      if (isFinal) {
+        socketRef.send(
+          JSON.stringify({
+            type: "user_transcript",
+            content: text,
+            engine: "nomadworks-pma",
+          }),
+        )
+      } else {
+        socketRef.send(
+          JSON.stringify({
+            type: "transcript_partial",
+            transcript: text,
+            content: text,
+            engine: "nomadworks-pma",
+          }),
+        )
+      }
+    }
+    session.onResponse = (text) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "message",
+          content: text,
+          engine: "nomadworks-pma",
+        }),
+      )
+    }
+    session.onAudio = (base64Chunk) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "audio",
+          data: base64Chunk,
+          engine: "nomadworks-pma",
+        }),
+      )
+    }
+    session.onError = (error) => {
+      console.error("[voice-ws] NomadWorks PMA voice session error:", error.message)
+      socketRef.send(
+        JSON.stringify({
+          type: "error",
+          content: error.message,
+          engine: "nomadworks-pma",
+        }),
+      )
+    }
+    session.onStatus((status) => {
+      socketRef.send(
+        JSON.stringify({
+          type: "voice_status",
+          status,
+          engine: "nomadworks-pma",
+        }),
+      )
+    })
+
+    socketRef.send(
+      JSON.stringify({
+        type: "voice_ready",
+        voice: requestedVoice || "marin",
+        engine: "nomadworks-pma",
+        sessionId,
+        locale: opts?.locale || "en",
+        interpret: Boolean(opts?.interpret),
+      }),
+    )
+  } catch (err: any) {
+    console.error("[voice-ws] Failed to start NomadWorks PMA voice session:", err?.message)
+    socketRef.send(
+      JSON.stringify({
+        type: "error",
+        content: `Failed to start nomadworks-pma voice session: ${err?.message}`,
+        engine: "nomadworks-pma",
+      }),
+    )
+  }
+}
+
 async function startVoiceRealtimeSession(
   sessionId: string,
   requestedVoice: unknown,
@@ -978,6 +1095,12 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               engine: "ornith",
             }))
           }
+        } else if (engine === "nomadworks-pma") {
+          // NomadWorks PMA composite voice adapter (OpenAI or Grok/xAI)
+          await startNomadWorksPMAVoiceSession(sessionId, msg.voice, socketRef, msg.tokidappSessionId, {
+            locale: parseVoiceLocale(msg.locale),
+            interpret: Boolean(msg.interpret),
+          })
         } else {
           // OpenAI Realtime engine (default, backward-compatible)
           if (REALTIME_ENABLED) {
@@ -2896,6 +3019,20 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   engine: "ornith",
                 }))
               }
+            } else if (engine === "nomadworks-pma") {
+              // NomadWorks PMA composite voice adapter (OpenAI or Grok/xAI)
+              await startNomadWorksPMAVoiceSession(
+                sessionId,
+                msg.voice,
+                socketRef,
+                typeof msg.tokidappSessionId === "string"
+                  ? msg.tokidappSessionId
+                  : dbSessionId ?? undefined,
+                {
+                  locale: parseVoiceLocale(msg.locale),
+                  interpret: Boolean(msg.interpret),
+                },
+              )
             } else {
               if (REALTIME_ENABLED) {
                 startVoiceRealtimeSession(
