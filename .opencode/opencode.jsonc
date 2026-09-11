@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode-go/mimo-v2.5",
+  "model": "nous/meituan/longcat-2.0:free",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
@@ -108,6 +108,23 @@
             "context": 1000000,
             "output": 128000
           }
+        }
+      }
+    },
+    "nous": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Nous Research",
+      "apiKey": "${NOUS_API_KEY}",
+      "options": {
+        "baseURL": "https://inference-api.nousresearch.com/v1"
+      },
+      "models": {
+        "meituan/longcat-2.0:free": {
+          "id": "meituan/longcat-2.0:free",
+          "name": "LongCat 2.0 (free)",
+          "tool_call": true,
+          "reasoning": false,
+          "attachment": false
         }
       }
     }
