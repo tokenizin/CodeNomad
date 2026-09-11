@@ -92,6 +92,15 @@ export class FileSystemBrowser {
     fs.writeFileSync(resolved, contents, "utf-8")
   }
 
+  writeFileBytes(relativePath: string, contents: Buffer): void {
+    if (this.unrestricted) {
+      throw new Error("writeFileBytes is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    fs.mkdirSync(path.dirname(resolved), { recursive: true })
+    fs.writeFileSync(resolved, contents)
+  }
+
   readFile(relativePath: string): string {
     if (this.unrestricted) {
       throw new Error("readFile is not available in unrestricted mode")

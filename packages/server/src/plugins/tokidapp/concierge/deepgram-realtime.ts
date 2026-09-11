@@ -85,7 +85,17 @@ import { parseInput, resolveActions, formatParseSummary } from "./commands-route
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
-import { createMessage, createMessages, createRecording, findMessagesBySession } from "../../../lib/tokidapp-queries"
+import { createMessage, createMessages, findMessagesBySession } from "../../../lib/tokidapp-queries"
+import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import {
+  openAiUsage,
+  meterVoiceTurn,
+  type ResolvedUsage,
+} from "../../../lib/ai-usage"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 // knowledge-cache is used by the caller to build enrichedInstructions — no direct import needed here
 
@@ -752,6 +762,8 @@ interface LLMResponse {
   toolCalls: ToolCall[]
   model: string
   latencyMs: number
+  /** Provider-reported token counts, when the provider reported any. */
+  usage?: ResolvedUsage | null
 }
 
 interface LLMProvider {
@@ -863,6 +875,7 @@ async function callLLMProvider(
       toolCalls,
       model: provider.model,
       latencyMs: Date.now() - startTime,
+      usage: openAiUsage(data),
     }
   } finally {
     clearTimeout(timeoutId)
@@ -989,6 +1002,8 @@ export interface DeepgramSession {
   chatSessionId?: string
   /** Optional enriched instructions appended to system prompt. */
   enrichedInstructions?: string
+  /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
+  agentSessionId?: string
 }
 
 const sessions = new Map<string, DeepgramSession>()
@@ -1234,6 +1249,16 @@ export async function createDeepgramSession(
   sessions.set(sessionId, session)
   console.log("[deepgram-realtime] Session created:", sessionId, "voice:", voice)
 
+  // Open the accounting row alongside the session. Fire-and-forget.
+  // model stays null: this engine resolves its LLM per turn through a fallback
+  // chain, so there is no single model to name at connect.
+  void openVoiceAgentSession({
+    chatSessionId,
+    engine: "deepgram",
+  }).then((agentSessionId) => {
+    if (agentSessionId) session.agentSessionId = agentSessionId
+  })
+
   // Play greeting
   if (!voiceGreetingPlayedForChatSession.has(greetKey)) {
     voiceGreetingPlayedForChatSession.add(greetKey)
@@ -1321,41 +1346,8 @@ export async function createDeepgramSession(
   /**
    * Destroy the session — close STT/TTS connections, clean up state.
    */
-  sessionWithMethods.destroy = () => {
-    console.log("[deepgram-realtime] Destroying session:", sessionId)
-    session.connected = false
-
-    // Save audio recording metadata to DB (fire-and-forget)
-    if (session.chatSessionId) {
-      const recordingId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-      createRecording({
-        id: recordingId,
-        sessionId: session.chatSessionId!,
-        blobUrl: "", // Will be populated when audio blob is uploaded
-        duration: Date.now() - session.createdAt,
-        format: "audio/pcm",
-        status: "voice-session",
-        userId: userId || undefined,
-      }).catch((err) => {
-        console.error("[deepgram-realtime] Failed to save recording:", err.message)
-      })
-    }
-
-    // Fire-and-forget: update wiki with session transcript
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
-
-    // Close connections
-    stt.close()
-    tts.close()
-
-    // Clean up buffer
-    audioBuffer.reset()
-
-    // Remove from sessions map
-    sessions.delete(sessionId)
+  sessionWithMethods.destroy = (reason: VoiceSessionEndReason = "complete") => {
+    finishDeepgramSession(sessionId, reason, userId)
   }
 
   return sessionWithMethods as DeepgramSession
@@ -1430,6 +1422,21 @@ async function processUserMessage(
     session.llmCallCount++
     session.lastModelUsed = llmResponse.model
 
+    // Model comes off the response, not the session — the fallback chain may
+    // have landed on a different provider than the previous turn did.
+    // No requestId — deliberately. See resolveRequestId in lib/ai-usage: a
+    // fetch reply has no redelivery path, and this chain's primary provider
+    // numbers responses `chatcmpl-<0..999>`, which as a key would collide
+    // within tens of turns and read as "already recorded".
+    meterVoiceTurn({
+      ctx: session,
+      modelId: llmResponse.model,
+      provider: "deepgram",
+      usage: llmResponse.usage,
+      promptText: llmMessages.map((m) => m.content).join("\n"),
+      completionText: llmResponse.content,
+    })
+
     // Process tool calls if any
     if (llmResponse.toolCalls.length > 0) {
       // Add assistant message with tool calls to conversation
@@ -1486,7 +1493,7 @@ async function processUserMessage(
         // Persist tool result to DB (fire-and-forget)
         if (session.chatSessionId) {
           const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "tool", content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 500)}`, sources: toolCall.id }).catch((err) => {
+          createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "tool", content: `[Tool Result: ${toolCall.name}]\n${toolResult.slice(0, 500)}` }).catch((err) => {
             console.error("[deepgram-realtime] Failed to persist tool result:", err.message)
           })
         }
@@ -1535,6 +1542,17 @@ async function processUserMessage(
 
       const followUpResponse = await callLLMWithFallback(followUpMessages, tools)
       session.llmCallCount++
+
+      // The post-tool synthesis is a second billable generation, not part of the first.
+      meterVoiceTurn({
+        ctx: session,
+        modelId: followUpResponse.model,
+        provider: "deepgram",
+        eventType: "TOOL_CALL",
+        usage: followUpResponse.usage,
+        promptText: followUpMessages.map((m) => m.content).join("\n"),
+        completionText: followUpResponse.content,
+      })
 
       if (followUpResponse.content) {
         session.conversation.push({
@@ -1638,19 +1656,52 @@ export function getDeepgramSession(sessionId: string): DeepgramSession | undefin
   return sessions.get(sessionId)
 }
 
-export function endDeepgramSession(sessionId: string): void {
+function finishDeepgramSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+  userId?: string,
+): void {
   const session = sessions.get(sessionId)
-  if (session) {
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
-    session.connected = false
+  if (!session) return
+
+  onVoiceSessionEnd({
+    sessionId,
+    engine: "deepgram",
+    transcript: session.transcript,
+    chatSessionId: session.chatSessionId,
+    userId,
+    agentSessionId: session.agentSessionId,
+    durationMs: Date.now() - session.createdAt,
+    reason,
+  })
+
+  session.connected = false
+  try {
     session.stt.close()
-    session.tts.close()
-    session.audioBuffer.reset()
-    sessions.delete(sessionId)
+  } catch {
+    /* ignore */
   }
+  try {
+    session.tts.close()
+  } catch {
+    /* ignore */
+  }
+  session.audioBuffer.reset()
+  sessions.delete(sessionId)
+}
+
+export function endDeepgramSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+): void {
+  const session = sessions.get(sessionId) as
+    | (DeepgramSession & { destroy?: (r?: VoiceSessionEndReason) => void })
+    | undefined
+  if (session?.destroy) {
+    session.destroy(reason)
+    return
+  }
+  finishDeepgramSession(sessionId, reason)
 }
 
 export function hasActiveDeepgramSession(sessionId: string): boolean {

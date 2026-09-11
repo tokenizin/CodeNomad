@@ -24,6 +24,8 @@ import {
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
+import { PreWriteGuard } from "./pre-write-guard"
+import { LeaseManager } from "./lease-manager"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
@@ -45,10 +47,31 @@ export class WorkspaceManager {
   private readonly runtime: WorkspaceRuntime
   private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
+  private readonly leaseManager: LeaseManager
+  private readonly preWriteGuard: PreWriteGuard
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
     this.codeNomadPluginUrl = getCodeNomadPluginUrl()
+    
+    // Initialize lease manager for FLWF protocol
+    const repoRoot = options.rootDir
+    this.leaseManager = new LeaseManager(repoRoot)
+    this.preWriteGuard = new PreWriteGuard(this.leaseManager)
+  }
+
+  /**
+   * Get the pre-write guard for lease checking.
+   */
+  getPreWriteGuard(): PreWriteGuard {
+    return this.preWriteGuard
+  }
+
+  /**
+   * Get the lease manager.
+   */
+  getLeaseManager(): LeaseManager {
+    return this.leaseManager
   }
 
   list(): WorkspaceDescriptor[] {
@@ -141,14 +164,72 @@ export class WorkspaceManager {
 
   writeFile(workspaceId: string, relativePath: string, contents: string): void {
     const workspace = this.requireWorkspace(workspaceId)
+    
+    // FLWF: Pre-write guard — check lease
+    const decision = this.preWriteGuard.check(workspaceId, relativePath)
+    if (decision.action === "BLOCK") {
+      throw new Error(`Write blocked: ${decision.reason}`)
+    }
+    if (decision.action === "FORWARD") {
+      throw new Error(`Write requires forward request to ${decision.to_session}: ${decision.reason}`)
+    }
+    
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
     browser.writeFile(relativePath, contents)
   }
 
+  writeFileBytes(workspaceId: string, relativePath: string, contents: Buffer): void {
+    const workspace = this.requireWorkspace(workspaceId)
+    
+    // FLWF: Pre-write guard — check lease
+    const decision = this.preWriteGuard.check(workspaceId, relativePath)
+    if (decision.action === "BLOCK") {
+      throw new Error(`Write blocked: ${decision.reason}`)
+    }
+    if (decision.action === "FORWARD") {
+      throw new Error(`Write requires forward request to ${decision.to_session}: ${decision.reason}`)
+    }
+    
+    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    browser.writeFileBytes(relativePath, contents)
+  }
+
+  writeFileBytesInDirectory(workspaceId: string, directory: string, relativePath: string, contents: Buffer): void {
+    this.requireWorkspace(workspaceId)
+    
+    // FLWF: Pre-write guard — check lease
+    const decision = this.preWriteGuard.check(workspaceId, relativePath)
+    if (decision.action === "BLOCK") {
+      throw new Error(`Write blocked: ${decision.reason}`)
+    }
+    if (decision.action === "FORWARD") {
+      throw new Error(`Write requires forward request to ${decision.to_session}: ${decision.reason}`)
+    }
+    
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    browser.writeFileBytes(relativePath, contents)
+  }
+
   writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): void {
     this.requireWorkspace(workspaceId)
+    
+    // FLWF: Pre-write guard — check lease
+    const decision = this.preWriteGuard.check(workspaceId, relativePath)
+    if (decision.action === "BLOCK") {
+      throw new Error(`Write blocked: ${decision.reason}`)
+    }
+    if (decision.action === "FORWARD") {
+      throw new Error(`Write requires forward request to ${decision.to_session}: ${decision.reason}`)
+    }
+    
     const browser = new FileSystemBrowser({ rootDir: directory })
     browser.writeFile(relativePath, contents)
+  }
+
+  listFilesInDirectory(workspaceId: string, directory: string, relativePath = "."): FileSystemEntry[] {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    return browser.list(relativePath)
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
@@ -284,6 +365,11 @@ export class WorkspaceManager {
         this.options.logger.warn({ workspaceId: id, err: error }, "Failed to stop workspace process cleanly")
       })
     }
+
+    // FLWF: Release all leases for this workspace's sessions
+    // Note: We don't have a direct workspace→session mapping here,
+    // but the lease manager will clean up via stale heartbeat reaper.
+    // For explicit cleanup, sessions should release their own leases on disconnect.
 
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)

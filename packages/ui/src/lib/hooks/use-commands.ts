@@ -12,7 +12,9 @@ import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
-import { requestData } from "../opencode-api"
+import { OpencodeApiError, requestData } from "../opencode-api"
+import { getOpencodeErrorTag, getSessionWorkspacePayload } from "../../stores/session-actions"
+import { registerBuiltInCommand } from "../../stores/commands"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
@@ -261,6 +263,72 @@ export function useCommands(options: UseCommandsOptions) {
       },
     })
 
+    // Register /compress as a built-in slash command (alias for compact)
+    registerBuiltInCommand("compress", {
+      label: tGlobal("commands.compactSession.label"),
+      description: tGlobal("commands.compactSession.description"),
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+
+        const sessions = getSessions(instance.id)
+        const session = sessions.find((s) => s.id === sessionId)
+        if (!session) return
+
+        try {
+          await requestData(
+            instance.client.session.summarize({
+              sessionID: sessionId,
+              providerID: session.model.providerId,
+              modelID: session.model.modelId,
+            }),
+            "session.summarize",
+          )
+        } catch (error) {
+          log.error("Failed to compact session (/compress)", error)
+          const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
+          showAlertDialog(tGlobal("commands.compactSession.alert.message", { message }), {
+            title: tGlobal("commands.compactSession.alert.title"),
+            variant: "error",
+          })
+        }
+      },
+    })
+
+    // Register /compact as a built-in slash command
+    registerBuiltInCommand("compact", {
+      label: tGlobal("commands.compactSession.label"),
+      description: tGlobal("commands.compactSession.description"),
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+
+        const sessions = getSessions(instance.id)
+        const session = sessions.find((s) => s.id === sessionId)
+        if (!session) return
+
+        try {
+          await requestData(
+            instance.client.session.summarize({
+              sessionID: sessionId,
+              providerID: session.model.providerId,
+              modelID: session.model.modelId,
+            }),
+            "session.summarize",
+          )
+        } catch (error) {
+          log.error("Failed to compact session (/compact)", error)
+          const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
+          showAlertDialog(tGlobal("commands.compactSession.alert.message", { message }), {
+            title: tGlobal("commands.compactSession.alert.title"),
+            variant: "error",
+          })
+        }
+      },
+    })
+
     function escapeCss(value: string) {
       if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
         return (CSS as any).escape(value)
@@ -332,13 +400,23 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await requestData(
-            instance.client.session.revert({
-              sessionID: sessionId,
-              messageID,
-            }),
-            "session.revert",
-          )
+          const workspacePayload = await getSessionWorkspacePayload(instance.id, sessionId)
+          const result = await instance.client.session.revert({
+            sessionID: sessionId,
+            messageID,
+            ...workspacePayload,
+          })
+
+          // A 409 here is SessionBusyError: the message is still actively
+          // being streamed into. Revert did NOT happen, so this must surface
+          // as a real failure.
+          const errorTag = getOpencodeErrorTag((result as { error?: unknown } | undefined)?.error)
+          if (errorTag === "SessionBusyError") {
+            log.info("revert: session busy, message still streaming", { instanceId: instance.id, sessionId, messageID })
+            throw new OpencodeApiError("Can't revert — the session is still generating. Stop it first, then try again.")
+          }
+
+          await requestData(Promise.resolve(result), "session.revert")
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

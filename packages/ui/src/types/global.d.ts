@@ -68,6 +68,8 @@ declare global {
       __CODENOMAD_EVENTS_URL__?: string
       __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
       __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+      __CODENOMAD_AUTH_PROVIDER__?: "starguard" | "cloudflare-access" | string
+      __STARGUARD_PUBLIC_URL__?: string
       electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

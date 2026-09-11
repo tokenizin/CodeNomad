@@ -47,6 +47,12 @@ import {
   suggestRepairLinks,
 } from "./codebase-tools"
 import {
+  onVoiceSessionEnd,
+  type VoiceSessionEndReason,
+} from "./voice-session-end"
+import { openVoiceAgentSession } from "./voice-session-start"
+import { openAiUsage, meterVoiceTurn } from "../../../lib/ai-usage"
+import {
   createTask,
   checkTaskStatus,
   voiceAskUserPickOne,
@@ -61,6 +67,7 @@ import { bridge } from "../../../server/routes/nomadworks-bridge"
 import { parseInput, resolveActions, formatParseSummary } from "./commands-router"
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
+import { checkAgentReputation } from "./reputation-checker"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 
@@ -155,6 +162,15 @@ interface RealtimeSession {
   heartbeatTimer?: ReturnType<typeof setInterval>
   /** Consecutive heartbeats emitted with no work in flight, to avoid nagging. */
   idleHeartbeats: number
+  /** StarWorld chat session this voice call belongs to. Held on the session —
+   *  not just taken as a create-time argument — because teardown happens in
+   *  endVoiceSession(), which only has the sessionId to work from. */
+  chatSessionId?: string
+  userId?: string
+  /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
+  agentSessionId?: string
+  /** Epoch ms at connect, for the session's billable wall-clock duration. */
+  connectedAt: number
 }
 
 const sessions = new Map<string, RealtimeSession>()
@@ -980,6 +996,18 @@ const tools = [
   },
   // ── Voice Orchestrator Tools (Phase 1a + 1b) ──────────────
   ...voiceOrchestratorToolDefinitions,
+  {
+    type: "function",
+    name: "check_agent_reputation",
+    description: "Look up an external AI agent's on-chain reputation score from the three.ws registry before engaging it. Returns trust score, completed tasks, disputes, and staked amount.",
+    parameters: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", description: "The agent identifier on the three.ws registry (e.g. 'agent_xyz123')" },
+      },
+      required: ["agent_id"],
+    },
+  },
 ]
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -1073,6 +1101,11 @@ export async function executeTool(
       case "assign_task": {
         const { prompt } = JSON.parse(argsStr)
         return await assignTask(prompt, config.starguardBase)
+      }
+
+      case "check_agent_reputation": {
+        const { agent_id } = JSON.parse(argsStr)
+        return await checkAgentReputation(agent_id)
       }
 
       case "rollback_deploy": {
@@ -1324,11 +1357,22 @@ export async function executeTool(
               },
             }
           : {
-              // No tokidapp WS — fall back to silent execution
+              // No tokidapp WS — fall back to refusing destructive nodes.
+              // Same gate as the WS-connected path: an unattended voice session
+              // must never auto-approve commit_push, trigger_deploy, etc.
               onNodeStart: () => {},
               onNodeComplete: () => {},
               onNodeFail: () => {},
-              onApprovalRequired: async () => "approved" as const,
+              onApprovalRequired: async (node: { toolName?: string; title?: string }) => {
+                const toolName = String((node as { toolName?: string }).toolName ?? "")
+                if (!isDestructiveVoiceNode(toolName)) {
+                  return "approved" as const
+                }
+                console.warn(
+                  `[realtime] refusing destructive node "${node.title}" (${toolName}) on the voice fallback path (no WS)`,
+                )
+                return "rejected" as const
+              },
               onBroadcast: () => {},
               onLog: () => {},
               onCausalGraphUpdate: () => {},
@@ -1531,6 +1575,9 @@ export function createRealtimeSession(
       transcript: [],
       lastActivityAt: Date.now(),
       idleHeartbeats: 0,
+      chatSessionId,
+      userId,
+      connectedAt: Date.now(),
     }
   }
 
@@ -1561,6 +1608,9 @@ export function createRealtimeSession(
     sendToClient,
     lastActivityAt: Date.now(),
     idleHeartbeats: 0,
+    chatSessionId,
+    userId,
+    connectedAt: Date.now(),
   }
 
   /** Send response.create, guarding against concurrent responses */
@@ -1755,6 +1805,22 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
         case "response.done":
         case "response.completed":
           session.responseInProgress = false
+          // Realtime reports usage on this event and nowhere else, under
+          // input_tokens/output_tokens rather than prompt/completion.
+          //
+          // The two case labels above are the GA and legacy names for the same
+          // event, so only one should ever arrive — but "should" is not what a
+          // ledger runs on. Keying the row on OpenAI's own response id means a
+          // redelivery under either name collides on the unique index instead
+          // of billing the turn twice. Absent id falls back to a generated key:
+          // a constant one would swallow every turn after the first.
+          meterVoiceTurn({
+            ctx: session,
+            modelId: REALTIME_MODEL,
+            provider: "openai",
+            requestId: parsed.response?.id ? `openai_${parsed.response.id}` : undefined,
+            usage: openAiUsage(parsed.response),
+          })
           onResponseDone?.()
           // With VAD, the server auto-resumes listening after response completes.
           // Notify client that voice is ready again.
@@ -1946,6 +2012,17 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
   })
 
   sessions.set(sessionId, session)
+
+  // Open the accounting row alongside the socket. Fire-and-forget: the
+  // conversation must not wait on, or fail because of, a database write.
+  void openVoiceAgentSession({
+    chatSessionId,
+    engine: "openai",
+    model: REALTIME_MODEL,
+  }).then((agentSessionId) => {
+    if (agentSessionId) session.agentSessionId = agentSessionId
+  })
+
   return session
 }
 
@@ -2070,14 +2147,22 @@ export function startVoiceSession(sessionId: string): boolean {
   return false // caller should create a new session
 }
 
-export function endVoiceSession(sessionId: string) {
+export function endVoiceSession(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "complete",
+) {
   const session = sessions.get(sessionId)
   if (session) {
-    // Fire-and-forget: update wiki with session transcript before closing
-    const transcriptText = session.transcript?.join("\n") || ""
-    if (transcriptText.trim()) {
-      updateWikiFromSession(sessionId, transcriptText).catch(console.error)
-    }
+    onVoiceSessionEnd({
+      sessionId,
+      engine: "openai",
+      transcript: session.transcript,
+      chatSessionId: session.chatSessionId,
+      userId: session.userId,
+      agentSessionId: session.agentSessionId,
+      durationMs: Date.now() - session.connectedAt,
+      reason,
+    })
 
     // Remove listeners before closing so the old session's async close handler
     // doesn't accidentally delete a newly-created session with the same ID.
@@ -2110,7 +2195,7 @@ export function ensureSingleUserSession(sessionId: string): boolean {
   const existingSessionId = activeUserSessions.get(userId)
   if (existingSessionId && existingSessionId !== sessionId) {
     // Another session exists for this user — end it before creating a new one
-    endVoiceSession(existingSessionId)
+    endVoiceSession(existingSessionId, "replace")
   }
 
   activeUserSessions.set(userId, sessionId)

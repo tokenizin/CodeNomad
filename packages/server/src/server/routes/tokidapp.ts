@@ -35,6 +35,7 @@ import {
   cleanupAllOrnithSessions,
 } from "../../plugins/tokidapp/concierge/ornith-realtime"
 import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession, isEngineAvailable } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
+import type { VoiceSessionEndReason } from "../../plugins/tokidapp/concierge/voice-session-end"
 import type { VoiceEngine as FallbackVoiceEngine } from "../../plugins/tokidapp/concierge/voice-fallback"
 import {
   describeFallback,
@@ -45,6 +46,7 @@ import {
   TERMINAL_VOICE_ENGINE,
 } from "../../plugins/tokidapp/concierge/voice-fallback"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
+import { buildAgentPersonaInstructions } from "../../plugins/tokidapp/concierge/agent-personas"
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
 import { buildVaultSessionContext } from "../../plugins/tokidapp/concierge/codebase-tools"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
@@ -66,7 +68,10 @@ import {
   createRecording,
   findApprovalsByOrchestrator,
   createEvent,
+  createSessionAutoId,
+  ensureUserExists,
 } from "../../lib/tokidapp-queries"
+import { resolveVoiceWsUrl } from "../../lib/tokidapp/voice-ws-url"
 import { addLocalRecording, getLocalRecordings } from "./local-recordings"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../../plugins/tokidapp/orchestrator/types"
 import {
@@ -155,6 +160,26 @@ function parseVoiceLocale(raw: unknown): "en" | "id" | "auto" {
 /** Public tunnel URL for constructing blob proxy URLs that OpenAI can fetch.
  *  The tunnel has the blob proxy route and doesn't require JWT auth. */
 const TUNNEL_PUBLIC_URL = (process.env.TUNNEL_PUBLIC_URL || "https://chat.tokenizin.com").replace(/\/+$/, "")
+
+/** TokiDAPPEventType is a Postgres enum — unknown labels raise 22P02. */
+const VALID_DB_EVENT_TYPES = new Set([
+  "ORCHESTRATOR_CREATED", "ORCHESTRATOR_GREETED", "INTENT_CLASSIFIED",
+  "DAG_BUILT", "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED",
+  "NODE_RETRY", "NODE_SKIPPED", "APPROVAL_REQUESTED", "APPROVAL_APPROVED",
+  "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "BROADCAST_SENT",
+  "LIFECYCLE_PHASE", "ERROR", "HEALING_ACTION", "WORKFLOW_COMPLETED",
+])
+const VALID_DB_SEVERITIES = new Set(["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"])
+
+function toDbEventType(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_DB_EVENT_TYPES.has(v) ? v : "LIFECYCLE_PHASE"
+}
+
+function toDbSeverity(raw: unknown): string {
+  const v = String(raw ?? "").toUpperCase()
+  return VALID_DB_SEVERITIES.has(v) ? v : "INFO"
+}
 
 /** WS registry keys (tokidapp_*, voice_*) — not StarWorld TokiDAPPSession ids. */
 function isWsTransportSessionKey(id: string): boolean {
@@ -500,6 +525,37 @@ function clearEngineAttempts(sessionId: string): void {
 }
 
 /**
+ * Tear down every server voice engine for this sessionId.
+ * Each end* is a no-op when that engine has no session. Wiki/recording run
+ * once via onVoiceSessionEnd (skipped when reason is `fallback`).
+ */
+function teardownAllVoiceEngines(
+  sessionId: string,
+  reason: VoiceSessionEndReason = "socket-close",
+): void {
+  try {
+    endVoiceSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    endDeepgramSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    removeOrnithSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+  try {
+    endOrchestratorVoiceSession(sessionId, reason)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Drop one tier down the fallback chain after `from` failed.
  *
  * Replaces the previous one-shot OpenAI→local hop: each failure descends a
@@ -544,16 +600,7 @@ function descendVoiceEngine(
   markEngineAttempted(sessionId, next)
 
   // Tear down the failed engine before starting the next one.
-  try {
-    endVoiceSession(sessionId)
-  } catch {
-    /* ignore */
-  }
-  try {
-    endDeepgramSession(sessionId)
-  } catch {
-    /* ignore */
-  }
+  teardownAllVoiceEngines(sessionId, "fallback")
 
   // Tell the client which tier it is on now, before any audio arrives.
   socketRef.send(
@@ -858,13 +905,14 @@ async function startVoiceRealtimeSession(
   requestedVoice: unknown,
   socketRef: { send: (msg: string) => void },
   chatSessionId?: string,
+  agentId?: string,
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
   const existingVoice = getRealtimeSessionVoice(sessionId)
-  console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice)
+  console.log("[voice-ws] startVoiceRealtimeSession sessionId:", sessionId, "voice:", voice, "existingVoice:", existingVoice, "agentId:", agentId)
   if (existingVoice && existingVoice !== voice) {
     console.log("[voice-ws] voice changed, ending existing session")
-    endVoiceSession(sessionId)
+    endVoiceSession(sessionId, "replace")
   }
   resetInputAudio(sessionId)
   const notifyReady = () => {
@@ -879,7 +927,13 @@ async function startVoiceRealtimeSession(
   if (!getRealtimeSession(sessionId)) {
     console.log("[voice-ws] no existing session, creating new OpenAI Realtime session")
 
-    const enrichedInstructions = await buildVoiceEnrichedInstructions(userId)
+    const baseInstructions = await buildVoiceEnrichedInstructions(userId)
+
+    // Inject agent persona instructions if an agent is selected
+    const personaInstructions = buildAgentPersonaInstructions(agentId)
+
+    // Combine: digest + session context + persona
+    const enrichedInstructions = [baseInstructions, personaInstructions].filter(Boolean).join("\n\n")
 
     createRealtimeSession(
       sessionId,
@@ -998,8 +1052,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     }
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
-    endVoiceSession(sessionId)
-    endDeepgramSession(sessionId)
+    teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
   }
 
@@ -1111,6 +1164,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               msg.voice,
               socketRef,
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
+              typeof msg.agentId === "string" ? msg.agentId : undefined,
             )
           } else {
             console.log("[voice-ws] REALTIME_ENABLED is false — descending the fallback chain")
@@ -1222,18 +1276,10 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "voice_disconnect") {
-        // Full teardown of the voice session — close Realtime WS and/or Deepgram,
-        // clear audio buffers, and reset state. The WebSocket itself stays
-        // open so the client can re-connect with voice_start if needed.
-        if (activeEngine === "deepgram") {
-          endDeepgramSession(sessionId)
-        } else if (activeEngine === "local") {
-          endOrchestratorVoiceSession(sessionId)
-        } else if (activeEngine === "ornith") {
-          removeOrnithSession(sessionId)
-        } else {
-          endVoiceSession(sessionId)
-        }
+        // Full teardown of the voice session — close every engine, clear
+        // audio buffers, and reset state. The WebSocket itself stays open
+        // so the client can re-connect with voice_start if needed.
+        teardownAllVoiceEngines(sessionId, "complete")
         clearAudioBuffer(sessionId)
         socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
         return
@@ -1964,7 +2010,7 @@ async function getWorkflowDefinitions(): Promise<any[]> {
 
 // ── Routes ────────────────────────────────────────────────────
 
-export function registerTokidappRoutes(app: FastifyInstance) {
+export function registerTokidappRoutes(app: FastifyInstance, starGuardJwtHandler?: StarGuardJwtHandler) {
   // Proxy: serve workflow definitions from StarGuard with local cache
   app.get("/api/tokidapp/workflows", async () => {
     const workflows = await getWorkflowDefinitions()
@@ -1997,31 +2043,54 @@ export function registerTokidappRoutes(app: FastifyInstance) {
     }
   })
 
-  // Session creation — proxy to tokidapp sidecar on :8548
-  // The sidecar has full DB access; this keeps auth handling and route logic unified.
+  // Session creation — direct DB call (no :8548 proxy)
+  // Creates a TokiDAPPSession row and returns a WebSocket URL for the Realtime voice loop.
   app.post("/api/tokidapp/session", async (request, reply) => {
     try {
-      const sidecarUrl = "http://127.0.0.1:8548/api/tokidapp/session"
-      const rawBody = request.body as Record<string, unknown> | undefined
       const authHeader = (request.headers.authorization ?? "") as string
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
 
-      const sidecarRes = await fetch(sidecarUrl, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: authHeader,
-        },
-        body: rawBody ? JSON.stringify(rawBody) : "{}",
-        signal: AbortSignal.timeout(10_000),
-      })
+      if (!token) {
+        reply.code(401)
+        return { error: "Unauthorized" }
+      }
 
-      const data: unknown = await sidecarRes.json()
-      reply.code(sidecarRes.status)
-      return data
+      if (!starGuardJwtHandler) {
+        reply.code(503)
+        return { error: "Auth not configured" }
+      }
+
+      const payload = await starGuardJwtHandler.verify(token)
+      if (!payload) {
+        reply.code(401)
+        return { error: "Invalid or expired token" }
+      }
+
+      const userId = payload.userId
+      if (!userId) {
+        reply.code(401)
+        return { error: "Invalid token payload" }
+      }
+
+      // Ensure User row exists (FK safety net for cross-environment JWTs)
+      await ensureUserExists(
+        userId,
+        payload.walletAddress,
+        payload.role,
+        payload.email,
+      )
+
+      // Create session row
+      const sessionId = await createSessionAutoId(userId)
+
+      // Mint WS URL pointing back at CodeNomad's voice WebSocket
+      const wsUrl = await resolveVoiceWsUrl(userId, token)
+
+      return { sessionId, wsUrl }
     } catch (error) {
-      request.log.error({ err: error }, "TokiDAPP session proxy to sidecar failed")
-      reply.code(502)
-      return { error: "Sidecar unavailable" }
+      request.log.error({ err: error }, "TokiDAPP session creation failed")
+      reply.code(500)
+      return { error: "Session creation failed" }
     }
   })
 
@@ -2071,14 +2140,18 @@ export function registerTokidappRoutes(app: FastifyInstance) {
       }
 
       const safeSessionId: string = typeof sessionId === "string" ? sessionId : "unknown"
-      const safeDuration: number = typeof duration === "number" ? duration : typeof duration === "string" ? Number(duration) || 0 : 0
+      // `duration` on the wire is MILLISECONDS — same contract the portal's own
+      // /api/tokidapp/recordings route uses, where it is assigned straight to
+      // durationMs. Clients that count in seconds must convert before posting;
+      // this route deliberately does not guess.
+      const safeDurationMs: number = typeof duration === "number" ? duration : typeof duration === "string" ? Number(duration) || 0 : 0
 
       // Build recording object
       const recording = {
         id: crypto.randomUUID(),
         blobUrl: rawBlobUrl as string,
         sessionId: safeSessionId,
-        duration: safeDuration,
+        durationMs: safeDurationMs,
       }
 
       // Persist to DB (non-fatal if unreachable)
@@ -2087,9 +2160,8 @@ export function registerTokidappRoutes(app: FastifyInstance) {
           id: recording.id,
           sessionId: recording.sessionId,
           blobUrl: recording.blobUrl,
-          duration: recording.duration,
-          format: 'webm',
-          status: 'completed',
+          durationMs: recording.durationMs,
+          mimeType: 'audio/webm',
         })
       } catch (dbErr) {
         request.log.warn({ err: dbErr }, 'DB unavailable, recording persisted locally only')
@@ -2100,7 +2172,7 @@ export function registerTokidappRoutes(app: FastifyInstance) {
         id: recording.id,
         sessionId: recording.sessionId,
         blobUrl: recording.blobUrl,
-        duration: recording.duration,
+        durationMs: recording.durationMs,
         createdAt: new Date().toISOString(),
       })
 
@@ -2943,8 +3015,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     }
     taskWatchers.clear()
     clearAudioBuffer(sessionId)
-    endVoiceSession(sessionId)
-    endDeepgramSession(sessionId)
+    teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
   }
 
@@ -3044,6 +3115,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                   typeof msg.tokidappSessionId === "string"
                     ? msg.tokidappSessionId
                     : dbSessionId ?? undefined,
+                  typeof msg.agentId === "string" ? msg.agentId : undefined,
                 )
               } else {
                 console.log("[tokidapp-ws] REALTIME_ENABLED is false — falling back to local voice")
@@ -3135,15 +3207,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_disconnect") {
-            if (activeEngine === "deepgram") {
-              endDeepgramSession(sessionId)
-            } else if (activeEngine === "local") {
-              endOrchestratorVoiceSession(sessionId)
-            } else if (activeEngine === "ornith") {
-              removeOrnithSession(sessionId)
-            } else {
-              endVoiceSession(sessionId)
-            }
+            teardownAllVoiceEngines(sessionId, "complete")
             clearAudioBuffer(sessionId)
             socketRef.send(JSON.stringify({ type: "voice_disconnected" }))
             return
@@ -3689,9 +3753,11 @@ async function handleOrchestrateMessage(
         // Also persist event to DB (fire-and-forget, non-fatal)
         createEvent({
           id: crypto.randomUUID(),
-          sessionId: orchestratorId,
-          eventType: eventType || "orchestrator_event",
-          data: JSON.stringify({ orchestratorId, eventType, severity, title, metadata }),
+          orchestratorId,
+          eventType: toDbEventType(eventType),
+          severity: toDbSeverity(severity),
+          title: title || "Orchestrator event",
+          metadata,
         }).catch((e: Error) => {
           console.error("[tokidapp] Failed to create event:", e.message)
         })

@@ -1,12 +1,14 @@
 /**
- * Product-spin Tokenizin palace mesh for CodeNomad empty / welcome cards.
- * Matches StarWorld BrandProductSpinLogo (face-ref camera + Y-spin).
+ * Product-spin brand mark for CodeNomad empty / welcome cards.
+ * Tokenizin palace (default) or Prestix 3D letter-P when this silo is Prestix.
  */
 
 import { onCleanup, onMount, type Component } from "solid-js"
 import * as THREE from "three"
 import { buildPalaceMesh } from "../lib/tokenizin-palace-mesh"
-import { TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
+import { buildPrestixMesh } from "../lib/prestix-p-mesh"
+import { PRESTIX_LOGO_URL, TOKENIZIN_LOGO_URL } from "../lib/brand-assets"
+import { resolveCodeNomadSilo, type CodeNomadSilo } from "../lib/silo-brand"
 
 export interface TokenizinLogo3DProps {
   width?: number
@@ -15,6 +17,8 @@ export interface TokenizinLogo3DProps {
   alt?: string
   /** Continuous Y-spin (honors prefers-reduced-motion). */
   spin?: boolean
+  /** Override silo detection (tests). */
+  silo?: CodeNomadSilo
 }
 
 const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
@@ -28,6 +32,8 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
     const reduceMotion =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const silo = props.silo ?? resolveCodeNomadSilo()
+    const prestix = silo === "prestix"
 
     let renderer: THREE.WebGLRenderer | null = null
     let raf = 0
@@ -37,7 +43,6 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
       const scene = new THREE.Scene()
       const camera = new THREE.PerspectiveCamera(22, width / Math.max(height, 1), 0.05, 120)
 
-      // Frame ~1.85-tall subject (same heuristic as ProductSpinScene).
       const halfH = 1.85 * 0.5
       const halfW = Math.max(2.55, 1.85) * 0.5 * Math.SQRT2
       const fovY = THREE.MathUtils.degToRad(camera.fov)
@@ -63,25 +68,40 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
       renderer.domElement.style.display = "block"
       renderer.domElement.setAttribute("aria-hidden", "true")
 
-      // Tokenizin product-spin light lift (palace / tokenizin preset).
-      scene.add(new THREE.AmbientLight(0x2a2418, 0.35))
-      const key = new THREE.DirectionalLight(0xfff4ec, 1.85)
-      key.position.set(3.4, 0.15, 3.0)
-      scene.add(key)
-      const fill = new THREE.DirectionalLight(0x807078, 0.4)
-      fill.position.set(-3.0, 0.0, 2.0)
-      scene.add(fill)
-      const rim = new THREE.DirectionalLight(0xffc8d0, 0.35)
-      rim.position.set(-0.8, 0.6, -3.0)
-      scene.add(rim)
-      const spark = new THREE.PointLight(0xffffff, 44, 5.5, 2)
-      spark.position.set(2.35, 0.05, 2.2)
-      scene.add(spark)
-      const ring = new THREE.PointLight(0xffffff, 6, 4.5, 2)
-      ring.position.set(2.1, 0.35, 0)
-      scene.add(ring)
+      if (prestix) {
+        scene.add(new THREE.AmbientLight(0x2a1014, 0.42))
+        const key = new THREE.DirectionalLight(0xffe8ec, 1.7)
+        key.position.set(3.4, 0.15, 3.0)
+        scene.add(key)
+        const fill = new THREE.DirectionalLight(0x806070, 0.45)
+        fill.position.set(-3.0, 0.0, 2.0)
+        scene.add(fill)
+        const rim = new THREE.DirectionalLight(0xff90a0, 0.4)
+        rim.position.set(-0.8, 0.6, -3.0)
+        scene.add(rim)
+        const spark = new THREE.PointLight(0xffffff, 36, 5.5, 2)
+        spark.position.set(2.35, 0.05, 2.2)
+        scene.add(spark)
+      } else {
+        scene.add(new THREE.AmbientLight(0x2a2418, 0.35))
+        const key = new THREE.DirectionalLight(0xfff4ec, 1.85)
+        key.position.set(3.4, 0.15, 3.0)
+        scene.add(key)
+        const fill = new THREE.DirectionalLight(0x807078, 0.4)
+        fill.position.set(-3.0, 0.0, 2.0)
+        scene.add(fill)
+        const rim = new THREE.DirectionalLight(0xffc8d0, 0.35)
+        rim.position.set(-0.8, 0.6, -3.0)
+        scene.add(rim)
+        const spark = new THREE.PointLight(0xffffff, 44, 5.5, 2)
+        spark.position.set(2.35, 0.05, 2.2)
+        scene.add(spark)
+        const ring = new THREE.PointLight(0xffffff, 6, 4.5, 2)
+        ring.position.set(2.1, 0.35, 0)
+        scene.add(ring)
+      }
 
-      const logo = buildPalaceMesh()
+      const logo = prestix ? buildPrestixMesh() : buildPalaceMesh()
       scene.add(logo)
 
       host.replaceChildren(renderer.domElement)
@@ -100,7 +120,6 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
       }
       raf = requestAnimationFrame(tick)
     } catch {
-      // Keep CSS/SVG fallback visible
       if (fallbackImg) fallbackImg.style.display = ""
     }
 
@@ -118,6 +137,7 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
 
   const width = () => props.width ?? 192
   const height = () => props.height ?? 192
+  const silo = () => props.silo ?? resolveCodeNomadSilo()
 
   return (
     <div
@@ -130,11 +150,11 @@ const TokenizinLogo3D: Component<TokenizinLogo3DProps> = (props) => {
         overflow: "visible",
       }}
       role="img"
-      aria-label={props.alt ?? "Tokenizin logo"}
+      aria-label={props.alt ?? (silo() === "prestix" ? "Prestix 3D logo" : "Tokenizin logo")}
     >
       <img
         ref={fallbackImg}
-        src={TOKENIZIN_LOGO_URL}
+        src={silo() === "prestix" ? PRESTIX_LOGO_URL : TOKENIZIN_LOGO_URL}
         alt=""
         aria-hidden="true"
         class="absolute inset-0 m-auto h-full w-auto object-contain"

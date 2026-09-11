@@ -62,3 +62,25 @@
     backdrop-filter: none;
   }
 }
+
+/* Prestix silo — red sphere-grid dots (same pitch as gold --sw-mesh). */
+html[data-silo="prestix"],
+.silo-prestix {
+  --sw-brand: #c41e3a;
+  --sw-brand-bright: #e23a4c;
+  --sw-brand-dim: #9a1830;
+  --sw-brand-hover: #e23a4c;
+  --sw-pill-border: 1px solid rgba(196, 30, 58, 0.32);
+  --sw-mesh:
+    radial-gradient(ellipse 70% 55% at 50% 35%, rgba(196, 30, 58, 0.18) 0%, transparent 65%),
+    radial-gradient(circle at 1px 1px, rgba(226, 58, 76, 0.42) 1px, transparent 0);
+}
+
+html[data-silo="prestix"] .empty-state-logo,
+html[data-silo="prestix"] .folder-home-logo,
+html[data-silo="prestix"] .loading-logo,
+.silo-prestix .empty-state-logo,
+.silo-prestix .folder-home-logo,
+.silo-prestix .loading-logo {
+  filter: drop-shadow(0 12px 28px rgba(196, 30, 58, 0.32));
+}

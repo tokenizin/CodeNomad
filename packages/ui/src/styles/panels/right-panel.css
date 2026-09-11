@@ -217,6 +217,9 @@
 
 .file-list-scroll {
   @apply flex-1 overflow-y-auto min-h-0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .file-list-item {
@@ -256,6 +259,78 @@
 
 .file-list-item-content {
   @apply flex items-center justify-between gap-3;
+}
+
+.file-list-columns {
+  @apply flex items-center gap-3 px-2 py-1 border-b;
+  border-color: var(--border-base);
+}
+
+.file-list-col-name,
+.file-list-item-path {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.file-list-col-modified,
+.file-list-item-modified {
+  @apply shrink-0 text-[10px] tabular-nums;
+  width: 7.5rem;
+  color: var(--text-muted);
+  text-align: end;
+}
+
+.file-list-col-actions {
+  width: 4.5rem;
+  flex-shrink: 0;
+}
+
+.file-list-columns .file-list-col-name,
+.file-list-columns .file-list-col-modified {
+  @apply text-[10px] font-semibold uppercase tracking-wide;
+}
+
+.file-list-sort {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.25rem 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.file-list-sort:hover,
+.file-list-sort.is-active {
+  color: var(--text-primary);
+}
+
+.file-list-sort:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px), (pointer: coarse) {
+  .file-list-col-modified,
+  .file-list-item-modified {
+    width: 5.25rem;
+  }
+
+  .files-header-icon-button,
+  .files-toggle-button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .file-list-item {
+    padding-block: 0.5rem;
+  }
+
+  .file-list-sort {
+    min-height: 2.75rem;
+  }
 }
 
 .git-change-list-item .file-list-item-content {

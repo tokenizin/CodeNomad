@@ -67,5 +67,20 @@ Behavior for agents:
 - Use the `write` tool only when creating new files from scratch.
 
 ## Commit Message Guidelines
-- When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.
+- When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the verification or test coverage added.
 - Prefer messages that explain why the change exists and how regressions are prevented, not just a list of touched files.
+
+## Sidecar Creation
+
+When creating a new sidecar service, follow the `starworld-sidecar-creation` skill. Key rules:
+
+1. **Directory**: `scripts/<sidecar-name>/{routes,plugins,lib,__tests__}`
+2. **Server**: `node:http` createServer, route table, default-export handlers
+3. **Registration**: Add to `CodeNomad/packages/server/src/sidecars/defaults.ts` (auto-registers on boot)
+4. **Tunnel**: Add ingress to `scripts/sync-tunnel-ingress.sh` + DNS CNAME
+5. **LaunchAgent**: Create plist for auto-start
+
+Quick reference:
+- Server port env: `<SIDECAR>_PORT`
+- Tunnel hostname: `<sidecar>.tokenizin.com`
+- Verify: `curl -s http://localhost:<PORT>/health`

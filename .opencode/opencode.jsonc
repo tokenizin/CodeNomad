@@ -36,8 +36,13 @@
           "tool_call": true,
           "attachment": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           }
         },
         "tokenizin/concierge-web2.5:latest": {
@@ -50,6 +55,38 @@
           "name": "MiniMax M2.7 (Ollama cloud)",
           "tool_call": true,
           "reasoning": true
+        },
+        "muse-glimmer:30b-q4_K_M-pinned": {
+          "id": "muse-glimmer:30b-q4_K_M-pinned",
+          "name": "Muse Glimmer 30B Q4_K_M (pinned)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "qwen3-vl:235b-a22b-thinking-bf16-pinned": {
+          "id": "qwen3-vl:235b-a22b-thinking-bf16-pinned",
+          "name": "Qwen3 VL 235B A22B Thinking (pinned)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
         }
       }
     },
@@ -112,151 +149,155 @@
       "prompt": "{file:../../.nomadworks/agents/solidity-architect.md}"
     },
     "ceo": {
-      "description": "Chief Executive Officer — ecosystem vision, risk management, resource allocation, strategic decisions",
+      "description": "Chief Executive Officer \u2014 ecosystem vision, risk management, resource allocation, strategic decisions",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/ceo.md}"
     },
     "cto": {
-      "description": "Chief Technology Officer — technology strategy, architecture decisions, technical risk, infrastructure",
+      "description": "Chief Technology Officer \u2014 technology strategy, architecture decisions, technical risk, infrastructure",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/cto.md}"
     },
     "cmo": {
-      "description": "Chief Marketing Officer — brand strategy, campaign execution, dApp UI governance, community growth",
+      "description": "Chief Marketing Officer \u2014 brand strategy, campaign execution, dApp UI governance, community growth",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/cmo.md}"
     },
     "cso": {
-      "description": "Chief Security Officer — smart contract audit governance, incident response, threat modeling, security review gates",
+      "description": "Chief Security Officer \u2014 smart contract audit governance, incident response, threat modeling, security review gates",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/cso.md}"
     },
     "cfo": {
-      "description": "Chief Financial Officer — treasury management, tokenomics, budget allocation, investor reporting, financial risk",
+      "description": "Chief Financial Officer \u2014 treasury management, tokenomics, budget allocation, investor reporting, financial risk",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/cfo.md}"
     },
     "cao": {
-      "description": "Chief Acquisition Officer — merchant acquisition, venue onboarding, Prestix.vip partnership, consumer growth, and strategic partnerships",
+      "description": "Chief Acquisition Officer \u2014 merchant acquisition, venue onboarding, Prestix.vip partnership, consumer growth, and strategic partnerships",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/cao.md}"
     },
     "coo": {
-      "description": "Chief Operating Officer — process optimization, infrastructure operations, release management, cross-team coordination, and incident response",
+      "description": "Chief Operating Officer \u2014 process optimization, infrastructure operations, release management, cross-team coordination, and incident response",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/coo.md}"
     },
     "product_manager": {
-      "description": "Product Manager Agent (PMA) — central orchestrator for all NomadWorks agent activities, task assignment, and workflow management",
+      "description": "Product Manager Agent (PMA) \u2014 central orchestrator for all NomadWorks agent activities, task assignment, and workflow management",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/product_manager.md}"
     },
     "business_analyst": {
-      "description": "Business Analyst — document steward, requirements analyst, translates product goals into specifications",
+      "description": "Business Analyst \u2014 document steward, requirements analyst, translates product goals into specifications",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/business_analyst.md}"
     },
     "tech_lead": {
-      "description": "Tech Lead — leads technical development, ensures code quality, architectural adherence, and functional verification",
+      "description": "Tech Lead \u2014 leads technical development, ensures code quality, architectural adherence, and functional verification",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/tech_lead.md}"
     },
     "technical_architect": {
-      "description": "Technical Architect — defines technical interfaces, architectural patterns, and ensures technical consistency",
+      "description": "Technical Architect \u2014 defines technical interfaces, architectural patterns, and ensures technical consistency",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/technical_architect.md}"
     },
     "developer": {
-      "description": "Developer — implements features and writes tests according to architectural designs",
+      "description": "Developer \u2014 implements features and writes tests according to architectural designs",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/developer.md}"
     },
     "qa_engineer": {
-      "description": "QA Engineer — designs, develops, and executes automated test suites, verifies manual scripts",
+      "description": "QA Engineer \u2014 designs, develops, and executes automated test suites, verifies manual scripts",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/qa_engineer.md}"
     },
     "ui_ux_designer": {
-      "description": "UI/UX Designer — god-mode design authority with systemic thinking, heuristic evaluation, neuro-inclusive accessibility, dark pattern audits, and award-winning visual review",
+      "description": "UI/UX Designer \u2014 god-mode design authority with systemic thinking, heuristic evaluation, neuro-inclusive accessibility, dark pattern audits, and award-winning visual review",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/ui_ux_designer.md}"
     },
     "mui_engineer": {
-      "description": "MUI Engineer — expert MUI component developer, produces production-ready Material-UI components, design critiques, Storybook stories, and Jest tests with accessibility enforcement",
+      "description": "MUI Engineer \u2014 expert MUI component developer, produces production-ready Material-UI components, design critiques, Storybook stories, and Jest tests with accessibility enforcement",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/mui_engineer.md}"
     },
     "workflow_runner": {
-      "description": "Workflow Runner — delegated workflow executor for PMA-started task lifecycles, including implementation, verification, and finalization",
+      "description": "Workflow Runner \u2014 delegated workflow executor for PMA-started task lifecycles, including implementation, verification, and finalization",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/workflow_runner.md}"
     },
     "infra_sme": {
       "model": "opencode-go/mimo-v2.5",
-      "description": "Infrastructure SME — platform topology, CI/CD design, schema migration strategy, release architecture, automation patterns, incident triage, multi-regional scalability, multi-software lifecycle, performance optimization, and FinOps cost efficiency advisory",
+      "description": "Infrastructure SME \u2014 platform topology, CI/CD design, schema migration strategy, release architecture, automation patterns, incident triage, multi-regional scalability, multi-software lifecycle, performance optimization, and FinOps cost efficiency advisory",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/infra_sme.md}",
-      "mcp": ["chrome-devtools"]
+      "mcp": [
+        "chrome-devtools"
+      ]
     },
     "dev_ops": {
       "model": "opencode-go/mimo-v2.5",
-      "description": "DevOps — CI/CD, Vercel deploys, schema push and seeds, release versioning, code revision & quality gates, testing pipeline (vitest/hardhat/playwright), packaging (next build/solidity/CodeNomad/Docker), hosting & deploying (Vercel multi-region/CodeNomad tunnel/contract deploy), publishing, schema ops, multi-software automation, performance optimization, and FinOps cost efficiency",
+      "description": "DevOps \u2014 CI/CD, Vercel deploys, schema push and seeds, release versioning, code revision & quality gates, testing pipeline (vitest/hardhat/playwright), packaging (next build/solidity/CodeNomad/Docker), hosting & deploying (Vercel multi-region/CodeNomad tunnel/contract deploy), publishing, schema ops, multi-software automation, performance optimization, and FinOps cost efficiency",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/dev_ops.md}",
-      "mcp": ["chrome-devtools"]
+      "mcp": [
+        "chrome-devtools"
+      ]
     },
     "cloudflare-tunnel-setup": {
-      "description": "Cloudflare Tunnel Setup Wizard — interactive Q&A-guided bidirectional tunnel configuration for CodeNomad, matching the verified production tunnel setup",
+      "description": "Cloudflare Tunnel Setup Wizard \u2014 interactive Q&A-guided bidirectional tunnel configuration for CodeNomad, matching the verified production tunnel setup",
       "mode": "subagent",
       "prompt": "{file:../../.opencode/agents/cloudflare-tunnel-setup.md}"
     },
     "contract_security_auditor": {
-      "description": "Contract Security Auditor — smart contract vulnerability assessment, risk analysis, and security verification",
+      "description": "Contract Security Auditor \u2014 smart contract vulnerability assessment, risk analysis, and security verification",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/contract_security_auditor.md}"
     },
     "evm_optimization_engineer": {
-      "description": "EVM Optimization Engineer — gas optimization, contract efficiency, deployment cost reduction",
+      "description": "EVM Optimization Engineer \u2014 gas optimization, contract efficiency, deployment cost reduction",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/evm_optimization_engineer.md}"
     },
     "upgrade_specialist": {
-      "description": "Upgrade Specialist — upgradeable smart contract architecture, storage layout compatibility, proxy safety",
+      "description": "Upgrade Specialist \u2014 upgradeable smart contract architecture, storage layout compatibility, proxy safety",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/upgrade_specialist.md}"
     },
     "patternfly-ux-investigator": {
-      "description": "PatternFly UX Investigator — orchestrates UX SOP audits against PatternFly design system, dispatches 6 subagents across component compliance, a11y, cross-device, UX psychology, content design, and journey flow",
+      "description": "PatternFly UX Investigator \u2014 orchestrates UX SOP audits against PatternFly design system, dispatches 6 subagents across component compliance, a11y, cross-device, UX psychology, content design, and journey flow",
       "mode": "primary",
       "prompt": "{file:../../.nomadworks/agents/patternfly-ux-investigator.md}"
     },
     "patternfly-component-auditor": {
-      "description": "PatternFly Component Auditor — audits UI implementations against PatternFly component standards: correct component choice, variants, states, modifiers, tokens, and deprecation awareness",
+      "description": "PatternFly Component Auditor \u2014 audits UI implementations against PatternFly component standards: correct component choice, variants, states, modifiers, tokens, and deprecation awareness",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-component-auditor.md}"
     },
     "patternfly-a11y-auditor": {
-      "description": "PatternFly Accessibility Auditor — audits UI against WCAG 2.0 AA and PatternFly inclusive design standards: keyboard, focus, ARIA, contrast, screen readers, zoom, reduced motion",
+      "description": "PatternFly Accessibility Auditor \u2014 audits UI against WCAG 2.0 AA and PatternFly inclusive design standards: keyboard, focus, ARIA, contrast, screen readers, zoom, reduced motion",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-a11y-auditor.md}"
     },
     "patternfly-device-auditor": {
-      "description": "PatternFly Cross-Device Auditor — audits UI across viewports, input methods, themes, and display preferences: responsive breakpoints, touch, RTL, dark/high-contrast, print, zoom",
+      "description": "PatternFly Cross-Device Auditor \u2014 audits UI across viewports, input methods, themes, and display preferences: responsive breakpoints, touch, RTL, dark/high-contrast, print, zoom",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-device-auditor.md}"
     },
     "patternfly-psych-auditor": {
-      "description": "PatternFly UX Psychology Auditor — audits UI against cognitive psychology and UX principles: progressive disclosure, cognitive load, motion design, decision architecture, error prevention",
+      "description": "PatternFly UX Psychology Auditor \u2014 audits UI against cognitive psychology and UX principles: progressive disclosure, cognitive load, motion design, decision architecture, error prevention",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-psych-auditor.md}"
     },
     "patternfly-content-auditor": {
-      "description": "PatternFly Content Design Auditor — audits UI copy against PatternFly content standards: brand voice, error messages, tooltips, terminology, grammar, capitalization, localization readiness",
+      "description": "PatternFly Content Design Auditor \u2014 audits UI copy against PatternFly content standards: brand voice, error messages, tooltips, terminology, grammar, capitalization, localization readiness",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-content-auditor.md}"
     },
     "patternfly-journey-auditor": {
-      "description": "PatternFly Journey Flow Auditor — audits end-to-end user flows for coherence: goal achievement, step necessity, dead-ends, back nav, state preservation, permission gates, error recovery, timeout handling",
+      "description": "PatternFly Journey Flow Auditor \u2014 audits end-to-end user flows for coherence: goal achievement, step necessity, dead-ends, back nav, state preservation, permission gates, error recovery, timeout handling",
       "mode": "subagent",
       "prompt": "{file:../../.nomadworks/agents/patternfly-journey-auditor.md}"
     },
@@ -286,7 +327,7 @@
       "prompt": "{file:../../.opencode/agents/task-manager.md}"
     },
     "coder-agent": {
-      "description": "Individual file implementation agent — precise, scoped code changes",
+      "description": "Individual file implementation agent \u2014 precise, scoped code changes",
       "mode": "subagent",
       "prompt": "{file:../../.opencode/agents/coder-agent.md}"
     },
@@ -311,7 +352,7 @@
       "prompt": "{file:../../.opencode/agents/reviewer.md}"
     },
     "frontend-specialist": {
-      "description": "Mobile UI/UX design review — Apple HIG + MD3 compliance, touch targets, dark mode",
+      "description": "Mobile UI/UX design review \u2014 Apple HIG + MD3 compliance, touch targets, dark mode",
       "mode": "subagent",
       "prompt": "{file:../../.opencode/agents/frontend-specialist.md}"
     },
@@ -336,12 +377,12 @@
       "prompt": "{file:../../.opencode/agents/mobile-qa-auditor.md}"
     },
     "smart-account-wallet": {
-      "description": "Reown AppKit smart account wallet operations — sendCalls, EIP-5792, CAIP resolution",
+      "description": "Reown AppKit smart account wallet operations \u2014 sendCalls, EIP-5792, CAIP resolution",
       "mode": "subagent",
       "prompt": "{file:../../.opencode/agents/smart-account-wallet.md}"
     },
     "db-admin": {
-      "description": "Database operations — schema management, migrations, seeding, health checks",
+      "description": "Database operations \u2014 schema management, migrations, seeding, health checks",
       "mode": "subagent",
       "prompt": "{file:../../.opencode/agents/db-admin.md}"
     },
@@ -366,13 +407,13 @@
       "prompt": "{file:../../.opencode/agents/knowledge-sync.md}"
     },
     "mobile-migration-commander": {
-      "description": "Orchestrator for mobile-first hub migration — coordinates parallel agent execution, enforces standards, validates deliverables",
+      "description": "Orchestrator for mobile-first hub migration \u2014 coordinates parallel agent execution, enforces standards, validates deliverables",
       "mode": "primary",
       "color": "#6366f1",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/core/mobile-migration-commander.md}"
     },
     "hub-navigation": {
-      "description": "Hub navigation catalog — nav entries, DB overrides, AI code generation, translation sync",
+      "description": "Hub navigation catalog \u2014 nav entries, DB overrides, AI code generation, translation sync",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/hub-navigation.md}"
     },
@@ -382,43 +423,43 @@
       "prompt": "{file:../../prestix.app-1/.opencode/agent/security-groups.md}"
     },
     "ptix": {
-      "description": "PTIX token system — smart contracts, bonding curve, commission exchange, claims",
+      "description": "PTIX token system \u2014 smart contracts, bonding curve, commission exchange, claims",
       "mode": "subagent",
       "color": "#8b5cf6",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/ptix.md}"
     },
     "blog-fundraising-ds": {
-      "description": "Registers blog fundraising on Sepolia DynamicSplitter — payout wallet, split config, on-chain verify",
+      "description": "Registers blog fundraising on Sepolia DynamicSplitter \u2014 payout wallet, split config, on-chain verify",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/blog-fundraising-ds.md}"
     },
     "partner-agreement": {
-      "description": "Partner agreement lifecycle — submission, review, EIP-191 signing, payment, revenue share",
+      "description": "Partner agreement lifecycle \u2014 submission, review, EIP-191 signing, payment, revenue share",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/partner-agreement.md}"
     },
     "mobile-migration-animation": {
-      "description": "Animation & transition expert — framer-motion page transitions, gesture feedback, micro-interactions",
+      "description": "Animation & transition expert \u2014 framer-motion page transitions, gesture feedback, micro-interactions",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-animation.md}"
     },
     "mobile-migration-form-wizard": {
-      "description": "Form & wizard optimizer — multi-step to single-task-per-screen mobile flows",
+      "description": "Form & wizard optimizer \u2014 multi-step to single-task-per-screen mobile flows",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-form-wizard.md}"
     },
     "mobile-migration-layout-nav": {
-      "description": "Mobile layout & navigation — desktop shells to BottomNavigation, SwipeableDrawers",
+      "description": "Mobile layout & navigation \u2014 desktop shells to BottomNavigation, SwipeableDrawers",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-layout-nav.md}"
     },
     "mobile-migration-qa-test": {
-      "description": "Mobile QA & test auditor — 48px touch targets, dead hover states, Playwright mobile emulation",
+      "description": "Mobile QA & test auditor \u2014 48px touch targets, dead hover states, Playwright mobile emulation",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-qa-test.md}"
     },
     "mobile-migration-table-grid": {
-      "description": "Table & grid converter — data table rows to card stacks, multi-column to vertical stacks",
+      "description": "Table & grid converter \u2014 data table rows to card stacks, multi-column to vertical stacks",
       "mode": "subagent",
       "prompt": "{file:../../prestix.app-1/.opencode/agent/mobile-migration-table-grid.md}"
     }

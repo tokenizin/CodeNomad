@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Constellation Convergence — Prototype</title>
+    <title>Constellation Convergence — 3D Mesh + Environment</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       :root { color-scheme: dark; }
@@ -30,133 +30,102 @@
       }
       #phase-overlay { top: 12px; left: 12px; }
       #phase-overlay .label {
-        color: #d4af37;
-        font-weight: 600;
-        font-size: 9px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
+        color: #d4af37; font-weight: 600; font-size: 9px;
+        letter-spacing: 1px; text-transform: uppercase;
       }
       #phase-overlay .value { color: rgba(255,255,255,0.9); margin-top: 2px; }
 
       #progress-overlay { top: 12px; right: 12px; text-align: right; }
       #progress-overlay .label {
-        color: rgba(255,255,255,0.4);
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        color: rgba(255,255,255,0.4); font-size: 9px;
+        text-transform: uppercase; letter-spacing: 1px;
       }
       #progress-overlay .pct { color: #d4af37; font-size: 14px; font-weight: 600; }
       #progress-overlay .time { color: rgba(255,255,255,0.4); font-size: 10px; margin-top: 2px; }
 
       #timeline-bar {
-        position: absolute;
-        bottom: 0; left: 0; right: 0;
-        height: 3px;
-        background: rgba(255,255,255,0.05);
+        position: absolute; bottom: 0; left: 0; right: 0;
+        height: 3px; background: rgba(255,255,255,0.05);
       }
       #timeline-fill {
         height: 100%;
         background: linear-gradient(90deg, #d4af37, #fff8e7);
-        transition: width 0.1s linear;
-        width: 0%;
+        transition: width 0.1s linear; width: 0%;
       }
       #phase-ticks {
-        position: absolute;
-        bottom: 6px; left: 0; right: 0;
-        display: flex;
-        padding: 0 2px;
+        position: absolute; bottom: 6px; left: 0; right: 0;
+        display: flex; padding: 0 2px;
       }
       .tick {
-        font-size: 8px;
-        color: rgba(255,255,255,0.25);
-        font-family: monospace;
-        text-align: center;
+        font-size: 8px; color: rgba(255,255,255,0.25);
+        font-family: monospace; text-align: center;
       }
 
       #click-hint {
-        position: absolute;
-        bottom: 20px; left: 50%;
+        position: absolute; bottom: 20px; left: 50%;
         transform: translateX(-50%);
         padding: 6px 14px;
         background: rgba(212,175,55,0.1);
         border: 1px solid rgba(212,175,55,0.3);
-        color: #d4af37;
-        font-size: 11px;
-        font-family: monospace;
-        border-radius: 0;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.4s;
-        white-space: nowrap;
+        color: #d4af37; font-size: 11px; font-family: monospace;
+        pointer-events: none; opacity: 0;
+        transition: opacity 0.4s; white-space: nowrap;
       }
       #click-hint.show { opacity: 1; }
 
       #burst-indicator {
-        position: absolute;
-        width: 12px; height: 12px;
-        border: 2px solid #d4af37;
-        border-radius: 50%;
-        pointer-events: none;
-        opacity: 0;
+        position: absolute; width: 12px; height: 12px;
+        border: 2px solid #d4af37; border-radius: 50%;
+        pointer-events: none; opacity: 0;
         transition: opacity 0.3s;
         transform: translate(-50%, -50%);
-        box-shadow: 0 0 8px rgba(212,175,55,0.6);
+        box-shadow: 0 0 8px rgba(212,175,55,0.4);
       }
-      #burst-indicator.show { opacity: 0.8; }
+      #burst-indicator.show { opacity: 0.6; }
 
       #controls {
-        flex-shrink: 0;
-        padding: 12px 16px;
+        flex-shrink: 0; padding: 12px 16px;
         border-top: 1px solid rgba(255,255,255,0.1);
         background: #06060e;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
       }
       button {
-        padding: 6px 14px;
-        font-size: 12px;
-        font-weight: 600;
-        border: none;
-        cursor: pointer;
-        font-family: inherit;
+        padding: 6px 14px; font-size: 12px; font-weight: 600;
+        border: none; cursor: pointer; font-family: inherit;
       }
-      .btn-primary {
-        background: #d4af37;
-        color: #000;
-      }
+      .btn-primary { background: #d4af37; color: #000; }
       .btn-primary:hover { background: #e5c04a; }
       .btn-secondary {
-        background: transparent;
-        color: rgba(255,255,255,0.8);
+        background: transparent; color: rgba(255,255,255,0.8);
         border: 1px solid rgba(255,255,255,0.2);
       }
       .btn-secondary:hover { background: rgba(255,255,255,0.05); }
 
       .control-group {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        color: rgba(255,255,255,0.6);
+        display: flex; align-items: center; gap: 6px;
+        font-size: 11px; color: rgba(255,255,255,0.6);
       }
       .control-group label { font-family: monospace; }
-      .control-group input[type="range"] {
-        width: 120px;
-        accent-color: #d4af37;
-      }
-      .control-group input[type="text"] {
+      .control-group select {
         background: rgba(255,255,255,0.05);
         border: 1px solid rgba(255,255,255,0.1);
-        color: #fff;
-        padding: 4px 8px;
-        font-size: 11px;
-        font-family: monospace;
-        width: 200px;
+        color: #fff; padding: 4px 8px; font-size: 11px;
+        font-family: inherit; border-radius: 0;
+      }
+      .control-group input[type="range"] {
+        width: 120px; accent-color: #d4af37;
       }
       .spacer { flex: 1; }
       .info { font-size: 10px; color: rgba(255,255,255,0.3); }
+      .mesh-chip {
+        padding: 3px 8px; font-size: 10px; font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.2); cursor: pointer;
+        font-family: monospace;
+      }
+      .mesh-chip.active {
+        background: #d4af37; color: #000; border-color: #d4af37;
+      }
+      #mesh-row { display: flex; gap: 4px; flex-wrap: wrap; }
     </style>
   </head>
   <body>
@@ -186,22 +155,53 @@
       <div id="controls">
         <button class="btn-primary" id="play-btn">Pause</button>
         <button class="btn-secondary" id="restart-btn">Restart</button>
+
+        <div class="control-group">
+          <label>3D Logo:</label>
+          <div id="mesh-row"></div>
+        </div>
+
+        <div class="control-group">
+          <label>Backdrop:</label>
+          <select id="env-select">
+            <option value="">(none)</option>
+            <option value="beach">Beach</option>
+            <option value="sunset">Sunset</option>
+            <option value="festival">Festival</option>
+            <option value="milkyway" selected>Milky Way</option>
+            <option value="nebula">Nebula</option>
+            <option value="night-sky">Night Sky</option>
+            <option value="galactic-emerald">Galactic Band · Emerald</option>
+            <option value="galactic-indigo">Galactic Band · Indigo</option>
+          </select>
+        </div>
+
         <div class="control-group">
           <label>Duration:</label>
           <input type="range" id="duration-slider" min="15000" max="180000" step="5000" value="75000" />
           <span id="duration-val">75s</span>
         </div>
+
         <div class="control-group">
           <label>Particles:</label>
           <input type="range" id="particle-slider" min="100" max="10000" step="100" value="10000" />
           <span id="particle-val">10k</span>
         </div>
+
         <div class="control-group">
-          <label>Target:</label>
-          <input type="text" id="target-url" value="Tokenizin-Logo.png" placeholder="Image URL (or empty for sphere)" />
+          <label>LED Source:</label>
+          <select id="led-source">
+            <option value="brand">Brand Color</option>
+            <option value="video-default" selected>Default Video</option>
+            <option value="video-upload">Upload Video</option>
+            <option value="image">Image</option>
+          </select>
+          <input type="file" id="video-upload" accept="video/*,image/*" style="display:none" />
+          <button class="btn-secondary" id="upload-btn" style="padding:4px 10px;font-size:10px;">Choose</button>
         </div>
+
         <div class="spacer"></div>
-        <div class="info">Seedance v1.0 Pro Fast: 60–90s @ 480p / 5s clip</div>
+        <div class="info">LED billboard effect · each particle = one crisp LED · video plays on the grid</div>
       </div>
     </div>
 
@@ -216,22 +216,42 @@
       import * as THREE from 'three'
 
       // ═════════════════════════════════════════════════════════════════════
-      //  CONFIG (mutable via controls)
+      //  CONFIG
       // ═════════════════════════════════════════════════════════════════════
-      let ESTIMATED_DURATION = 75000 // ms
+      let ESTIMATED_DURATION = 75000
       let PARTICLE_COUNT = 10000
-      let TARGET_URL = 'Tokenizin-Logo.png'
+      let SELECTED_MESH = 'starworld'
+      let SELECTED_ENV = 'milkyway'
       const BRAND_COLOR = '#d4af37'
 
-      // Burst origin mode — when set, particles emit from this point instead of
-      // a diffuse volume. Set by clicking the canvas; cleared by the context menu
-      // or by setting it back to null.
-      let burstOrigin = null // THREE.Vector3 | null
+      let burstOrigin = null
+      let navTransition = null
 
-      // Camera navigation transition state
-      // When active, camera flies from a close-up position near the burst origin
-      // to the normal orbit position over NAV_TRANSITION_MS.
-      let navTransition = null // { startMs, fromPos, toPos, fromLook, toLook, durationMs }
+      // ═════════════════════════════════════════════════════════════════════
+      //  MESH CATALOG (from platform MeshSelector)
+      // ═════════════════════════════════════════════════════════════════════
+      const MESHES = [
+        { slug: 'starworld', label: 'StarWorld', color: '#d4af37', accent: '#ffc713' },
+        { slug: 'tokenizin', label: 'Tokenizin', color: '#d4af37', accent: '#8a6e1e' },
+        { slug: 'prestix', label: 'Prestix', color: '#f0ece4', accent: '#c41e3a' },
+        { slug: 'starcard', label: 'StarCard', color: '#d4af37', accent: '#b8942e' },
+        { slug: 'google', label: 'Google', color: '#4285F4', accent: '#EA4335' },
+      ]
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  ENVIRONMENT CATALOG (from platform EnvironmentPanel + skyboxes)
+      // ═════════════════════════════════════════════════════════════════════
+      const ENVIRONMENTS = {
+        '': { type: 'color', color: 0x04040a },
+        'beach': { type: 'hdri', url: '/environments/beach.hdr' },
+        'sunset': { type: 'hdri', url: '/environments/sunset.hdr' },
+        'festival': { type: 'hdri', url: '/environments/festival.hdr' },
+        'milkyway': { type: 'hdri', url: '/environments/milkyway.hdr' },
+        'nebula': { type: 'hdri', url: '/environments/nebula.hdr' },
+        'night-sky': { type: 'hdri', url: '/environments/night-sky.hdr' },
+        'galactic-emerald': { type: 'backdrop', url: '/backdrops/9d6d57a1-0ae0-42e3-a547-d5108dd24857_scaled.jpg' },
+        'galactic-indigo': { type: 'backdrop', url: '/backdrops/46dbd8df-315a-4d1b-bab0-3fa5c36b917e_scaled.jpg' },
+      }
 
       // ═════════════════════════════════════════════════════════════════════
       //  THREE.JS SCENE
@@ -242,13 +262,303 @@
       renderer.setClearColor(0x04040a, 1)
 
       const scene = new THREE.Scene()
-      scene.fog = new THREE.FogExp2(0x04040a, 0.012)
+      scene.fog = new THREE.FogExp2(0x04040a, 0.008)
 
       const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200)
       camera.position.set(0, 0, 35)
 
+      // ── Environment: HDRI equirect or backdrop texture ───────────────────
+      let envTexture = null
+      let backdropMesh = null
+
+      async function loadEnvironment(envKey) {
+        // Clean up previous
+        if (envTexture) { envTexture.dispose(); envTexture = null }
+        if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh.material.dispose(); backdropMesh = null }
+
+        const env = ENVIRONMENTS[envKey] || ENVIRONMENTS['']
+        if (env.type === 'color') {
+          scene.background = new THREE.Color(env.color)
+          scene.environment = null
+        } else if (env.type === 'hdri') {
+          // HDR files require RGBELoader which isn't available via CDN importmap.
+          // Use procedural starfield as backdrop for all HDRI selections.
+          scene.background = createStarfieldBackground()
+          scene.environment = null
+        } else if (env.type === 'backdrop') {
+          // Load image as equirectangular background
+          const loader = new THREE.TextureLoader()
+          loader.crossOrigin = 'anonymous'
+          try {
+            const tex = await new Promise((resolve, reject) => {
+              loader.load(env.url, resolve, undefined, reject)
+            })
+            tex.mapping = THREE.EquirectangularReflectionMapping
+            scene.background = tex
+            envTexture = tex
+          } catch {
+            // Backdrop not available — fall back to procedural starfield
+            scene.background = createStarfieldBackground()
+          }
+        }
+      }
+
+      function createStarfieldBackground() {
+        // Procedural starfield as a canvas texture
+        const c = document.createElement('canvas')
+        c.width = 2048; c.height = 1024
+        const ctx = c.getContext('2d')
+        const grad = ctx.createLinearGradient(0, 0, 0, c.height)
+        grad.addColorStop(0, '#020208')
+        grad.addColorStop(0.5, '#080820')
+        grad.addColorStop(1, '#020208')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, c.width, c.height)
+        // Stars
+        for (let i = 0; i < 800; i++) {
+          const x = Math.random() * c.width
+          const y = Math.random() * c.height
+          const r = Math.random() * 1.2
+          const a = 0.3 + Math.random() * 0.7
+          ctx.fillStyle = `rgba(255,255,255,${a})`
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+        }
+        // Nebula bands
+        for (let i = 0; i < 3; i++) {
+          const cx = Math.random() * c.width
+          const cy = Math.random() * c.height
+          const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 200 + Math.random() * 300)
+          const hue = ['rgba(120,80,40,0.15)', 'rgba(40,80,120,0.12)', 'rgba(80,40,120,0.1)'][i]
+          rg.addColorStop(0, hue)
+          rg.addColorStop(1, 'transparent')
+          ctx.fillStyle = rg
+          ctx.fillRect(0, 0, c.width, c.height)
+        }
+        const tex = new THREE.CanvasTexture(c)
+        tex.mapping = THREE.EquirectangularReflectionMapping
+        return tex
+      }
+
       // ═════════════════════════════════════════════════════════════════════
-      //  SHADERS
+      //  3D MESH GEOMETRY GENERATORS
+      //  Each returns a THREE.BufferGeometry we can sample for particle targets
+      // ═════════════════════════════════════════════════════════════════════
+
+      // ── StarWorld: 5-pointed star (two-piece extrusion simplified to one) ─
+      function buildStarWorldGeometry() {
+        const shape = new THREE.Shape()
+        const spikes = 5, outerR = 4, innerR = 1.8
+        for (let i = 0; i < spikes * 2; i++) {
+          const r = i % 2 === 0 ? outerR : innerR
+          const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2
+          const x = Math.cos(a) * r, y = Math.sin(a) * r
+          if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y)
+        }
+        shape.closePath()
+        const geo = new THREE.ExtrudeGeometry(shape, {
+          depth: 0.8, bevelEnabled: true,
+          bevelThickness: 0.1, bevelSize: 0.1, bevelSegments: 3,
+        })
+        geo.computeVertexNormals()
+        geo.center()
+        return geo
+      }
+
+      // ── Tokenizin: palace emblem (simplified L-shapes + base) ────────────
+      function buildTokenizinGeometry() {
+        const TK = 288
+        const tX = (x) => (x - TK / 2) / (TK / 2) * 3
+        const tY = (y) => -(y - TK / 2) / (TK / 2) * 3
+
+        function shapeFromPoints(pts) {
+          const s = new THREE.Shape()
+          s.moveTo(tX(pts[0][0]), tY(pts[0][1]))
+          for (let i = 1; i < pts.length; i++) s.lineTo(tX(pts[i][0]), tY(pts[i][1]))
+          s.closePath()
+          return s
+        }
+
+        const pieces = [
+          [[128,76],[134,82],[134,185],[70,185],[70,174],[123,174],[123,82]],
+          [[155,82],[160,76],[166,82],[166,174],[221,174],[221,185],[155,185]],
+          [[103,127],[103,153],[85,153],[95,130]],
+          [[185,127],[193,130],[203,153],[185,153]],
+          [[54,205],[228,205],[241,217],[47,217]],
+        ]
+
+        const geos = pieces.map((pts, i) => {
+          const depth = i < 2 ? 0.15 : i === 4 ? 0.1 : 0.08
+          const s = shapeFromPoints(pts)
+          const g = new THREE.ExtrudeGeometry(s, {
+            depth, bevelEnabled: true,
+            bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 2,
+          })
+          g.computeVertexNormals()
+          return g
+        })
+
+        // Merge all piece geometries
+        const merged = mergeGeometries(geos)
+        merged.center()
+        geos.forEach(g => g.dispose())
+        return merged
+      }
+
+      // ── Prestix: 19 spheres forming letter 'P' ───────────────────────────
+      function buildPrestixGeometry() {
+        const grid = [
+          [1,1,1,1,0], [1,1,0,1,1], [1,1,0,0,1],
+          [1,1,1,1,0], [1,1,0,0,0], [1,1,0,0,0],
+        ]
+        const cols = 5, rows = 6, spacing = 0.6, radius = 0.2
+        const geos = []
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            if (grid[row][col]) {
+              const x = (col - cols / 2 + 0.5) * spacing
+              const y = -(row - rows / 2 + 0.5) * spacing
+              const g = new THREE.SphereGeometry(radius, 12, 12)
+              g.translate(x, y, 0)
+              geos.push(g)
+            }
+          }
+        }
+        const merged = mergeGeometries(geos)
+        merged.center()
+        geos.forEach(g => g.dispose())
+        return merged
+      }
+
+      // ── StarCard: rounded rectangle card ─────────────────────────────────
+      function buildStarCardGeometry() {
+        const w = 4, h = 2.5, r = 0.4, depth = 0.15
+        const shape = new THREE.Shape()
+        shape.moveTo(-w/2 + r, -h/2)
+        shape.lineTo(w/2 - r, -h/2)
+        shape.quadraticCurveTo(w/2, -h/2, w/2, -h/2 + r)
+        shape.lineTo(w/2, h/2 - r)
+        shape.quadraticCurveTo(w/2, h/2, w/2 - r, h/2)
+        shape.lineTo(-w/2 + r, h/2)
+        shape.quadraticCurveTo(-w/2, h/2, -w/2, h/2 - r)
+        shape.lineTo(-w/2, -h/2 + r)
+        shape.quadraticCurveTo(-w/2, -h/2, -w/2 + r, -h/2)
+        const geo = new THREE.ExtrudeGeometry(shape, {
+          depth, bevelEnabled: true,
+          bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 3,
+        })
+        geo.computeVertexNormals()
+        geo.center()
+        return geo
+      }
+
+      // ── Google: four-color G ring (simplified torus segment) ─────────────
+      function buildGoogleGeometry() {
+        const geos = []
+        const colors = [0xEA4335, 0xFBBC05, 0x34A853, 0x4285F4]
+        for (let i = 0; i < 4; i++) {
+          const startAngle = (i / 4) * Math.PI * 2
+          const endAngle = ((i + 1) / 4) * Math.PI * 2
+          const g = new THREE.TorusGeometry(2.5, 0.5, 12, 24, Math.PI / 2)
+          g.rotateZ(startAngle)
+          geos.push(g)
+        }
+        const merged = mergeGeometries(geos)
+        merged.center()
+        geos.forEach(g => g.dispose())
+        return merged
+      }
+
+      // ── Merge helper (BufferGeometryUtils-style) ──────────────────────────
+      function mergeGeometries(geos) {
+        // Simple merge: combine position attributes
+        let totalVerts = 0
+        const positions = []
+        for (const g of geos) {
+          const pos = g.attributes.position.array
+          // Apply geometry's own matrix if needed (transforms are baked by translate)
+          positions.push(pos)
+          totalVerts += pos.length
+        }
+        const merged = new THREE.BufferGeometry()
+        const combined = new Float32Array(totalVerts)
+        let offset = 0
+        for (const pos of positions) {
+          combined.set(pos, offset)
+          offset += pos.length
+        }
+        merged.setAttribute('position', new THREE.BufferAttribute(combined, 3))
+        merged.computeVertexNormals()
+        return merged
+      }
+
+      // ── Sample surface points from a geometry for particle targets ────────
+      function sampleMeshSurface(geo, count) {
+        const pos = geo.attributes.position
+        const idx = geo.index
+        const positions = []
+
+        // Build triangle list
+        const triangles = []
+        if (idx) {
+          for (let i = 0; i < idx.count; i += 3) {
+            triangles.push([idx.getX(i), idx.getX(i+1), idx.getX(i+2)])
+          }
+        } else {
+          for (let i = 0; i < pos.count; i += 3) {
+            triangles.push([i, i+1, i+2])
+          }
+        }
+
+        // Compute triangle areas for weighted sampling
+        const areas = triangles.map(([a, b, c]) => {
+          const va = new THREE.Vector3().fromBufferAttribute(pos, a)
+          const vb = new THREE.Vector3().fromBufferAttribute(pos, b)
+          const vc = new THREE.Vector3().fromBufferAttribute(pos, c)
+          return new THREE.Vector3().subVectors(vb, va).cross(new THREE.Vector3().subVectors(vc, va)).length() * 0.5
+        })
+        const totalArea = areas.reduce((s, a) => s + a, 0)
+
+        for (let i = 0; i < count; i++) {
+          // Pick a triangle weighted by area
+          let r = Math.random() * totalArea
+          let triIdx = 0
+          for (let t = 0; t < triangles.length; t++) {
+            r -= areas[t]
+            if (r <= 0) { triIdx = t; break }
+          }
+          const [a, b, c] = triangles[triIdx]
+          const va = new THREE.Vector3().fromBufferAttribute(pos, a)
+          const vb = new THREE.Vector3().fromBufferAttribute(pos, b)
+          const vc = new THREE.Vector3().fromBufferAttribute(pos, c)
+          // Random barycentric coords
+          let u = Math.random(), v = Math.random()
+          if (u + v > 1) { u = 1 - u; v = 1 - v }
+          const w = 1 - u - v
+          const p = new THREE.Vector3()
+            .addScaledVector(va, w)
+            .addScaledVector(vb, u)
+            .addScaledVector(vc, v)
+          positions.push(p.x, p.y, p.z)
+        }
+        return new Float32Array(positions)
+      }
+
+      // ── Mesh factory ──────────────────────────────────────────────────────
+      function buildMeshGeometry(slug) {
+        switch (slug) {
+          case 'tokenizin': return buildTokenizinGeometry()
+          case 'prestix': return buildPrestixGeometry()
+          case 'starcard': return buildStarCardGeometry()
+          case 'google': return buildGoogleGeometry()
+          case 'starworld':
+          default: return buildStarWorldGeometry()
+        }
+      }
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  SHADERS — LED billboard effect
+      //  Each particle = one crisp LED. Hard edge, dark gap, bright core.
+      //  Per-LED color sampled from a video/image texture at the LED's grid UV.
       // ═════════════════════════════════════════════════════════════════════
       const vertexShader = `
         uniform float uProgress;
@@ -256,26 +566,28 @@
         uniform float uConvergence;
         uniform float uBreath;
         uniform float uGrace;
-        uniform float uBurst;        // 0 = diffuse initial, 1 = burst from origin
+        uniform float uBurst;
         uniform vec3 uBurstOrigin;
         uniform vec3 uBrandColor;
         uniform float uPixelRatio;
+        uniform float uGridSnap;      // 0 = free, 1 = snapped to LED grid
+        uniform float uLedSize;       // 0.3–0.9 — fraction of cell occupied by LED
 
         attribute vec3 aInitialPos;
         attribute vec3 aTargetPos;
         attribute float aSize;
         attribute float aPhaseOffset;
+        attribute vec2 aGridUv;       // 0–1 grid position → video UV
 
         varying float vAlpha;
         varying vec3 vColor;
+        varying vec2 vGridUv;
+        varying float vLedBrightness;
 
         void main() {
           float c = smoothstep(0.0, 1.0, uConvergence);
-
-          // Effective start position: diffuse OR burst origin
           vec3 startPos = mix(aInitialPos, uBurstOrigin, uBurst);
 
-          // Curved bezier path from start → target
           vec3 mid = (startPos + aTargetPos) * 0.5;
           vec3 diff = aTargetPos - startPos;
           vec3 perp = normalize(cross(diff, vec3(0.0, 1.0, 0.0) + vec3(0.001))) * 8.0;
@@ -287,7 +599,6 @@
           vec3 p2 = aTargetPos;
           vec3 bez = p0 * (1.0 - c) * (1.0 - c) + p1 * 2.0 * (1.0 - c) * c + p2 * c * c;
 
-          // Dormant drift (fades as convergence rises; suppressed during burst)
           float driftAmt = (1.0 - c) * 3.0 * (1.0 - uBurst * 0.8);
           vec3 drift = vec3(
             sin(uTime * 0.4 + aPhaseOffset) * driftAmt,
@@ -296,61 +607,80 @@
           );
           vec3 finalPos = bez + drift;
 
-          // Burst expansion: early particles spread outward from origin
-          // before convergence takes over (visible in first 15% of timeline)
           float burstSpread = uBurst * (1.0 - smoothstep(0.0, 0.15, uProgress)) * 0.3;
           finalPos += normalize(aInitialPos + vec3(0.001)) * burstSpread * aPhaseOffset;
 
-          // Micro-jitter during Lock & Resolve (85–95%)
-          float jitter = smoothstep(0.8, 0.9, uProgress) * (1.0 - smoothstep(0.9, 0.95, uProgress)) * 0.15;
+          // Micro-jitter during Lock & Resolve (decays as grid snaps)
+          float jitterAmt = smoothstep(0.8, 0.9, uProgress) * (1.0 - smoothstep(0.9, 0.95, uProgress)) * 0.15;
+          jitterAmt *= (1.0 - uGridSnap); // suppressed when grid-snapped
           finalPos += vec3(
             sin(uTime * 40.0 + aPhaseOffset * 7.0),
             cos(uTime * 38.0 + aPhaseOffset * 5.0),
             sin(uTime * 42.0 + aPhaseOffset * 9.0)
-          ) * jitter;
+          ) * jitterAmt;
 
-          // Breath during hold
+          // Grid snap: pull particle to nearest grid cell center
+          finalPos = mix(finalPos, aTargetPos, uGridSnap);
+
           float breathScale = 1.0 + uBreath * 0.005 * sin(uTime * 1.5);
           finalPos *= breathScale;
 
-          // Grace (overtime): push back out
           finalPos += normalize(aInitialPos - aTargetPos + vec3(0.001)) * uGrace * 2.0;
 
           vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
 
-          float sizeBoost = 1.0 + c * 0.3;
-          // Burst particles start smaller, grow as they travel
+          // LED size: consistent grid cells, slightly larger when snapped
+          float sizeBoost = 1.0 + c * 0.2 + uGridSnap * 0.15;
           sizeBoost += uBurst * (1.0 - smoothstep(0.0, 0.2, uProgress)) * 0.5;
           gl_PointSize = aSize * sizeBoost * uPixelRatio * (300.0 / -mvPosition.z);
           gl_Position = projectionMatrix * mvPosition;
 
-          vAlpha = 0.4 + c * 0.5;
-          vAlpha += smoothstep(0.85, 1.0, uProgress) * 0.1;
-          vAlpha -= uGrace * 0.15;
-          // Burst particles glow brighter at launch
-          vAlpha += uBurst * (1.0 - smoothstep(0.0, 0.15, uProgress)) * 0.3;
-          vAlpha = clamp(vAlpha, 0.1, 1.0);
+          // Alpha: full opacity when grid-snapped (LEDs are solid)
+          vAlpha = mix(0.25 + c * 0.35, 0.85 + c * 0.15, uGridSnap);
+          vAlpha -= uGrace * 0.1;
+          vAlpha = clamp(vAlpha, 0.05, 1.0);
 
           vColor = uBrandColor;
+          vGridUv = aGridUv;
+          // LED brightness pulse: subtle flicker like real LEDs
+          vLedBrightness = 0.85 + 0.15 * sin(uTime * 3.0 + aPhaseOffset * 10.0);
         }
       `
 
       const fragmentShader = `
+        uniform sampler2D uVideoTex;
+        uniform float uVideoActive;   // 0 = brand color, 1 = video texture
+        uniform vec3 uBrandColor;
+        uniform float uLedGap;         // 0.0–0.3 — dark gap between LEDs
+
         varying float vAlpha;
         varying vec3 vColor;
+        varying vec2 vGridUv;
+        varying float vLedBrightness;
 
         void main() {
           vec2 uv = gl_PointCoord - 0.5;
           float dist = length(uv);
-          if (dist > 0.5) discard;
 
-          float soft = smoothstep(0.5, 0.0, dist);
-          float core = smoothstep(0.25, 0.0, dist) * 0.6 + soft * 0.4;
+          // Hard LED edge: crisp circle with dark gap
+          float ledRadius = 0.5 - uLedGap;
+          if (dist > ledRadius) discard;
 
-          vec3 col = vColor;
-          col = mix(col, vec3(1.0, 0.97, 0.9), smoothstep(0.85, 1.0, vAlpha) * core * 0.5);
+          // Crisp LED: slight anti-alias at edge only
+          float edge = smoothstep(ledRadius, ledRadius - 0.02, dist);
 
-          gl_FragColor = vec4(col, core * vAlpha);
+          // Sample video/image texture at this LED's grid UV
+          vec3 ledColor;
+          if (uVideoActive > 0.5) {
+            ledColor = texture2D(uVideoTex, vGridUv).rgb;
+          } else {
+            ledColor = vColor;
+          }
+
+          // LED brightness: saturated, no glow bleed
+          vec3 finalColor = ledColor * vLedBrightness;
+
+          gl_FragColor = vec4(finalColor, edge * vAlpha);
         }
       `
 
@@ -380,47 +710,102 @@
         return arr
       }
 
-      function generateImageTargets(url, count) {
-        return new Promise((resolve) => {
-          const img = new Image()
-          img.crossOrigin = 'anonymous'
-          img.onload = () => {
-            const canvas2d = document.createElement('canvas')
-            const maxSize = 120
-            const scale = Math.min(maxSize / img.width, maxSize / img.height)
-            canvas2d.width = Math.floor(img.width * scale)
-            canvas2d.height = Math.floor(img.height * scale)
-            const ctx = canvas2d.getContext('2d')
-            ctx.drawImage(img, 0, 0, canvas2d.width, canvas2d.height)
-            const imageData = ctx.getImageData(0, 0, canvas2d.width, canvas2d.height)
-            const arr = new Float32Array(count * 3)
-            const { data, width: w, height: h } = imageData
+      // ═════════════════════════════════════════════════════════════════════
+      //  VIDEO TEXTURE — the "LED billboard content"
+      //  A canvas texture that plays either an uploaded video, the default
+      //  animated content, or an uploaded image. Each LED samples this texture
+      //  at its grid UV → the mesh surface becomes a video screen.
+      // ═════════════════════════════════════════════════════════════════════
+      let videoTexture = null
+      let videoElement = null
+      let videoCanvas = null
+      let videoCanvasCtx = null
+      let videoAnimId = 0
+      let ledSource = 'video-default' // 'brand' | 'video-default' | 'video-upload' | 'image'
 
-            for (let i = 0; i < count; i++) {
-              let x = 0, y = 0, brightness = 0
-              for (let a = 0; a < 10; a++) {
-                x = Math.floor(Math.random() * w)
-                y = Math.floor(Math.random() * h)
-                const idx = (y * w + x) * 4
-                brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3 / 255
-                if (brightness > 0.15) break
-              }
-              arr[i * 3] = (x / w - 0.5) * 20
-              arr[i * 3 + 1] = -(y / h - 0.5) * 20
-              arr[i * 3 + 2] = (brightness - 0.5) * 4
-            }
-            resolve(arr)
-          }
-          img.onerror = () => resolve(generateSphereTargets(count))
-          img.src = url
-        })
+      // Default video: animated gradient + moving star pattern (procedural)
+      function createDefaultVideoTexture() {
+        const c = document.createElement('canvas')
+        c.width = 512; c.height = 512
+        const ctx = c.getContext('2d')
+        videoCanvas = c
+        videoCanvasCtx = ctx
+        const tex = new THREE.CanvasTexture(c)
+        tex.minFilter = THREE.LinearFilter
+        tex.magFilter = THREE.LinearFilter
+        return tex
       }
+
+      function animateDefaultVideo(t) {
+        if (!videoCanvasCtx) return
+        const ctx = videoCanvasCtx
+        const w = videoCanvas.width, h = videoCanvas.height
+        // Animated gradient background
+        const grad = ctx.createLinearGradient(0, 0, w, h)
+        const hue1 = (t * 0.05) % 360
+        const hue2 = (t * 0.05 + 60) % 360
+        grad.addColorStop(0, `hsl(${hue1}, 80%, 50%)`)
+        grad.addColorStop(1, `hsl(${hue2}, 80%, 50%)`)
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, w, h)
+        // Moving star pattern
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'
+        for (let i = 0; i < 30; i++) {
+          const x = ((i * 37 + t * 0.5) % w)
+          const y = ((i * 53 + t * 0.3) % h)
+          const r = 2 + Math.sin(t * 0.01 + i) * 1.5
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+        }
+        // Scanning line
+        const scanY = (t * 0.3) % h
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'
+        ctx.fillRect(0, scanY, w, 3)
+        if (videoTexture) videoTexture.needsUpdate = true
+      }
+
+      function createVideoTextureFromMedia(mediaEl, isVideo) {
+        const tex = new THREE.VideoTexture(mediaEl)
+        tex.minFilter = THREE.LinearFilter
+        tex.magFilter = THREE.LinearFilter
+        tex.format = THREE.RGBAFormat
+        return tex
+      }
+
+      function setLedSource(source) {
+        ledSource = source
+        // Clean up previous
+        if (videoTexture) { videoTexture.dispose(); videoTexture = null }
+        if (videoElement) { videoElement.pause(); videoElement.src = ''; videoElement = null }
+        if (videoAnimId) { cancelAnimationFrame(videoAnimId); videoAnimId = 0 }
+
+        if (source === 'brand') {
+          videoTexture = null
+        } else if (source === 'video-default') {
+          videoTexture = createDefaultVideoTexture()
+          const loop = (t) => {
+            videoAnimId = requestAnimationFrame(loop)
+            animateDefaultVideo(t)
+          }
+          videoAnimId = requestAnimationFrame(loop)
+        } else if (source === 'video-upload' || source === 'image') {
+          // Triggered by file picker — see upload handler
+          videoTexture = null
+        }
+        // Update material uniforms if material exists
+        if (material) {
+          material.uniforms.uVideoTex.value = videoTexture
+          material.uniforms.uVideoActive.value = videoTexture ? 1.0 : 0.0
+        }
+      }
+
+      const defaultVideoTexture = createDefaultVideoTexture()
 
       // ═════════════════════════════════════════════════════════════════════
       //  GEOMETRY + MATERIAL
       // ═════════════════════════════════════════════════════════════════════
       let geometry, material, points
       let initialPositions, targetPositions
+      let meshGeometry = null
 
       async function buildScene() {
         if (points) {
@@ -428,20 +813,42 @@
           geometry.dispose()
           material.dispose()
         }
+        if (meshGeometry) { meshGeometry.dispose(); meshGeometry = null }
 
         const count = PARTICLE_COUNT
         initialPositions = generateInitialPositions(count)
-        targetPositions = TARGET_URL
-          ? await generateImageTargets(TARGET_URL, count)
-          : generateSphereTargets(count)
+
+        // Build the selected mesh and sample its surface for particle targets
+        meshGeometry = buildMeshGeometry(SELECTED_MESH)
+        targetPositions = sampleMeshSurface(meshGeometry, count)
 
         geometry = new THREE.BufferGeometry()
 
         const sizes = new Float32Array(count)
         const phaseOffsets = new Float32Array(count)
+        const gridUvs = new Float32Array(count * 2)
         for (let i = 0; i < count; i++) {
           sizes[i] = 1.5 + Math.random() * 2.5
           phaseOffsets[i] = Math.random() * Math.PI * 2
+        }
+
+        // Compute grid UVs: project target positions onto a plane facing camera
+        // and normalize to 0–1 range. This gives each LED a position on the
+        // video texture based on where it sits on the mesh silhouette.
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+        for (let i = 0; i < count; i++) {
+          const x = targetPositions[i * 3]
+          const y = targetPositions[i * 3 + 1]
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+        const rangeX = maxX - minX || 1
+        const rangeY = maxY - minY || 1
+        for (let i = 0; i < count; i++) {
+          gridUvs[i * 2] = (targetPositions[i * 3] - minX) / rangeX
+          gridUvs[i * 2 + 1] = 1.0 - (targetPositions[i * 3 + 1] - minY) / rangeY
         }
 
         geometry.setAttribute('position', new THREE.BufferAttribute(initialPositions.slice(), 3))
@@ -449,8 +856,12 @@
         geometry.setAttribute('aTargetPos', new THREE.BufferAttribute(targetPositions, 3))
         geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1))
         geometry.setAttribute('aPhaseOffset', new THREE.BufferAttribute(phaseOffsets, 1))
+        geometry.setAttribute('aGridUv', new THREE.BufferAttribute(gridUvs, 2))
 
-        const brand = new THREE.Color(BRAND_COLOR)
+        // Brand color from selected mesh
+        const meshDef = MESHES.find(m => m.slug === SELECTED_MESH)
+        const brand = new THREE.Color(meshDef?.color || BRAND_COLOR)
+
         material = new THREE.ShaderMaterial({
           uniforms: {
             uProgress: { value: 0 },
@@ -462,12 +873,17 @@
             uBurstOrigin: { value: new THREE.Vector3(0, 0, 0) },
             uBrandColor: { value: brand },
             uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+            uGridSnap: { value: 0 },
+            uLedSize: { value: 0.7 },
+            uVideoTex: { value: videoTexture ?? defaultVideoTexture },
+            uVideoActive: { value: videoTexture ? 1.0 : 0.0 },
+            uLedGap: { value: 0.08 },
           },
           vertexShader,
           fragmentShader,
           transparent: true,
           depthWrite: false,
-          blending: THREE.AdditiveBlending,
+          blending: THREE.NormalBlending,
         })
 
         points = new THREE.Points(geometry, material)
@@ -481,9 +897,12 @@
       let isPlaying = true
       let animationId = 0
 
-      function smoothstep(edge0, edge1, x) {
-        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
+      function smoothstep(e0, e1, x) {
+        const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)))
         return t * t * (3 - 2 * t)
+      }
+      function easeInOutCubic(t) {
+        return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2
       }
 
       const phaseNameEl = document.getElementById('phase-name')
@@ -504,8 +923,7 @@
           progress < 30 ? 'Attraction Wake' :
           progress < 85 ? 'Convergence Surge' :
           progress < 95 ? 'Lock & Resolve' :
-          progress < 100 ? 'Image Hold' :
-          'Overtime Grace'
+          progress < 100 ? 'Image Hold' : 'Overtime Grace'
 
         phaseNameEl.textContent = phaseName
         pctEl.textContent = progress.toFixed(1) + '%'
@@ -518,33 +936,27 @@
         material.uniforms.uTime.value = elapsed * 0.001
         material.uniforms.uBreath.value = smoothstep(95, 100, progress)
         material.uniforms.uGrace.value = Math.max(0, (progress - 100) / 50) * 0.25
-
-        // Burst uniform: 1 when burst origin is set, 0 otherwise
         material.uniforms.uBurst.value = burstOrigin ? 1 : 0
-        if (burstOrigin) {
-          material.uniforms.uBurstOrigin.value.copy(burstOrigin)
+        if (burstOrigin) material.uniforms.uBurstOrigin.value.copy(burstOrigin)
+
+        // Grid snap: particles lock to LED grid during Lock & Resolve (85–95%)
+        const gridSnap = smoothstep(85, 95, progress)
+        material.uniforms.uGridSnap.value = gridSnap
+
+        // Update video texture (default procedural animation)
+        if (videoTexture && videoTexture.isCanvasTexture) {
+          videoTexture.needsUpdate = true
         }
 
-        // ── Camera navigation transition ────────────────────────────────
-        // When a burst is triggered, the camera flies from a close-up position
-        // near the burst origin to the normal orbit position over NAV_TRANSITION_MS.
         if (navTransition) {
           const navElapsed = performance.now() - navTransition.startMs
           const navT = Math.min(navElapsed / navTransition.durationMs, 1)
-          // Ease in-out cubic for smooth cinematic fly-through
-          const eased = navT < 0.5
-            ? 4 * navT * navT * navT
-            : 1 - Math.pow(-2 * navT + 2, 3) / 2
-
+          const eased = easeInOutCubic(navT)
           camera.position.lerpVectors(navTransition.fromPos, navTransition.toPos, eased)
           const lookTarget = new THREE.Vector3().lerpVectors(navTransition.fromLook, navTransition.toLook, eased)
           camera.lookAt(lookTarget)
-
-          if (navT >= 1) {
-            navTransition = null // transition complete, resume normal orbit
-          }
+          if (navT >= 1) navTransition = null
         } else {
-          // Normal orbit (slows as convergence rises)
           const orbitAngle = elapsed * 0.0003 * (1 - convergence * 0.8)
           const orbitRadius = 35 - convergence * 5
           camera.position.x = Math.sin(orbitAngle) * orbitRadius
@@ -561,10 +973,8 @@
       // ═════════════════════════════════════════════════════════════════════
       function resize() {
         const wrap = document.getElementById('canvas-wrap')
-        const w = wrap.clientWidth
-        const h = wrap.clientHeight
-        renderer.setSize(w, h, false)
-        camera.aspect = w / h
+        renderer.setSize(wrap.clientWidth, wrap.clientHeight, false)
+        camera.aspect = wrap.clientWidth / wrap.clientHeight
         camera.updateProjectionMatrix()
       }
       window.addEventListener('resize', resize)
@@ -579,75 +989,64 @@
 
       document.getElementById('restart-btn').addEventListener('click', () => {
         startTime = performance.now()
-        if (!isPlaying) {
-          isPlaying = true
-          document.getElementById('play-btn').textContent = 'Pause'
-        }
+        if (!isPlaying) { isPlaying = true; document.getElementById('play-btn').textContent = 'Pause' }
       })
 
-      // ═════════════════════════════════════════════════════════════════════
-      //  CLICK → BURST ORIGIN + 3D NAVIGATION TRANSITION
-      // ═════════════════════════════════════════════════════════════════════
-      // Clicking the canvas:
-      //   1. Unprojects the click point to a 3D position on a plane at z=0
-      //   2. Sets burstOrigin — all particles emit from that single point
-      //   3. Restarts the timeline so the burst is visible from t=0
-      //   4. Triggers a camera fly-through: from a close-up near the burst
-      //      point to the normal orbit viewing position
-      //
-      // Right-click (context menu) clears the burst origin → back to diffuse.
+      // ── Mesh selector chips ──────────────────────────────────────────────
+      const meshRow = document.getElementById('mesh-row')
+      MESHES.forEach(m => {
+        const chip = document.createElement('div')
+        chip.className = 'mesh-chip' + (m.slug === SELECTED_MESH ? ' active' : '')
+        chip.textContent = m.label
+        chip.style.borderColor = m.accent
+        if (m.slug === SELECTED_MESH) { chip.style.background = m.accent; chip.style.color = '#000' }
+        chip.addEventListener('click', async () => {
+          SELECTED_MESH = m.slug
+          document.querySelectorAll('.mesh-chip').forEach(c => {
+            c.classList.remove('active'); c.style.background = ''; c.style.color = ''
+          })
+          chip.classList.add('active')
+          chip.style.background = m.accent; chip.style.color = '#000'
+          await buildScene()
+          startTime = performance.now()
+        })
+        meshRow.appendChild(chip)
+      })
 
-      const NAV_TRANSITION_MS = 2000 // 2-second cinematic fly-through
+      // ── Environment selector ─────────────────────────────────────────────
+      document.getElementById('env-select').addEventListener('change', async (e) => {
+        SELECTED_ENV = e.target.value
+        await loadEnvironment(SELECTED_ENV)
+      })
 
-      // Raycaster + reusable vectors (avoid alloc in click handler)
+      // ── CLICK → BURST + 3D NAVIGATION TRANSITION ─────────────────────────
+      const NAV_TRANSITION_MS = 2000
       const raycaster = new THREE.Raycaster()
       const ndc = new THREE.Vector2()
-      const burstPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0) // z=0 plane
+      const burstPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)
       const hitPoint = new THREE.Vector3()
 
       canvas.addEventListener('click', (event) => {
         const rect = canvas.getBoundingClientRect()
         ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
         ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-
         raycaster.setFromCamera(ndc, camera)
-        // Intersect the z=0 plane to get the 3D click position
         const hit = raycaster.ray.intersectPlane(burstPlane, hitPoint)
         if (!hit) return
 
         burstOrigin = hitPoint.clone()
-
-        // Restart timeline so the burst emission plays from the start
         startTime = performance.now()
-        if (!isPlaying) {
-          isPlaying = true
-          document.getElementById('play-btn').textContent = 'Pause'
-        }
+        if (!isPlaying) { isPlaying = true; document.getElementById('play-btn').textContent = 'Pause' }
 
-        // ── Camera navigation transition ────────────────────────────────
-        // From: close-up near the burst origin (camera pushes in)
-        // To:   normal orbit position (pulls back to viewing distance)
-        const orbitAngle = 0
-        const orbitRadius = 35
-        const toPos = new THREE.Vector3(
-          Math.sin(orbitAngle) * orbitRadius,
-          0,
-          Math.cos(orbitAngle) * orbitRadius,
-        )
-        // Start position: near the burst origin, offset back along view dir
+        const toPos = new THREE.Vector3(0, 0, 35)
         const camDir = new THREE.Vector3().subVectors(toPos, hitPoint).normalize()
-        const fromPos = hitPoint.clone().add(camDir.multiplyScalar(6)) // 6 units from burst
-
+        const fromPos = hitPoint.clone().add(camDir.multiplyScalar(6))
         navTransition = {
-          startMs: performance.now(),
-          fromPos,
-          toPos,
-          fromLook: hitPoint.clone(),
-          toLook: new THREE.Vector3(0, 0, 0),
+          startMs: performance.now(), fromPos, toPos,
+          fromLook: hitPoint.clone(), toLook: new THREE.Vector3(0, 0, 0),
           durationMs: NAV_TRANSITION_MS,
         }
 
-        // Show burst indicator at click position
         const indicator = document.getElementById('burst-indicator')
         indicator.style.left = (event.clientX - rect.left) + 'px'
         indicator.style.top = (event.clientY - rect.top) + 'px'
@@ -655,27 +1054,20 @@
         setTimeout(() => indicator.classList.remove('show'), 1500)
       })
 
-      // Right-click clears burst origin → back to diffuse mode
       canvas.addEventListener('contextmenu', (event) => {
         event.preventDefault()
         burstOrigin = null
         startTime = performance.now()
       })
 
-      // Show click hint on hover, hide after first click
+      // Click hint
       const clickHint = document.getElementById('click-hint')
       let hintShown = false
-      canvas.addEventListener('mouseenter', () => {
-        if (!hintShown) clickHint.classList.add('show')
-      })
-      canvas.addEventListener('mouseleave', () => {
-        clickHint.classList.remove('show')
-      })
-      canvas.addEventListener('click', () => {
-        hintShown = true
-        clickHint.classList.remove('show')
-      })
+      canvas.addEventListener('mouseenter', () => { if (!hintShown) clickHint.classList.add('show') })
+      canvas.addEventListener('mouseleave', () => clickHint.classList.remove('show'))
+      canvas.addEventListener('click', () => { hintShown = true; clickHint.classList.remove('show') })
 
+      // Sliders
       const durationSlider = document.getElementById('duration-slider')
       const durationVal = document.getElementById('duration-val')
       durationSlider.addEventListener('input', (e) => {
@@ -685,9 +1077,7 @@
 
       const particleSlider = document.getElementById('particle-slider')
       const particleVal = document.getElementById('particle-val')
-      function formatParticles(n) {
-        return n >= 1000 ? (n / 1000) + 'k' : n.toString()
-      }
+      function formatParticles(n) { return n >= 1000 ? (n / 1000) + 'k' : n.toString() }
       particleSlider.addEventListener('input', (e) => {
         particleVal.textContent = formatParticles(parseInt(e.target.value))
       })
@@ -697,11 +1087,62 @@
         startTime = performance.now()
       })
 
-      const targetUrlInput = document.getElementById('target-url')
-      targetUrlInput.addEventListener('change', async (e) => {
-        TARGET_URL = e.target.value.trim()
-        await buildScene()
-        startTime = performance.now()
+      // ── LED Source selector ──────────────────────────────────────────────
+      const ledSelect = document.getElementById('led-source')
+      const uploadBtn = document.getElementById('upload-btn')
+      const videoUpload = document.getElementById('video-upload')
+
+      ledSelect.addEventListener('change', (e) => {
+        const val = e.target.value
+        if (val === 'video-upload' || val === 'image') {
+          videoUpload.click()
+        } else {
+          setLedSource(val)
+        }
+      })
+
+      uploadBtn.addEventListener('click', () => videoUpload.click())
+
+      videoUpload.addEventListener('change', (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        e.target.value = ''
+
+        if (file.type.startsWith('video/')) {
+          // Create video element
+          if (videoElement) { videoElement.pause(); videoElement.src = '' }
+          videoElement = document.createElement('video')
+          videoElement.src = URL.createObjectURL(file)
+          videoElement.loop = true
+          videoElement.muted = true
+          videoElement.playsInline = true
+          videoElement.play()
+          if (videoTexture) videoTexture.dispose()
+          videoTexture = new THREE.VideoTexture(videoElement)
+          videoTexture.minFilter = THREE.LinearFilter
+          videoTexture.magFilter = THREE.LinearFilter
+          ledSource = 'video-upload'
+        } else if (file.type.startsWith('image/')) {
+          // Create image texture
+          if (videoTexture) videoTexture.dispose()
+          const img = new Image()
+          img.onload = () => {
+            videoTexture = new THREE.Texture(img)
+            videoTexture.minFilter = THREE.LinearFilter
+            videoTexture.magFilter = THREE.LinearFilter
+            videoTexture.needsUpdate = true
+            if (material) {
+              material.uniforms.uVideoTex.value = videoTexture
+              material.uniforms.uVideoActive.value = 1.0
+            }
+          }
+          img.src = URL.createObjectURL(file)
+          ledSource = 'image'
+        }
+        if (material && videoTexture) {
+          material.uniforms.uVideoTex.value = videoTexture
+          material.uniforms.uVideoActive.value = 1.0
+        }
       })
 
       // ═════════════════════════════════════════════════════════════════════
@@ -709,6 +1150,8 @@
       // ═════════════════════════════════════════════════════════════════════
       async function init() {
         resize()
+        await loadEnvironment(SELECTED_ENV)
+        setLedSource('video-default')
         await buildScene()
         startTime = performance.now()
         animate()

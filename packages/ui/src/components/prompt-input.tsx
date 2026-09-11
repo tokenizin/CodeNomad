@@ -1,13 +1,15 @@
-import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show, For } from "solid-js"
+import { ArrowBigUp, ArrowBigDown, Loader2, MessageSquare, Mic, Paperclip, Terminal, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission } from "./prompt-input/submitPrompt"
 import Kbd from "./kbd"
+import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../stores/worktrees"
+import type { WorkspaceExecResponse } from "../../../server/src/api-types"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
-import { getCommands } from "../stores/commands"
+import { getCommands, getBuiltInCommands, registerBuiltInCommand, unregisterBuiltInCommand } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -35,7 +37,10 @@ import type { ChatChoiceAskedPayload, ChatChoiceRepliedPayload } from "../types/
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
+const DEFAULT_CLI_FIELD_HEIGHT = 280
+const MIN_CLI_FIELD_HEIGHT = 200
 const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
+const CLI_STICK_TO_BOTTOM_PX = 56
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
 
 function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
@@ -90,13 +95,37 @@ export default function PromptInput(props: PromptInputProps) {
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const [activeChoice, setActiveChoice] = createSignal<ChatChoiceAskedPayload | null>(null)
+  const [cliEntries, setCliEntries] = createSignal<WorkspaceExecResponse[]>([])
+  const [cliRunning, setCliRunning] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
   let wrapperRef: HTMLDivElement | undefined
   let fieldContainerRef: HTMLDivElement | undefined
+  let cliOutputRef: HTMLDivElement | undefined
+  let cliStickToBottom = true
   let resizeDragState: ResizeDragState | undefined
+
+  const worktreeForExec = () => {
+    const sessionId = props.sessionId
+    if (sessionId && sessionId !== "__no_session_draft__") {
+      return getWorktreeSlugForSession(props.instanceId, sessionId)
+    }
+    return getDefaultWorktreeSlug(props.instanceId)
+  }
+
+  const toggleComposerMode = (next: PromptMode) => {
+    setMode(next)
+    if (next === "shell") {
+      const current = inputHeight()
+      if (current === null || current < MIN_CLI_FIELD_HEIGHT) {
+        setInputHeight(Math.min(computeMaxFieldHeight(), DEFAULT_CLI_FIELD_HEIGHT))
+      }
+      cliStickToBottom = true
+    }
+    queueMicrotask(() => textareaRef?.focus())
+  }
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -107,12 +136,23 @@ export default function PromptInput(props: PromptInputProps) {
 
   const compactAutosizeEnabled = () => {
     const widthStep = sessionCenterWidthStep()
-    return props.compactLayout && expandState() === "normal" && inputHeight() === null && widthStep === "narrow"
+    return (
+      mode() !== "shell" &&
+      props.compactLayout &&
+      expandState() === "normal" &&
+      inputHeight() === null &&
+      widthStep === "narrow"
+    )
   }
 
   const effectiveInputHeight = () => inputHeight() ?? autoInputHeight()
 
   const fieldHeightStyle = () => {
+    if (mode() === "shell" && expandState() !== "expanded") {
+      const height = effectiveInputHeight() ?? DEFAULT_CLI_FIELD_HEIGHT
+      const next = Math.max(MIN_CLI_FIELD_HEIGHT, height)
+      return { height: `${next}px`, "min-height": `${MIN_CLI_FIELD_HEIGHT}px` }
+    }
     const height = effectiveInputHeight()
     if (height === null) return undefined
     if (inputHeight() !== null) return { height: `${height}px`, "min-height": `${height}px` }
@@ -120,6 +160,14 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   const textareaHeightStyle = () => {
+    if (mode() === "shell") {
+      return {
+        height: "auto",
+        "min-height": "48px",
+        "max-height": "6rem",
+        "overflow-y": "auto" as const,
+      }
+    }
     const height = effectiveInputHeight()
     if (height === null) return undefined
     const overflowY: "auto" | "hidden" = inputHeight() !== null || height >= DEFAULT_PROMPT_FIELD_HEIGHT ? "auto" : "hidden"
@@ -134,8 +182,25 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   const textareaRows = () => {
+    if (mode() === "shell") return 1
     if (expandState() === "expanded") return props.compactLayout ? 10 : 15
     return compactAutosizeEnabled() ? 2 : 3
+  }
+
+  const syncCliOutputScroll = () => {
+    const el = cliOutputRef
+    if (!el || !cliStickToBottom) return
+    el.scrollTop = el.scrollHeight
+  }
+
+  const handleCliOutputScroll = () => {
+    const el = cliOutputRef
+    if (!el) return
+    cliStickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= CLI_STICK_TO_BOTTOM_PX
+  }
+
+  const stopCliScrollBleed = (event: WheelEvent | TouchEvent) => {
+    event.stopPropagation()
   }
 
   const syncCompactAutoHeight = () => {
@@ -293,7 +358,7 @@ export default function PromptInput(props: PromptInputProps) {
     setPrompt,
     getTextarea: () => textareaRef ?? null,
     instanceAgents,
-    commands: () => getCommands(props.instanceId),
+    commands: () => [...getCommands(props.instanceId), ...Array.from(getBuiltInCommands().entries()).map(([name, cmd]) => ({ name, description: cmd.description } as any))],
   })
 
   const {
@@ -440,12 +505,15 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   function computeMaxFieldHeight(): number {
-    if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
+    if (typeof window === "undefined") {
+      return mode() === "shell" ? DEFAULT_CLI_FIELD_HEIGHT : DEFAULT_PROMPT_FIELD_HEIGHT
+    }
 
     const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
     const availableHeight = sessionCenter?.getBoundingClientRect().height ?? window.innerHeight
     const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
-    return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
+    const floor = mode() === "shell" ? MIN_CLI_FIELD_HEIGHT : DEFAULT_PROMPT_FIELD_HEIGHT
+    return Math.max(floor, maxHeight)
   }
 
   function handleResizeStart(event: PointerEvent) {
@@ -474,8 +542,9 @@ export default function PromptInput(props: PromptInputProps) {
 
     event.preventDefault()
     const deltaY = resizeDragState.startY - event.clientY
+    const minHeight = mode() === "shell" ? MIN_CLI_FIELD_HEIGHT : DEFAULT_PROMPT_FIELD_HEIGHT
     const nextHeight = Math.max(
-      DEFAULT_PROMPT_FIELD_HEIGHT,
+      minHeight,
       Math.min(resizeDragState.maxHeight, resizeDragState.startHeight + deltaY),
     )
     setInputHeight(nextHeight)
@@ -494,10 +563,42 @@ export default function PromptInput(props: PromptInputProps) {
     resizeDragState = undefined
   })
 
+  async function runWorkspaceCli(command: string, historyEntry: string) {
+    recordHistoryEntry(historyEntry)
+    clearPrompt()
+    clearHistoryDraft()
+    setCliRunning(true)
+    try {
+      const result = await serverApi.execWorkspaceCommand(props.instanceId, command, {
+        worktree: worktreeForExec(),
+      })
+      setCliEntries((prev) => [...prev, result].slice(-40))
+    } catch (error) {
+      log.error("Failed to run workspace command:", error)
+      setPrompt(command)
+      showAlertDialog(t("promptInput.cli.errorFallback"), {
+        title: t("promptInput.cli.errorTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setCliRunning(false)
+      queueMicrotask(() => {
+        syncCliOutputScroll()
+        textareaRef?.focus()
+      })
+    }
+  }
+
+  createEffect(() => {
+    cliEntries()
+    cliRunning()
+    queueMicrotask(syncCliOutputScroll)
+  })
+
   async function handleSend() {
     const text = prompt().trim()
     const currentAttachments = attachments()
-    if (props.disabled || (!text && currentAttachments.length === 0)) return
+    if (props.disabled || cliRunning() || (!text && currentAttachments.length === 0)) return
 
     const isShellMode = mode() === "shell"
 
@@ -511,7 +612,8 @@ export default function PromptInput(props: PromptInputProps) {
     const isKnownSlashCommand =
       isSlashCandidate &&
       commandName.length > 0 &&
-      getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
+      (getCommands(props.instanceId).some((cmd) => cmd.name === commandName) ||
+        getBuiltInCommands().has(commandName))
 
     const submission = preparePromptSubmission({
       mode: isKnownSlashCommand ? "slash" : isShellMode ? "shell" : "message",
@@ -525,6 +627,11 @@ export default function PromptInput(props: PromptInputProps) {
     const historyEntry = submission.historyEntry
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
+
+    if (isShellMode) {
+      await runWorkspaceCli(submitPrompt, historyEntry)
+      return
+    }
 
     setExpandState("normal")
     setInputHeight(null)
@@ -554,15 +661,15 @@ export default function PromptInput(props: PromptInputProps) {
     }
 
     try {
-      if (isShellMode) {
-        if (props.onRunShell) {
-          await props.onRunShell(submitPrompt)
-        } else {
-          await props.onSend(submitPrompt, [])
-        }
-      } else if (isKnownSlashCommand) {
+      if (isKnownSlashCommand) {
         if (props.onCommand) {
           await props.onCommand(commandName, resolvedCommandArgs)
+        } else if (getBuiltInCommands().has(commandName)) {
+          // Execute built-in slash command action
+          const builtIn = getBuiltInCommands().get(commandName)
+          if (builtIn) {
+            await builtIn.action()
+          }
         } else {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
@@ -745,7 +852,7 @@ export default function PromptInput(props: PromptInputProps) {
   const canHistoryGoNext = () => historyIndex() >= 0
 
   const canSend = () => {
-    if (props.disabled) return false
+    if (props.disabled || cliRunning()) return false
     const hasText = prompt().trim().length > 0
     if (mode() === "shell") return hasText
     return hasText || attachments().length > 0
@@ -766,7 +873,7 @@ export default function PromptInput(props: PromptInputProps) {
     prompt,
     setPrompt,
     mode,
-    setMode,
+    setMode: toggleComposerMode,
     isPickerOpen: showPicker,
     closePicker: handlePickerClose,
     ignoredAtPositions,
@@ -782,6 +889,40 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
+
+  const showToolbarModeToggle = () => {
+    const step = sessionCenterWidthStep()
+    if (step === "narrow") return false
+    if (step === "medium" || step === "wide") return true
+    if (typeof window !== "undefined") return window.innerWidth >= 768
+    return true
+  }
+
+  const ModeToggle = () => (
+    <div class="prompt-mode-toggle" role="group" aria-label={t("promptInput.modeToggle.ariaLabel")}>
+      <button
+        type="button"
+        class={`prompt-mode-toggle-button ${mode() === "normal" ? "is-active" : ""}`}
+        onClick={() => toggleComposerMode("normal")}
+        aria-pressed={mode() === "normal"}
+        title={t("promptInput.modeToggle.chat")}
+      >
+        <MessageSquare class="h-4 w-4" aria-hidden="true" />
+        <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.chat")}</span>
+      </button>
+      <button
+        type="button"
+        class={`prompt-mode-toggle-button ${mode() === "shell" ? "is-active" : ""}`}
+        onClick={() => toggleComposerMode("shell")}
+        aria-pressed={mode() === "shell"}
+        title={t("promptInput.modeToggle.cli")}
+      >
+        <Terminal class="h-4 w-4" aria-hidden="true" />
+        <span class="prompt-mode-toggle-label">{t("promptInput.modeToggle.cli")}</span>
+      </button>
+    </div>
+  )
+
   const voiceConversation = useVoiceConversation({
     instanceId: props.instanceId,
     sessionId: props.sessionId,
@@ -815,6 +956,11 @@ export default function PromptInput(props: PromptInputProps) {
 
   return (
     <div class="prompt-input-container">
+      <Show when={showToolbarModeToggle()}>
+        <div class="prompt-composer-toolbar">
+          <ModeToggle />
+        </div>
+      </Show>
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
@@ -840,7 +986,7 @@ export default function PromptInput(props: PromptInputProps) {
                 void handleSend()
               }}
               agents={instanceAgents()}
-              commands={getCommands(props.instanceId)}
+              commands={[...getCommands(props.instanceId), ...Array.from(getBuiltInCommands().entries()).map(([name, cmd]) => ({ name, description: cmd.description } as any))]}
               instanceClient={instance()!.client}
               searchQuery={searchQuery()}
               textareaRef={textareaRef}
@@ -852,7 +998,7 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-main flex flex-1 flex-col">
           <div
             ref={fieldContainerRef}
-            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${effectiveInputHeight() !== null ? "is-resized" : ""}`}
+            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${effectiveInputHeight() !== null || mode() === "shell" ? "is-resized" : ""} ${mode() === "shell" ? "is-cli" : ""}`}
             style={fieldHeightStyle()}
           >
             <div
@@ -867,9 +1013,56 @@ export default function PromptInput(props: PromptInputProps) {
             />
 
             <div
-              class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}
+              class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""} ${mode() === "shell" ? "is-cli" : ""}`}
               style={fieldHeightStyle()}
             >
+              <Show when={mode() === "shell"}>
+                <div class="local-cli-panel">
+                  <div class="local-cli-cwd" title={props.instanceFolder}>
+                    {t("promptInput.cli.cwdLabel")}: {props.instanceFolder}
+                  </div>
+                  <div
+                    ref={cliOutputRef}
+                    class="local-cli-output"
+                    role="log"
+                    tabindex="0"
+                    aria-live="polite"
+                    aria-relevant="additions"
+                    onScroll={handleCliOutputScroll}
+                    onWheel={stopCliScrollBleed}
+                    onTouchMove={stopCliScrollBleed}
+                  >
+                    <Show
+                      when={cliEntries().length > 0}
+                      fallback={
+                        <div class="local-cli-empty">{t("promptInput.cli.empty")}</div>
+                      }
+                    >
+                      <For each={cliEntries()}>
+                        {(entry) => (
+                          <div class={`local-cli-block ${entry.timedOut || (entry.exitCode ?? 0) !== 0 ? "is-error" : ""}`}>
+                            <div class="local-cli-command">$ {entry.command}</div>
+                            <Show when={entry.stdout}>
+                              <pre class="local-cli-stream">{entry.stdout}</pre>
+                            </Show>
+                            <Show when={entry.stderr}>
+                              <pre class="local-cli-stream local-cli-stderr">{entry.stderr}</pre>
+                            </Show>
+                            <div class="local-cli-meta">
+                              {entry.timedOut
+                                ? t("promptInput.cli.timedOut")
+                                : t("promptInput.cli.exitCode", { code: entry.exitCode ?? 0 })}
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+                    <Show when={cliRunning()}>
+                      <div class="local-cli-running">{t("promptInput.cli.running")}</div>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
               <textarea
                 ref={textareaRef}
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""} ${expandState() === "expanded" ? "is-expanded" : ""}`}
@@ -881,12 +1074,14 @@ export default function PromptInput(props: PromptInputProps) {
                 onPaste={handlePaste}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
-                disabled={props.disabled}
+                disabled={props.disabled || cliRunning()}
                 rows={textareaRows()}
                 spellcheck={false}
                 autocorrect="off"
                 autoCapitalize="off"
                 autocomplete="off"
+                enterkeyhint={mode() === "shell" ? "go" : "enter"}
+                inputMode={mode() === "shell" ? "text" : undefined}
                 style={textareaHeightStyle()}
               />
               <div class="prompt-expand-button-inline">
@@ -970,6 +1165,9 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-actions">
           <div class="prompt-nav-buttons">
             <div class="prompt-nav-column prompt-nav-column-left">
+              <Show when={!showToolbarModeToggle()}>
+                <ModeToggle />
+              </Show>
               <Show when={showVoiceConversation()}>
                 <VoiceConversationButton
                   instanceId={props.instanceId}
@@ -1066,7 +1264,7 @@ export default function PromptInput(props: PromptInputProps) {
             class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
             onClick={handleSend}
             disabled={!canSend()}
-            aria-label={t("promptInput.send.ariaLabel")}
+            aria-label={mode() === "shell" ? t("promptInput.cli.runAriaLabel") : t("promptInput.send.ariaLabel")}
           >
             <Show
               when={mode() === "shell"}

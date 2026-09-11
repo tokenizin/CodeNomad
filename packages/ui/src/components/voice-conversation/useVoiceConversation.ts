@@ -254,7 +254,12 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
     if (recordingChunks.length === 0 || !options.sessionId) return
 
     const blob = new Blob(recordingChunks, { type: "audio/webm" })
+    // The store ticks in seconds for the on-screen counter; the wire and the
+    // TokiDAPPAudioRecording.durationMs column are milliseconds. Convert here
+    // rather than at the route — the portal's recorder already posts ms, so the
+    // endpoint must not have to guess which unit a given client meant.
     const duration = voiceConversationStore.recordingDuration()
+    const durationMs = Math.round(duration * 1000)
 
     try {
       // Step 1: Upload raw audio to CodeNomad server
@@ -263,7 +268,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         headers: {
           "Content-Type": "audio/webm",
           "X-Session-Id": options.sessionId ?? "",
-          "X-Duration": duration.toString(),
+          "X-Duration": durationMs.toString(),
         },
         body: blob,
       })
@@ -277,7 +282,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         body: JSON.stringify({
           blobUrl,
           sessionId: options.sessionId,
-          duration: duration.toString(),
+          duration: durationMs.toString(),
         }),
       })
 
@@ -288,7 +293,7 @@ export function useVoiceConversation(options: VoiceConversationOptions): VoiceCo
         id: data.id,
         sessionId: options.sessionId ?? "",
         blobUrl: data.blobUrl,
-        duration,
+        durationMs,
         transcript: "",
         createdAt: new Date().toISOString(),
       })

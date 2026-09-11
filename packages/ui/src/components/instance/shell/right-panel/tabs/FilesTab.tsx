@@ -1,7 +1,7 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
+import { Copy, RefreshCw, Save, Search, Upload, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 import { ImagePreview } from "../ImagePreview"
@@ -27,11 +27,24 @@ export interface BrowserSelectedBase64 {
   path: string
 }
 
+export interface BrowserFileNode extends FileNode {
+  modifiedAt?: string
+}
+
+function modifiedTimestamp(iso?: string): number {
+  if (!iso) return 0
+  const value = Date.parse(iso)
+  return Number.isNaN(value) ? 0 : value
+}
+
+type FileSortKey = "name" | "modified"
+type FileSortDir = "asc" | "desc"
+
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
 
   browserPath: Accessor<string>
-  browserEntries: Accessor<FileNode[] | null>
+  browserEntries: Accessor<BrowserFileNode[] | null>
   browserLoading: Accessor<boolean>
   browserError: Accessor<string | null>
 
@@ -50,6 +63,8 @@ interface FilesTabProps {
   onLoadEntries: (path: string) => void
   onRequestOpenFile: (path: string) => void
   onRefresh: () => void
+  uploading: Accessor<boolean>
+  onUploadFiles: (files: FileList | File[]) => void
   onSave: (content: string) => void
   onContentChange: (content: string) => void
   onWordWrapModeChange: (mode: "on" | "off") => void
@@ -64,10 +79,39 @@ interface FilesTabProps {
 
 const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
+  const [sortKey, setSortKey] = createSignal<FileSortKey>("name")
+  const [sortDir, setSortDir] = createSignal<FileSortDir>("asc")
   const { isDark } = useTheme()
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
   const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
   let markdownPreviewRef: HTMLDivElement | undefined
+  let uploadInputRef: HTMLInputElement | undefined
+
+  const formatModifiedAt = (iso?: string) => {
+    if (!iso) return "—"
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return "—"
+    return date.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+  }
+
+  const toggleSort = (key: FileSortKey) => {
+    if (sortKey() === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"))
+      return
+    }
+    setSortKey(key)
+    setSortDir(key === "modified" ? "desc" : "asc")
+  }
+
+  const sortIndicator = (key: FileSortKey) => {
+    if (sortKey() !== key) return ""
+    return sortDir() === "asc" ? " ↑" : " ↓"
+  }
+
+  const columnAriaSort = (key: FileSortKey): "ascending" | "descending" | "none" => {
+    if (sortKey() !== key) return "none"
+    return sortDir() === "asc" ? "ascending" : "descending"
+  }
 
   createEffect(() => {
     props.browserPath()
@@ -76,11 +120,25 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
   const sortedEntries = createMemo(() => {
     const entries = props.browserEntries() || []
+    const key = sortKey()
+    const dir = sortDir() === "asc" ? 1 : -1
     return [...entries].sort((a, b) => {
+      if (key === "modified") {
+        const aTime = modifiedTimestamp(a.modifiedAt)
+        const bTime = modifiedTimestamp(b.modifiedAt)
+        if (aTime === 0 && bTime === 0) {
+          return String(a.name || "").localeCompare(String(b.name || ""))
+        }
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        if (aTime !== bTime) return (aTime - bTime) * dir
+        return String(a.name || "").localeCompare(String(b.name || ""))
+      }
+
       const aDir = a.type === "directory" ? 0 : 1
       const bDir = b.type === "directory" ? 0 : 1
       if (aDir !== bDir) return aDir - bDir
-      return String(a.name || "").localeCompare(String(b.name || ""))
+      return String(a.name || "").localeCompare(String(b.name || "")) * dir
     })
   })
 
@@ -157,6 +215,29 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         <span class="file-list-title">{props.t("instanceShell.filesShell.fileListTitle")}</span>
         <span class="file-list-count">{filteredEntries().length}</span>
       </div>
+      <div class="file-list-columns">
+        <button
+          type="button"
+          class={`file-list-col-name file-list-sort ${sortKey() === "name" ? "is-active" : ""}`}
+          aria-sort={columnAriaSort("name")}
+          title={props.t("instanceShell.filesShell.sort.name")}
+          onClick={() => toggleSort("name")}
+        >
+          {props.t("instanceShell.filesShell.columns.name")}
+          {sortIndicator("name")}
+        </button>
+        <button
+          type="button"
+          class={`file-list-col-modified file-list-sort ${sortKey() === "modified" ? "is-active" : ""}`}
+          aria-sort={columnAriaSort("modified")}
+          title={props.t("instanceShell.filesShell.sort.modified")}
+          onClick={() => toggleSort("modified")}
+        >
+          {props.t("instanceShell.filesShell.columns.modified")}
+          {sortIndicator("modified")}
+        </button>
+        <span class="file-list-col-actions" />
+      </div>
 
       <Show when={props.parentPath()}>
         {(p) => (
@@ -165,6 +246,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               <div class="file-list-item-path" title={p()}>
                 <span class="file-path-text">..</span>
               </div>
+              <span class="file-list-item-modified" />
             </div>
           </div>
         )}
@@ -201,6 +283,9 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 <div class="file-list-item-path" title={item.path}>
                   <span class="file-path-text">{item.name}</span>
                 </div>
+                <span class="file-list-item-modified" title={item.modifiedAt || undefined}>
+                  {formatModifiedAt(item.modifiedAt)}
+                </span>
                 <div class="flex items-center gap-2 shrink-0">
                   <div class="file-list-item-stats">
                     <span class="text-[10px] text-secondary">{item.type}</span>
@@ -396,6 +481,32 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 <RefreshCw class="h-4 w-4 animate-spin" />
               </Show>
             </button>
+            <button
+              type="button"
+              class="files-header-icon-button"
+              title={props.t("instanceShell.filesShell.actions.upload")}
+              aria-label={props.t("instanceShell.filesShell.actions.upload")}
+              disabled={props.browserLoading() || props.uploading()}
+              onClick={() => uploadInputRef?.click()}
+            >
+              <Show when={props.uploading()} fallback={<Upload class="h-4 w-4" />}>
+                <RefreshCw class="h-4 w-4 animate-spin" />
+              </Show>
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              multiple
+              class="sr-only"
+              tabindex="-1"
+              onChange={(event) => {
+                const files = event.currentTarget.files
+                if (files && files.length > 0) {
+                  props.onUploadFiles(files)
+                }
+                event.currentTarget.value = ""
+              }}
+            />
             <button
               type="button"
               class="files-header-icon-button"

@@ -27,12 +27,13 @@ export interface TranscriptEntry {
   timestamp: number
 }
 
-/** Session recording metadata */
+/** Session recording metadata. Durations are milliseconds, matching the
+ *  TokiDAPPAudioRecording.durationMs column these rows are read back from. */
 export interface SessionRecording {
   id: string
   sessionId: string
   blobUrl: string
-  duration: number
+  durationMs: number
   transcript: string
   createdAt: string
 }

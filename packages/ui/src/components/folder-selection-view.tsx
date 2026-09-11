@@ -22,6 +22,7 @@ import { openRemoteServerWindow } from "../lib/native/remote-window"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
 import TokenizinLogo3D from "./tokenizin-logo-3d"
 import StarWorldGlobe from "./starworld-globe"
+import { PRESTIX_LANDING_COPY, isPrestixSilo } from "../lib/silo-brand"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
@@ -613,7 +614,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   return (
     <>
       <div
-        class="folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative"
+        class={`folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative${isPrestixSilo() ? " silo-prestix" : ""}`}
         ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
@@ -707,12 +708,16 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 width={160}
                 height={160}
                 class="folder-home-logo"
-                alt={t("folderSelection.logoAlt")}
+                alt={isPrestixSilo() ? PRESTIX_LANDING_COPY.logoAlt : t("folderSelection.logoAlt")}
                 spin
               />
             </div>
-            <h1 class="folder-home-brand-title mb-2 text-3xl font-semibold">{t("folderSelection.brandTitle")}</h1>
-            <p class="folder-home-tagline text-base text-secondary max-w-xl mx-auto">{t("folderSelection.tagline")}</p>
+            <h1 class="folder-home-brand-title mb-2 text-3xl font-semibold">
+              {isPrestixSilo() ? PRESTIX_LANDING_COPY.brandTitle : t("folderSelection.brandTitle")}
+            </h1>
+            <p class="folder-home-tagline text-base text-secondary max-w-xl mx-auto">
+              {isPrestixSilo() ? PRESTIX_LANDING_COPY.tagline : t("folderSelection.tagline")}
+            </p>
             <div class="mt-3 flex justify-center gap-2">
               <a
                 href={GITHUB_URL}
@@ -1115,9 +1120,26 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         <Show when={isLoading()}>
           <div class="folder-loading-overlay" role="status" aria-live="polite">
             <div class="folder-loading-indicator">
-              <StarWorldGlobe size={120} rotationSpeed={0.117} class="folder-loading-globe" />
+              <Show
+                when={!isPrestixSilo()}
+                fallback={
+                  <TokenizinLogo3D
+                    width={120}
+                    height={120}
+                    class="folder-loading-globe"
+                    alt={PRESTIX_LANDING_COPY.logoAlt}
+                    spin
+                  />
+                }
+              >
+                <StarWorldGlobe size={120} rotationSpeed={0.117} class="folder-loading-globe" />
+              </Show>
               <p class="folder-loading-text">{t("folderSelection.loading.title")}</p>
-              <p class="folder-loading-subtext">{t("folderSelection.loading.subtitle")}</p>
+              <p class="folder-loading-subtext">
+                {isPrestixSilo()
+                  ? PRESTIX_LANDING_COPY.loadingSubtitle
+                  : t("folderSelection.loading.subtitle")}
+              </p>
             </div>
           </div>
         </Show>
