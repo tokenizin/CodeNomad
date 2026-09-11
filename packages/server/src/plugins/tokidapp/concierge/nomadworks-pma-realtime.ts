@@ -66,9 +66,12 @@ export const VOICE_PMA_LATENCY_FALLBACK_MS = (() => {
   return Number.isFinite(val) && val > 0 ? val : 500
 })()
 
-/** xAI base URL.  Defaults to the official Grok API endpoint. */
+/**
+ * xAI base URL (origin only — no trailing `/v1`). Defaults to the official
+ * Grok API endpoint. `callChatCompletions` appends `/v1/chat/completions`.
+ */
 export const XAI_BASE_URL =
-  process.env.XAI_BASE_URL?.trim() || "https://api.x.ai/v1"
+  process.env.XAI_BASE_URL?.trim() || "https://api.x.ai"
 
 /** xAI API key. */
 export const XAI_API_KEY = process.env.XAI_API_KEY || ""
@@ -185,7 +188,7 @@ async function callPmaLlm(
   // OpenAI path (default, or Grok fallback).
   if (OPENAI_API_KEY) {
     return callChatCompletions(
-      "https://api.openai.com/v1",
+      "https://api.openai.com",
       OPENAI_API_KEY,
       VOICE_PMA_OPENAI_MODEL,
       messages,
