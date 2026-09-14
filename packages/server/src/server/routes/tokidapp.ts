@@ -1377,6 +1377,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           msg.workflowStep as number | undefined,
           msg.agentType as string | undefined,
           dbSessionId,
+          msg.provider as string | undefined,
         )
         return
       }
@@ -1640,6 +1641,7 @@ async function routeMessage(
   workflowStep?: number,
   agentType?: string,
   dbSessionId?: string | null,
+  provider?: string,
 ): Promise<void> {
   // ── Command Parsing (@mentions, /commands, [directives], pipelines) ──
   const parseResult = parseInput(content)
@@ -1868,11 +1870,94 @@ async function routeMessage(
     // ClickFlow interactive prompts — route to a helper that creates a simple prompt
     send(JSON.stringify({ type: "message", content: "ClickFlow interactive prompts are available. Try: ask_user_pick_one, ask_user_confirm, ask_user_text, ask_user_slider, or ask_user_pick_many." }))
   } else {
-    // Unrecognized query — try GPT for a natural-language answer
+    // Unrecognized query — try LLM for a natural-language answer
     // before falling back to the static capabilities list.
     let answered = false
     const OPENAI_KEY = process.env.OPENAI_API_KEY
-    if (OPENAI_KEY) {
+    const XAI_KEY = process.env.XAI_API_KEY
+
+    // Determine which provider to use: explicit > OpenAI > Grok fallback
+    const effectiveProvider = provider || (OPENAI_KEY ? 'openai' : XAI_KEY ? 'grok' : null)
+
+    if (effectiveProvider === 'grok' && XAI_KEY) {
+      // Route to Grok/xAI
+      try {
+        const grokRes = await fetch(`${process.env.XAI_BASE_URL || 'https://api.x.ai/v1'}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${XAI_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: process.env.VOICE_PMA_GROK_MODEL || "grok-2-latest",
+            messages: [
+              {
+                role: "system",
+                content:
+`You are Star World Assistant for the StarWORLD ecosystem — a multi-chain Web3 portal with smart contracts, membership, rewards, and AI agents.
+
+## Your Core Knowledge
+You have deep knowledge of:
+- **Smart Contracts**: RevenuePool, DynamicSplitter, StarBridge, StarCard (ERC-4907), SAFT, MembershipSystem, StarXP, TicketMarketplace, VenueOnboardingKit
+- **Chains**: Ethereum Sepolia (testnet), BSC (mainnet), StarCHAIN
+- **Data Models**: 66 ZenStack models — User, Session, Contract, Invoice, Venue, Membership, StarXP, DrinkToken, etc.
+- **Architecture**: 135+ entities in the knowledge base with cross-references
+- **AI Agents**: TokiDAPP concierge, NomadWorks 25-agent SDLC, CodeNomad development agent
+- **Features**: Membership tiers, StarXP rewards, venue entry, drink tokens, bridge, SAFT claims, ticket marketplace
+
+## Your Capabilities
+You can help with:
+- **Investigate** — search and read codebase files
+- **Generate** — create new pages, components, routes
+- **Test** — run the test suite
+- **Git status** — check branch, changes, history
+- **Deploy** — commit, push, and deploy to Vercel
+- **Spawn agent** — launch OpenCode/OpenCoder/OpenAgent workspaces
+- **Schedule task** — create and schedule tasks for agents or users
+- **List tasks** — view all pending/assigned/completed tasks
+- **Assign task** — assign a task to a specific user
+- **Rollback deploy** — revert to the previous commit and redeploy
+- **Accessibility** — run a11y audits (Lighthouse, axe-core)
+- **Security scan** — scan Solidity contracts for vulnerabilities
+- **Read file** — view file contents or list directories
+- **Lint** — run the linter
+- **Type check** — run TypeScript type checking
+- **Git branch** — list, create, switch, or delete branches
+- **Knowledge base** — query architecture entities, read wiki pages, search vault
+- **Diagrams** — generate Mermaid diagrams from descriptions
+- **File generation** — create downloadable files (diagrams, documents, code snippets)
+- **Web search** — search the web for current information, news, documentation
+
+## Response Guidelines
+- Answer questions about the ecosystem accurately from your knowledge
+- When the user's request matches a capability, route them to the appropriate tool
+- Keep greetings under 100 characters — no capability listing
+- Keep responses under 200 words
+- Do NOT read file paths, URLs, wallet addresses, or UUIDs aloud
+- When mentioning a link, say the destination name and that a link is provided
+- Use friendly names: "RevenuePool" not "SC.contract.RevenuePool"
+- If you're unsure about something, search the knowledge base first before answering
+- If the knowledge base doesn't have the answer and the user needs current/recent information, tell them to ask in voice mode which has web_search capability, or suggest they use the web_search tool in a voice conversation`,
+              },
+              { role: "user", content },
+            ],
+            max_tokens: 500,
+          }),
+        })
+        if (grokRes.ok) {
+          const grokData = (await grokRes.json()) as {
+            choices?: Array<{ message?: { content?: string } }>
+          }
+          const reply = grokData?.choices?.[0]?.message?.content?.trim()
+          if (reply) {
+            send(JSON.stringify({ type: "message", content: reply }))
+            answered = true
+          }
+        }
+      } catch {
+        // Grok unreachable — fall through to static list
+      }
+    } else if (effectiveProvider === 'openai' && OPENAI_KEY) {
       try {
         const gptRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -2221,19 +2306,27 @@ export function registerTokidappRoutes(app: FastifyInstance, starGuardJwtHandler
       }
 
       const apiKey = process.env.OPENAI_API_KEY
-      if (!apiKey) {
-        // Fallback: return original text
+      const xaiKey = process.env.XAI_API_KEY
+
+      if (!apiKey && !xaiKey) {
+        // No translation provider available — return original text
         return { translation: text }
       }
 
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      // Prefer OpenAI; fall back to Grok/xAI when OpenAI key is unavailable
+      const useGrok = !apiKey && !!xaiKey
+      const baseUrl = useGrok ? (process.env.XAI_BASE_URL || "https://api.x.ai/v1") : "https://api.openai.com/v1"
+      const model = useGrok ? (process.env.VOICE_PMA_GROK_MODEL || "grok-2-latest") : "gpt-4o-mini"
+      const authHeader = useGrok ? `Bearer ${xaiKey}` : `Bearer ${apiKey}`
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: authHeader,
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          model,
           messages: [
             {
               role: "system",
@@ -3331,6 +3424,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               msg.workflowStep,
               msg.agentType,
               dbSessionId,
+              msg.provider,
             )
             return
           }
