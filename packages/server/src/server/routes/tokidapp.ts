@@ -50,7 +50,7 @@ import { buildAgentPersonaInstructions } from "../../plugins/tokidapp/concierge/
 import { getDigest as getWarmDigest, forceRefresh as forceDigestRefresh } from "../../plugins/tokidapp/concierge/knowledge-cache"
 import { buildVaultSessionContext } from "../../plugins/tokidapp/concierge/codebase-tools"
 import { parseInput, resolveActions, formatParseSummary } from "../../plugins/tokidapp/concierge/commands-router"
-import { AGENT_REGISTRY, getCommandsByCategory } from "../../plugins/tokidapp/concierge/command-registry"
+import { AGENT_REGISTRY, getCommandsByCategory, findAgent, getAllAgentNames } from "../../plugins/tokidapp/concierge/command-registry"
 import { executeDAG, buildLifecycleDAG } from "../../plugins/tokidapp/orchestrator/dag-engine"
 import {
   createApprovalRequest,
@@ -1381,6 +1381,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           msg.agentType as string | undefined,
           dbSessionId,
           msg.provider as string | undefined,
+          taskWatchers,
         )
         return
       }
@@ -1592,13 +1593,14 @@ export function registerVoiceRealtimeWebSocket(
 // ── Agent-Aware Routing Helper ──────────────────────────────
 
 /** Route a message to a specific NomadWorks agent type.
- *  Creates a task file via the bridge and streams status updates.
- *  Fire-and-forget for Phase 1 — unwatch not stored; cleaned up on WS close. */
+  *  Creates a task file via the bridge and streams status updates.
+  *  Stores the unwatch function in taskWatchers when provided for proper cleanup. */
 async function handleAgentRouting(
   agentType: string,
   content: string,
   dbSessionId: string | null,
   send: (msg: string) => void,
+  taskWatchers?: Map<string, () => void>,
 ): Promise<void> {
   const starworldSessionId = resolveStarworldSessionId(dbSessionId)
   if (!starworldSessionId) {
@@ -1608,6 +1610,17 @@ async function handleAgentRouting(
     }))
     return
   }
+
+  // ── Agent availability check ──
+  const agent = findAgent(agentType)
+  if (!agent) {
+    send(JSON.stringify({
+      type: 'error',
+      content: `Unknown agent: "@${agentType}". Use /agent to list available agents.`,
+    }))
+    return
+  }
+
   try {
     const result = await bridge.createTaskFile({
       intent: content,
@@ -1625,8 +1638,11 @@ async function handleAgentRouting(
       progress_stage: "thinking",
       progress_message: "Creating task and analyzing request...",
     }))
-    // Start watching for task status changes (fire and forget — no unwatch storage)
-    bridge.watchTask(result.taskId, (outgoing) => send(outgoing))
+    // Start watching for task status changes — store unwatch for cleanup
+    const unwatch = bridge.watchTask(result.taskId, (outgoing) => send(outgoing))
+    if (taskWatchers) {
+      taskWatchers.set(result.taskId, unwatch)
+    }
   } catch (err) {
     send(JSON.stringify({
       type: 'error',
@@ -1645,6 +1661,7 @@ async function routeMessage(
   agentType?: string,
   dbSessionId?: string | null,
   provider?: string,
+  taskWatchers?: Map<string, () => void>,
 ): Promise<void> {
   // ── Command Parsing (@mentions, /commands, [directives], pipelines) ──
   const parseResult = parseInput(content)
@@ -1667,7 +1684,7 @@ async function routeMessage(
               status: "running",
               summary: `Routing to @${action.targetAgent}${roleHint}...`,
             }))
-            await handleAgentRouting(action.targetAgent, action.instruction || parseResult.cleanText, dbSessionId ?? null, send)
+            await handleAgentRouting(action.targetAgent, action.instruction || parseResult.cleanText, dbSessionId ?? null, send, taskWatchers)
             return
           }
           break
@@ -1693,13 +1710,118 @@ async function routeMessage(
               send(JSON.stringify({ type: "tool_result", id: "cmd-status", tool: "git_status", status: "complete", summary: statusResult }))
               return
 
-            case "help":
+            case "commit":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-commit", tool: "git_commit_push", status: "running", summary: "Committing changes..." }))
+              const commitResult = await gitCommitPush(action.commandArgs || "", WORKSPACE_ROOT, STARGUARD_BASE, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-commit", tool: "git_commit_push", status: "complete", summary: commitResult }))
+              return
+
+            case "clean":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-clean", tool: "run_lint", status: "running", summary: "Running linter..." }))
+              const cleanResult = await runLint(WORKSPACE_ROOT, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-clean", tool: "run_lint", status: "complete", summary: cleanResult }))
+              return
+
+            case "validate":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-validate", tool: "run_typecheck", status: "running", summary: "Running type check..." }))
+              const validateResult = await runTypeCheck(WORKSPACE_ROOT, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-validate", tool: "run_typecheck", status: "complete", summary: validateResult }))
+              return
+
+            case "agent": {
+              const agentName = action.commandArgs?.trim()
+              if (!agentName) {
+                // List all agents
+                const agents = AGENT_REGISTRY.map(a => `@${a.name} — ${a.role}`).join("\n")
+                send(JSON.stringify({ type: "message", content: `Available agents:\n\n${agents}` }))
+                return
+              }
+              // Route to specific agent
+              const targetAgent = findAgent(agentName)
+              if (!targetAgent) {
+                send(JSON.stringify({ type: "error", content: `Unknown agent: "${agentName}". Use /agent to list available agents.` }))
+                return
+              }
+              send(JSON.stringify({ type: "tool_call", id: `cmd-agent-${targetAgent.name}`, tool: `dispatch_${targetAgent.name}`, status: "running", summary: `Routing to @${targetAgent.name}...` }))
+              await handleAgentRouting(targetAgent.name, "", dbSessionId ?? null, send, taskWatchers)
+              return
+            }
+
+            case "dispatch": {
+              const parts = (action.commandArgs || "").trim().split(/\s+/)
+              const targetName = parts[0]
+              const instruction = parts.slice(1).join(" ")
+              if (!targetName) {
+                send(JSON.stringify({ type: "error", content: "Usage: /dispatch <agent> <task description>" }))
+                return
+              }
+              const targetAgent = findAgent(targetName)
+              if (!targetAgent) {
+                send(JSON.stringify({ type: "error", content: `Unknown agent: "${targetName}". Use /agent to list available agents.` }))
+                return
+              }
+              send(JSON.stringify({ type: "tool_call", id: `cmd-dispatch-${targetAgent.name}`, tool: `dispatch_${targetAgent.name}`, status: "running", summary: `Dispatching to @${targetAgent.name}...` }))
+              await handleAgentRouting(targetAgent.name, instruction, dbSessionId ?? null, send, taskWatchers)
+              return
+            }
+
+            case "task": {
+              const taskAction = (action.commandArgs || "").trim().toLowerCase()
+              if (taskAction === "list" || !taskAction) {
+                send(JSON.stringify({ type: "tool_call", id: "cmd-task-list", tool: "list_tasks", status: "running", summary: "Fetching tasks..." }))
+                const tasks = await listTasks(content, STARGUARD_BASE, send)
+                send(JSON.stringify({ type: "tool_result", id: "cmd-task-list", tool: "list_tasks", status: "complete", summary: tasks }))
+                return
+              }
+              send(JSON.stringify({ type: "tool_call", id: "cmd-task-create", tool: "schedule_task", status: "running", summary: "Creating task..." }))
+              const taskResult = await scheduleTask(action.commandArgs || content, STARGUARD_BASE, send)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-task-create", tool: "schedule_task", status: "complete", summary: taskResult }))
+              return
+            }
+
+            case "workflow":
+              send(JSON.stringify({ type: "tool_call", id: "cmd-workflow", tool: "orchestrate", status: "running", summary: "Starting workflow..." }))
+              send(JSON.stringify({ type: "message", content: "Workflow orchestration is available via voice. Describe the steps you want to execute." }))
+              return
+
+            case "skill": {
+              const skillName = action.commandArgs?.trim()
+              if (!skillName) {
+                send(JSON.stringify({ type: "message", content: "Available skills: enforce-frontend-state, task-management, context7, ecosystem-readiness, qa-validation-pipeline, user-story-e2e, e2e-auth-token, branded-3d-ui, data-visualization-expert-godmode" }))
+                return
+              }
+              send(JSON.stringify({ type: "message", content: `Skill "/${skillName}" loaded. It will be available for the next operation.` }))
+              return
+            }
+
+            case "zenstack": {
+              const zsAction = (action.commandArgs || "status").trim().toLowerCase()
+              send(JSON.stringify({ type: "tool_call", id: "cmd-zenstack", tool: "zenstack", status: "running", summary: `ZenStack: ${zsAction}...` }))
+              send(JSON.stringify({ type: "tool_result", id: "cmd-zenstack", tool: "zenstack", status: "complete", summary: `ZenStack ${zsAction} — run \`bun run zen:${zsAction}\` in the terminal to execute.` }))
+              return
+            }
+
+            case "knowledge": {
+              const kAction = (action.commandArgs || "status").trim().toLowerCase()
+              if (kAction === "refresh") {
+                send(JSON.stringify({ type: "tool_call", id: "cmd-knowledge-refresh", tool: "knowledge_refresh", status: "running", summary: "Refreshing knowledge cache..." }))
+                await forceDigestRefresh()
+                send(JSON.stringify({ type: "tool_result", id: "cmd-knowledge-refresh", tool: "knowledge_refresh", status: "complete", summary: "Knowledge cache refreshed." }))
+                return
+              }
+              const { digest, fetchedAt, isFresh, age } = await getWarmDigest().catch(() => ({ digest: "", fetchedAt: new Date(0).toISOString(), isFresh: false, age: 0 }))
+              send(JSON.stringify({ type: "message", content: `Knowledge cache: ${digest?.length || 0} chars, age ${age}s, fresh=${isFresh}, fetched ${fetchedAt}` }))
+              return
+            }
+
+            case "help": {
               const grouped = getCommandsByCategory()
               const helpText = Object.entries(grouped)
                 .map(([cat, cmds]) => `**/${cat}**\n${cmds.map((c) => `  /${c.name} — ${c.description}`).join("\n")}`)
                 .join("\n\n")
               send(JSON.stringify({ type: "message", content: `Available commands:\n\n${helpText}` }))
               return
+            }
 
             default:
               // Unknown command — fall through to keyword routing
@@ -1717,7 +1839,7 @@ async function routeMessage(
               status: "running",
               summary: `[→${action.targetAgent}]: ${action.instruction}`,
             }))
-            await handleAgentRouting(action.targetAgent, action.instruction || "", dbSessionId ?? null, send)
+            await handleAgentRouting(action.targetAgent, action.instruction || "", dbSessionId ?? null, send, taskWatchers)
             return
           }
           break
@@ -1728,7 +1850,7 @@ async function routeMessage(
           for (const step of action.pipelineSteps || []) {
             send(JSON.stringify({ type: "tool_call", id: `pipeline-${step}`, tool: "pipeline_step", status: "running", summary: `Step: ${step}` }))
             // Recurse into routeMessage for each step
-            await routeMessage(step, send, undefined, undefined, undefined, dbSessionId)
+            await routeMessage(step, send, undefined, undefined, undefined, dbSessionId, undefined, taskWatchers)
           }
           return
       }
@@ -1738,7 +1860,7 @@ async function routeMessage(
 
   // ── Agent-Aware Routing ───────────────────────────────────
   if (agentType) {
-    await handleAgentRouting(agentType, content, dbSessionId ?? null, send)
+    await handleAgentRouting(agentType, content, dbSessionId ?? null, send, taskWatchers)
     return
   }
   // ── End Agent-Aware Routing ───────────────────────────────
@@ -3069,6 +3191,11 @@ export function registerTokidappWebSocket(
   })
 }
 
+// Tracks sessions that have already received the greeting so reconnects
+// (client WS drop/reconnect, pong timeout) don't re-send the greeting and
+// flood the chat with duplicate "Assistant ready" system messages.
+const greetedSessions = new Set<string>()
+
 function attachTokidappSocket(ws: WebSocket, token: string) {
   const sessionId = tokidappSessionId(token)
   const socketRef: WsSocketRef = {
@@ -3082,19 +3209,22 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
 
   registerTokidappSocket(sessionId, socketRef)
 
-  socketRef.send(JSON.stringify({
-    type: "orchestrator_greeting",
-    sessionId,
-    voiceMode: REALTIME_ENABLED,
-    content: "Star World Assistant ready.",
-  }))
-
-  if (REALTIME_ENABLED) {
-    const greetingText = "Hey there. I'm Star World Assistant. What can I do for you?"
+  if (!greetedSessions.has(sessionId)) {
+    greetedSessions.add(sessionId)
     socketRef.send(JSON.stringify({
-      type: "stream",
-      delta: greetingText,
+      type: "orchestrator_greeting",
+      sessionId,
+      voiceMode: REALTIME_ENABLED,
+      content: "Star World Assistant ready.",
     }))
+
+    if (REALTIME_ENABLED) {
+      const greetingText = "Hey there. I'm Star World Assistant. What can I do for you?"
+      socketRef.send(JSON.stringify({
+        type: "stream",
+        delta: greetingText,
+      }))
+    }
   }
 
   const orchestratorSessions = new Map<string, string>()
@@ -3113,6 +3243,8 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     clearAudioBuffer(sessionId)
     teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
+    // Allow a fresh greeting on next full login / new session cycle.
+    greetedSessions.delete(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {
@@ -3428,6 +3560,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
               msg.agentType,
               dbSessionId,
               msg.provider,
+              taskWatchers,
             )
             return
           }

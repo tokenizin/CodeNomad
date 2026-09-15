@@ -68,6 +68,7 @@ import { parseInput, resolveActions, formatParseSummary } from "./commands-route
 import { buildLifecycleDAG, executeDAG } from "../orchestrator/dag-engine"
 import { apiPost } from "../orchestrator/starguard-client"
 import { checkAgentReputation } from "./reputation-checker"
+import { isMcpToolName, callMcpToolDispatch, getMcpToolDefinitions } from "./mcp-tools-helper"
 import type { DAGNode, DAGDefinition, ExecutionCallbacks } from "../orchestrator/types"
 import { getTokidappSocket, tokidappSessionId, getUserIdFromSessionId } from "../../../server/ws-socket-registry"
 
@@ -1500,6 +1501,15 @@ export async function executeTool(
       }
 
       default:
+        // Delegate MCP-prefixed tools (mcp__<server>__<tool>) to the MCP dispatch layer
+        if (isMcpToolName(name)) {
+          try {
+            const params = argsStr ? JSON.parse(argsStr) : {}
+            return await callMcpToolDispatch(name, params, config.workspaceRoot)
+          } catch (mcpErr) {
+            return `MCP tool error: ${(mcpErr as Error).message}`
+          }
+        }
         return `Unknown tool: ${name}`
     }
   } catch (err) {
@@ -1582,6 +1592,17 @@ export function createRealtimeSession(
     }
   }
 
+  // ── MCP Tool Discovery (async, non-blocking) ──────────────
+  // Discover MCP tools in the background. They'll be added to the session
+  // before the WS connection is established. Discovery is cached per session.
+  // Fall back to process.cwd() — readMcpConfig returns {} if opencode.json
+  // is not found at that path, so discovery degrades gracefully.
+  const mcpWorkspaceRoot = process.cwd()
+  const mcpToolsPromise = getMcpToolDefinitions(sessionId, mcpWorkspaceRoot).catch((err) => {
+    console.warn("[openai-realtime] MCP tool discovery failed:", (err as Error).message)
+    return [] as Array<{ type: "function"; name: string; description: string; parameters: Record<string, unknown> }>
+  })
+
   const wsHeaders: Record<string, string> = {
     "Authorization": `Bearer ${OPENAI_API_KEY}`,
   }
@@ -1641,7 +1662,7 @@ export function createRealtimeSession(
     }
   }
 
-  ws.addEventListener("open", () => {
+  ws.addEventListener("open", async () => {
     console.log("[openai-realtime] OpenAI WS connected for session:", sessionId)
     session.connected = true
     session.lastActivityAt = Date.now()
@@ -1651,6 +1672,13 @@ export function createRealtimeSession(
     const instructions = enrichedInstructions
       ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions
       : VOICE_INSTRUCTIONS
+
+    // Await MCP tool discovery before sending session.update
+    const mcpToolDefs = await mcpToolsPromise
+    const allTools = mcpToolDefs.length > 0 ? [...(tools as unknown[]), ...mcpToolDefs] : tools
+    if (mcpToolDefs.length > 0) {
+      console.log(`[openai-realtime] Loaded ${mcpToolDefs.length} MCP tools for session:`, sessionId)
+    }
 
     const config = {
       type: "session.update",
@@ -1677,7 +1705,7 @@ export function createRealtimeSession(
             voice,
           },
         },
-        tools,
+        tools: allTools,
         tool_choice: "auto",
       },
     }
