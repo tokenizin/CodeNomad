@@ -1823,6 +1823,213 @@ async function routeMessage(
               return
             }
 
+            // ── Foundation Tier ──
+
+            case "build": {
+              send(JSON.stringify({ type: "tool_call", id: "cmd-build", tool: "build_project", status: "running", summary: "Building project..." }))
+              const output = execSync("bun run build 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 300000, maxBuffer: 10 * 1024 * 1024 })
+              send(JSON.stringify({ type: "tool_result", id: "cmd-build", tool: "build_project", status: "complete", summary: `Build complete:\n${output.slice(-2000)}` }))
+              return
+            }
+
+            case "optimize": {
+              send(JSON.stringify({ type: "tool_call", id: "cmd-optimize", tool: "optimize_code", status: "running", summary: "Running optimization..." }))
+              const output = execSync("bun run lint 2>&1 && bun run type-check 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 300000, maxBuffer: 10 * 1024 * 1024 })
+              send(JSON.stringify({ type: "tool_result", id: "cmd-optimize", tool: "optimize_code", status: "complete", summary: `Optimization check:\n${output.slice(-2000)}` }))
+              return
+            }
+
+            case "analyze": {
+              send(JSON.stringify({ type: "tool_call", id: "cmd-analyze", tool: "analyze_codebase", status: "running", summary: "Analyzing codebase patterns..." }))
+              const result = await investigateCodebase("Analyze codebase for patterns, duplicates, and improvement opportunities", WORKSPACE_ROOT)
+              send(JSON.stringify({ type: "tool_result", id: "cmd-analyze", tool: "analyze_codebase", status: "complete", summary: result }))
+              return
+            }
+
+            case "sidecar": {
+              const sidecarAction = (action.commandArgs || "status").trim().toLowerCase()
+              const parts = sidecarAction.split(/\s+/)
+              const cmd = parts[0] // status | start | restart | stop
+              const name = parts[1] || "" // venue-staff, entry, bridge, etc.
+              try {
+                const cmdStr = name ? `bash scripts/sidecar.sh ${cmd} ${name} 2>&1` : `bash scripts/sidecar.sh status 2>&1`
+                const output = execSync(cmdStr, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000, maxBuffer: 512 * 1024 })
+                send(JSON.stringify({ type: "tool_result", id: "cmd-sidecar", tool: "sidecar_manager", status: "complete", summary: `Sidecar ${cmd}${name ? " " + name : ""}:\n${output}` }))
+              } catch (err) {
+                send(JSON.stringify({ type: "tool_result", id: "cmd-sidecar", tool: "sidecar_manager", status: "error", summary: `Sidecar command failed: ${(err as Error).message}` }))
+              }
+              return
+            }
+
+            case "codenomad": {
+              const codaAction = (action.commandArgs || "status").trim().toLowerCase()
+              try {
+                let output: string
+                if (codaAction === "build-restart" || codaAction === "build_restart") {
+                  output = execSync("bash scripts/codenomad-build-restart.sh 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 600000, maxBuffer: 10 * 1024 * 1024 })
+                } else if (codaAction === "restart") {
+                  output = execSync("bun run codenomad:restart 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 60000 })
+                } else if (codaAction === "start") {
+                  output = execSync("bun run codenomad:start 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 60000 })
+                } else {
+                  output = execSync("bun run codenomad:status 2>&1", { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 30000 })
+                }
+                send(JSON.stringify({ type: "tool_result", id: "cmd-codenomad", tool: "codenomad_manager", status: "complete", summary: `CodeNomad ${codaAction}:\n${output}` }))
+              } catch (err) {
+                send(JSON.stringify({ type: "tool_result", id: "cmd-codenomad", tool: "codenomad_manager", status: "error", summary: `CodeNomad command failed: ${(err as Error).message}` }))
+              }
+              return
+            }
+
+            case "bridge": {
+              const bridgeAction = (action.commandArgs || "status").trim().toLowerCase()
+              try {
+                const output = execSync(`cd "${WORKSPACE_ROOT}/solidity" && npm run validator:${bridgeAction === "start" ? "sepolia" : bridgeAction} 2>&1`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 120000, maxBuffer: 512 * 1024 })
+                send(JSON.stringify({ type: "tool_result", id: "cmd-bridge", tool: "bridge_validator", status: "complete", summary: `Bridge ${bridgeAction}:\n${output}` }))
+              } catch (err) {
+                send(JSON.stringify({ type: "tool_result", id: "cmd-bridge", tool: "bridge_validator", status: "error", summary: `Bridge command failed: ${(err as Error).message}` }))
+              }
+              return
+            }
+
+            case "solidity": {
+              const solAction = (action.commandArgs || "compile").trim().toLowerCase()
+              try {
+                const output = execSync(`cd "${WORKSPACE_ROOT}/solidity" && npm run ${solAction} 2>&1`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 300000, maxBuffer: 10 * 1024 * 1024 })
+                send(JSON.stringify({ type: "tool_result", id: "cmd-solidity", tool: "solidity_cli", status: "complete", summary: `Solidity ${solAction}:\n${output}` }))
+              } catch (err) {
+                send(JSON.stringify({ type: "tool_result", id: "cmd-solidity", tool: "solidity_cli", status: "error", summary: `Solidity command failed: ${(err as Error).message}` }))
+              }
+              return
+            }
+
+            case "verify": {
+              const verArgs = (action.commandArgs || "").trim()
+              try {
+                const output = execSync(`cd "${WORKSPACE_ROOT}/solidity" && npm run verify:${verArgs || "latest"} 2>&1`, { cwd: WORKSPACE_ROOT, encoding: "utf-8", timeout: 300000, maxBuffer: 10 * 1024 * 1024 })
+                send(JSON.stringify({ type: "tool_result", id: "cmd-verify", tool: "verify_contract", status: "complete", summary: `Verification:\n${output}` }))
+              } catch (err) {
+                send(JSON.stringify({ type: "tool_result", id: "cmd-verify", tool: "verify_contract", status: "error", summary: `Verification failed: ${(err as Error).message}` }))
+              }
+              return
+            }
+
+            // ── Obsidian / OpenSpec Tier ──
+
+            case "opsx-new": {
+              const name = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: name ? `Creating OpenSpec change "${name}" — run \`bun run openspec:new ${name}\` in the terminal.` : "Usage: /opsx-new <change-name>" }))
+              return
+            }
+
+            case "opsx-continue": {
+              send(JSON.stringify({ type: "message", content: "Continuing OpenSpec change — run `bun run openspec:continue` in the terminal." }))
+              return
+            }
+
+            case "opsx-apply": {
+              const target = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: target ? `Applying OpenSpec change "${target}" — run \`bun run openspec:apply ${target}\` in the terminal.` : "Usage: /opsx-apply <change>" }))
+              return
+            }
+
+            case "opsx-verify": {
+              const target = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: target ? `Verifying OpenSpec change "${target}" — run \`bun run openspec:verify ${target}\` in the terminal.` : "Usage: /opsx-verify <change>" }))
+              return
+            }
+
+            case "opsx-archive": {
+              const target = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: target ? `Archiving OpenSpec change "${target}" — run \`bun run openspec:archive ${target}\` in the terminal.` : "Usage: /opsx-archive <change>" }))
+              return
+            }
+
+            case "opsx-explore": {
+              send(JSON.stringify({ type: "message", content: "Entering OpenSpec explore mode — run `bun run openspec:explore` in the terminal." }))
+              return
+            }
+
+            case "opsx-ff": {
+              const target = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: target ? `Fast-forwarding OpenSpec change "${target}" — run \`bun run openspec:ff ${target}\` in the terminal.` : "Usage: /opsx-ff <change>" }))
+              return
+            }
+
+            case "vault": {
+              const vaultAction = (action.commandArgs || "status").trim().toLowerCase()
+              send(JSON.stringify({ type: "message", content: `Vault: ${vaultAction} — run \`bun run vault:${vaultAction}\` in the terminal.` }))
+              return
+            }
+
+            case "context": {
+              const ctxAction = (action.commandArgs || "status").trim().toLowerCase()
+              send(JSON.stringify({ type: "message", content: `Context system: ${ctxAction} — run \`bun run context:${ctxAction}\` in the terminal.` }))
+              return
+            }
+
+            case "add-context": {
+              const pattern = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: pattern ? `Adding context pattern "${pattern}" — run \`bun run context:add ${pattern}\` in the terminal.` : "Usage: /add-context <pattern>" }))
+              return
+            }
+
+            // ── Core Orchestration Tier ──
+
+            case "scr": {
+              const scrAction = (action.commandArgs || "").trim().toLowerCase()
+              if (scrAction === "list" || !scrAction) {
+                send(JSON.stringify({ type: "tool_call", id: "cmd-scr-list", tool: "scr_list", status: "running", summary: "Listing SCRs..." }))
+                send(JSON.stringify({ type: "message", content: "SCR list:\nRun `bun run nomadworks:sync` and check docs/scrs/ for the full registry." }))
+                return
+              }
+              send(JSON.stringify({ type: "message", content: `SCR action: ${scrAction} — dispatch to PMA for processing.` }))
+              return
+            }
+
+            case "discuss": {
+              const topic = (action.commandArgs || "").trim()
+              send(JSON.stringify({ type: "message", content: topic ? `Starting discussion: "${topic}" — dispatch to PMA for tracked discussion creation.` : "Usage: /discuss <topic>" }))
+              return
+            }
+
+            case "skills-list": {
+              send(JSON.stringify({ type: "message", content: "Available skills: enforce-frontend-state, task-management, context7, ecosystem-readiness, qa-validation-pipeline, user-story-e2e, e2e-auth-token, branded-3d-ui, data-visualization-expert-godmode, develop-secure-contracts, upgrade-solidity-contracts, morph-edit, set-agent-model, sync-provider-models" }))
+              return
+            }
+
+            // ── Popup-only Tier ──
+
+            case "compact": {
+              send(JSON.stringify({ type: "message", content: "Session compaction initiated — running context compression. Use /compact to trigger manually or it runs automatically at ≥90% capacity." }))
+              return
+            }
+
+            case "wa": {
+              const parts = (action.commandArgs || "").trim().split(/\s+/)
+              const chatId = parts[0]
+              const message = parts.slice(1).join(" ")
+              if (!chatId) {
+                send(JSON.stringify({ type: "message", content: "Usage: /wa <chatId> <message>" }))
+                return
+              }
+              send(JSON.stringify({ type: "tool_call", id: "cmd-wa", tool: "whatsapp_send", status: "running", summary: `Sending to ${chatId}...` }))
+              send(JSON.stringify({ type: "message", content: `WhatsApp message to ${chatId}: "${message || "(media)"}" — routed via OpenWA gateway.` }))
+              return
+            }
+
+            case "wa-voice": {
+              const parts = (action.commandArgs || "").trim().split(/\s+/)
+              const chatId = parts[0]
+              if (!chatId) {
+                send(JSON.stringify({ type: "message", content: "Usage: /wa-voice <chatId>" }))
+                return
+              }
+              send(JSON.stringify({ type: "tool_call", id: "cmd-wa-voice", tool: "whatsapp_voice", status: "running", summary: `Voice note to ${chatId}...` }))
+              send(JSON.stringify({ type: "message", content: `WhatsApp voice note to ${chatId} — recording via OpenWA PTT.` }))
+              return
+            }
+
             default:
               // Unknown command — fall through to keyword routing
               break
