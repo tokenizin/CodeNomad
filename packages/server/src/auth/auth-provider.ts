@@ -42,7 +42,7 @@ export function resolveStarGuardPublicUrl(): string {
     }
     return "https://prestix.vip"
   }
-  return "https://star-worlds.vercel.app"
+  return "https://starpages.org"
 }
 
 export function readCloudflareAccessEmail(request: FastifyRequest): string | null {

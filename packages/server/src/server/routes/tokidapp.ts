@@ -130,7 +130,7 @@ import { apiPost } from "../../plugins/tokidapp/orchestrator/starguard-client"
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const REALTIME_ENABLED = !!process.env.OPENAI_API_KEY
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://star-worlds.vercel.app"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starpages.org"
 
 /**
  * Voice engine selection — 'openai' (default, backward-compatible), 'deepgram',
@@ -1818,7 +1818,7 @@ async function routeMessage(
     send(JSON.stringify({ type: "tool_result", id: "11", tool: "rollback_deploy", status: "complete", summary: result }))
   } else if (hasWord("a11y") || hasWord("accessibility") || hasWord("wcag") || hasWord("lighthouse")) {
     const urlMatch = content.match(/https?:\/\/[^\s]+/)
-    const url = urlMatch ? urlMatch[0] : "https://star-worlds.vercel.app"
+    const url = urlMatch ? urlMatch[0] : "https://starpages.org"
     send(JSON.stringify({ type: "tool_call", id: "12", tool: "run_a11y_audit", status: "running", summary: "Running accessibility audit..." }))
     const result = await runA11yAudit(url, WORKSPACE_ROOT, send)
     send(JSON.stringify({ type: "tool_result", id: "12", tool: "run_a11y_audit", status: "complete", summary: result }))

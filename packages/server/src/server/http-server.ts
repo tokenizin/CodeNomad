@@ -194,7 +194,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       process.env.STARGUARD_PUBLIC_URL,
       process.env.STARGUARD_BASE_URL,
       process.env.NEXT_PUBLIC_APP_URL,
-      "https://star-worlds.vercel.app",
+      "https://starpages.org",
       "https://chat.tokenizin.com",
     ]
     for (const candidate of candidates) {

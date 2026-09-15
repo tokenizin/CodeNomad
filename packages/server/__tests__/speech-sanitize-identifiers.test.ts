@@ -35,7 +35,7 @@ describe("identifier redaction", () => {
   })
 
   it("redacts URLs including bare www links", () => {
-    expect(sanitizeSpeechText("see https://star-worlds.vercel.app/x?y=1")).not.toContain("vercel")
+    expect(sanitizeSpeechText("see https://starpages.org/x?y=1")).not.toContain("starpages.org")
     expect(sanitizeSpeechText("see www.tokenizin.com/path")).not.toContain("tokenizin.com")
   })
 
