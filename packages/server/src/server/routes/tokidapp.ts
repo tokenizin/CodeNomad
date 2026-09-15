@@ -1473,10 +1473,9 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             const unwatch = bridge.watchTask(
               result.taskId,
               (outgoing) => socketRef.send(outgoing),
-              () => { taskWatchers.delete(result.taskId) },
-              watcherAbortController.signal,
+              () => { taskWatchers?.delete(result.taskId) },
             )
-            taskWatchers.set(result.taskId, unwatch)
+            taskWatchers?.set(result.taskId, unwatch)
           } catch (err) {
             socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
           }
@@ -3839,10 +3838,9 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 const unwatch = bridge.watchTask(
                   result.taskId,
                   (outgoing) => socketRef.send(outgoing),
-                  () => { taskWatchers.delete(result.taskId) },
-                  watcherAbortController.signal,
+                  () => { taskWatchers?.delete(result.taskId ?? "") },
                 )
-                taskWatchers.set(result.taskId, unwatch)
+                taskWatchers?.set(result.taskId ?? "", unwatch)
               } catch (err) {
                 socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
               }
