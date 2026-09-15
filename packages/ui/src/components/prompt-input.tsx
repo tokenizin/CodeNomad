@@ -1,4 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show, For } from "solid-js"
+import { getQuickActionPrompt, clearQuickActionPrompt } from "../stores/quick-actions"
 import { ArrowBigUp, ArrowBigDown, Loader2, MessageSquare, Mic, Paperclip, Terminal, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
@@ -430,6 +431,42 @@ export default function PromptInput(props: PromptInputProps) {
       if (sseManager.onChoiceExpired === choiceExpiredHandler) {
         sseManager.onChoiceExpired = undefined
       }
+    })
+  })
+
+  // ── Quick action prompt pickup ─────────────────────────────────
+  // When a quick-action card is selected, the shared signal is set.
+  // We detect the change, populate the textarea, select all text so the
+  // user can quickly replace bracketed placeholders, then clear the
+  // signal so it doesn't re-fire.
+  createEffect(() => {
+    const qaPrompt = getQuickActionPrompt()
+    if (!qaPrompt || qaPrompt === prompt()) return
+    clearQuickActionPrompt()
+
+    // Read the ref fresh inside the effect and after the microtask,
+    // since the textarea is always mounted by the time this fires.
+    const ta = textareaRef
+    if (!ta) {
+      // Textarea not yet mounted — fall back to signal-based set.
+      setPrompt(qaPrompt)
+      return
+    }
+
+    ta.value = qaPrompt
+    ta.dispatchEvent(new Event("input", { bubbles: true }))
+
+    // Defer focus + select-all so the DOM has settled after the
+    // input event. Read the ref again to satisfy TypeScript narrowing.
+    queueMicrotask(() => {
+      const el = textareaRef
+      if (!el) return
+      try {
+        el.focus({ preventScroll: true } as any)
+      } catch {
+        el.focus()
+      }
+      el.setSelectionRange(0, el.value.length)
     })
   })
 

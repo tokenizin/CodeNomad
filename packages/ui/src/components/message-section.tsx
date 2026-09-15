@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } 
 import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
+import QuickActions from "./quick-actions"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -1493,16 +1494,7 @@ export default function MessageSection(props: MessageSectionProps) {
                       title={t("messageSection.empty.title")}
                       description={t("messageSection.empty.description")}
                     >
-                      <ul>
-                        <li>
-                          <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
-                        </li>
-                        <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
-                        <li>
-                          {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
-                        </li>
-                      </ul>
+                      <QuickActions />
                     </BrandedEmptyState>
                   }
                 >
@@ -1510,16 +1502,7 @@ export default function MessageSection(props: MessageSectionProps) {
                     title={t("messageSection.empty.title")}
                     description={t("instanceShell.empty.description")}
                   >
-                    <ul>
-                      <li>
-                        <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                        <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
-                      </li>
-                      <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
-                      <li>
-                        {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
-                      </li>
-                    </ul>
+                    <QuickActions />
                   </BrandedEmptyState>
                 </Show>
               </Show>
