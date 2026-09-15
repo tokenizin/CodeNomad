@@ -287,7 +287,8 @@ const lastProgressMap = new Map<string, LastProgress>()
 
 // ── ClickFlow Idempotency ─────────────────────────────────────
 // key = `${taskId}::${promptId}` — prevents re-processing the same prompt
-const processedClickflowPrompts = new Set<string>()
+// Scoped per-taskId so completed tasks evict their entries (was global Set — leaked across sessions).
+const processedClickflowPrompts = new Map<string, Set<string>>()
 
 // ── Public Types ──────────────────────────────────────────────
 
@@ -347,7 +348,7 @@ export interface CreateTaskResult {
 export interface NomadworksBridge {
   createTaskFile(params: CreateTaskParams): Promise<CreateTaskResult>
   readTaskStatus(taskId: string): Promise<TaskStatus | null>
-  watchTask(taskId: string, send: (msg: string) => void, onStatus?: (status: TaskStatus) => void): () => void
+  watchTask(taskId: string, send: (msg: string) => void, onStatus?: (status: TaskStatus) => void, signal?: AbortSignal): () => void
   listTasks(sessionId?: string): Promise<TaskStatus[]>
   updateTaskProgress(taskId: string, stage: AgentProgressStage, message: string, pct?: number): void
   /** In-memory event bus for real-time progress notifications. */
@@ -880,13 +881,17 @@ async function processClickflowPrompt(
   // Generate a unique promptId
   const promptId = `cf_${taskId}_${Date.now()}`
 
-  // Check idempotency
+  // Check idempotency (scoped per-taskId)
   const idempotencyKey = `${taskId}::${promptId}`
-  if (processedClickflowPrompts.has(idempotencyKey)) {
+  const taskPrompts = processedClickflowPrompts.get(taskId)
+  if (taskPrompts?.has(idempotencyKey)) {
     console.log(`[nomadworks-bridge] Skipping already-processed clickflow_prompt ${promptId} in ${taskId}`)
     return
   }
-  processedClickflowPrompts.add(idempotencyKey)
+  if (!processedClickflowPrompts.has(taskId)) {
+    processedClickflowPrompts.set(taskId, new Set())
+  }
+  processedClickflowPrompts.get(taskId)!.add(idempotencyKey)
 
   const options: InteractivePromptOption[] | undefined = promptConfig.options as InteractivePromptOption[] | undefined
   const config: InteractivePromptConfig | undefined = promptConfig.config as InteractivePromptConfig | undefined
@@ -1022,8 +1027,11 @@ async function detectAndProcessClickflow(
   const promptConfig = frontmatter.clickflow_prompt as Record<string, unknown>
   const promptKey = `${taskId}::${JSON.stringify(promptConfig)}`
 
-  if (processedClickflowPrompts.has(promptKey)) return
-  processedClickflowPrompts.add(promptKey)
+  if (!processedClickflowPrompts.has(taskId)) {
+    processedClickflowPrompts.set(taskId, new Set())
+  }
+  if (processedClickflowPrompts.get(taskId)!.has(promptKey)) return
+  processedClickflowPrompts.get(taskId)!.add(promptKey)
 
   await processClickflowPrompt(taskId, frontmatter, send)
 }
@@ -1043,15 +1051,26 @@ async function detectAndProcessClickflow(
  * callbacks, so the second was delivered twice.
  *
  * Returns an unsubscribe function for cleanup.
+ *
+ * @param taskId - The task to watch
+ * @param send - WS send callback
+ * @param onStatus - Optional callback invoked on every status change (including terminal)
+ * @param signal - Optional AbortSignal for external cancellation
  */
 function watchTask(
   taskId: string,
   send: (msg: string) => void,
   onStatus?: (status: TaskStatus) => void,
+  signal?: AbortSignal,
 ): () => void {
   // If already watching, return existing unsubscribe
   const existing = activeWatchers.get(taskId)
   if (existing) return existing
+
+  // Pre-aborted signal — return a no-op unsubscribe immediately
+  if (signal?.aborted) {
+    return () => { /* no-op */ }
+  }
 
   const resolved = resolveTaskFile(taskId)
   if (!resolved) {
@@ -1097,6 +1116,11 @@ function watchTask(
       const sid = extractSessionIdFromFile(taskId)
       collectEvidence(taskId, sid, send).catch(() => {})
       streamCausalUpdate(taskId, sid, send).catch(() => {})
+      // Invoke onStatus BEFORE unsubscribe so callers can clean up their own state
+      if (onStatus) {
+        const status = readTaskStatusSync(taskId)
+        if (status) onStatus(status)
+      }
       unsubscribe()
     }
   })
@@ -1219,6 +1243,16 @@ function watchTask(
     busUnsub()
     activeWatchers.delete(taskId)
     progressBus.unsubscribeAll(taskId)
+    lastProgressMap.delete(taskId)
+    processedClickflowPrompts.delete(taskId)
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // AbortSignal listener — external cancellation
+  // ══════════════════════════════════════════════════════════════
+  // Defined AFTER unsubscribe so the closure captures the initialized const.
+  if (signal) {
+    signal.addEventListener("abort", () => unsubscribe(), { once: true })
   }
 
   activeWatchers.set(taskId, unsubscribe)
@@ -1237,6 +1271,20 @@ function extractSessionIdFromFile(taskId: string): string {
     return (parsed?.sessionId as string) || (parsed?.sourceStepId as string) || ""
   } catch {
     return ""
+  }
+}
+
+/**
+ * Synchronous status read for use in terminal callbacks (avoids await in unsubscribe path).
+ */
+function readTaskStatusSync(taskId: string): TaskStatus | null {
+  const resolved = resolveTaskFile(taskId)
+  if (!resolved) return null
+  try {
+    const content = fs.readFileSync(resolved.filePath, "utf-8")
+    return parseTaskFile(content, taskId, resolved.lane)
+  } catch {
+    return null
   }
 }
 
@@ -1316,3 +1364,25 @@ export const bridge: NomadworksBridge = {
 
 /** Directories the bridge treats as task lanes (exported for diagnostics/tests). */
 export const TASK_LANE_DIRS = { todo: TODO_DIR, blocked: BLOCKED_DIR, done: DONE_DIR }
+
+// ── Diagnostic Helpers ─────────────────────────────────────────
+// Exported for tests and runtime diagnostics.
+
+/** Returns the number of currently active watchers. */
+export function getActiveWatcherCount(): number {
+  return activeWatchers.size
+}
+
+/** Returns the total number of processed clickflow prompts across all tasks. */
+export function getProcessedPromptCount(): number {
+  let count = 0
+  for (const set of processedClickflowPrompts.values()) {
+    count += set.size
+  }
+  return count
+}
+
+/** Returns the number of entries in the last progress map. */
+export function getLastProgressCount(): number {
+  return lastProgressMap.size
+}

@@ -1045,8 +1045,11 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
   let activeEngine: VoiceEngine = "openai"
+  const watcherAbortController = new AbortController()
 
   const cleanup = () => {
+    // Abort all watchers for this session — triggers unsubscribe via AbortSignal
+    watcherAbortController.abort()
     voiceSockets.delete(sessionId)
     orchestratorSessions.delete(sessionId)
     // Clean up all nomadworks task watchers for this session
@@ -1057,6 +1060,13 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     clearAudioBuffer(sessionId)
     teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
+    // Clear injection debounce timers and pending payloads for this session
+    const timer = injectionDebounceTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      injectionDebounceTimers.delete(sessionId)
+    }
+    pendingInjectionPayloads.delete(sessionId)
   }
 
   ws.on("message", async (data, isBinary) => {
@@ -1458,8 +1468,14 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             })
             socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
 
-            // Start watching for task status changes and stream updates back to client
-            const unwatch = bridge.watchTask(result.taskId, (outgoing) => socketRef.send(outgoing))
+            // Start watching for task status changes and stream updates back to client.
+            // onStatus auto-evicts from taskWatchers; signal enables AbortController cleanup.
+            const unwatch = bridge.watchTask(
+              result.taskId,
+              (outgoing) => socketRef.send(outgoing),
+              () => { taskWatchers.delete(result.taskId) },
+              watcherAbortController.signal,
+            )
             taskWatchers.set(result.taskId, unwatch)
           } catch (err) {
             socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
@@ -1638,8 +1654,13 @@ async function handleAgentRouting(
       progress_stage: "thinking",
       progress_message: "Creating task and analyzing request...",
     }))
-    // Start watching for task status changes — store unwatch for cleanup
-    const unwatch = bridge.watchTask(result.taskId, (outgoing) => send(outgoing))
+     // Start watching for task status changes — store unwatch for cleanup.
+    // onStatus callback auto-evicts from taskWatchers so the Map doesn't leak.
+    const unwatch = bridge.watchTask(
+      result.taskId,
+      (outgoing) => send(outgoing),
+      () => { taskWatchers?.delete(result.taskId) },
+    )
     if (taskWatchers) {
       taskWatchers.set(result.taskId, unwatch)
     }
@@ -3438,8 +3459,11 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
   let activeEngine: VoiceEngine = "openai"
+  const watcherAbortController = new AbortController()
 
   const cleanup = () => {
+    // Abort all watchers for this session — triggers unsubscribe via AbortSignal
+    watcherAbortController.abort()
     unregisterTokidappSocket(sessionId)
     orchestratorSessions.delete(sessionId)
     // Clean up all nomadworks task watchers for this session
@@ -3450,6 +3474,13 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     clearAudioBuffer(sessionId)
     teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
+    // Clear injection debounce timers and pending payloads for this session
+    const timer = injectionDebounceTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      injectionDebounceTimers.delete(sessionId)
+    }
+    pendingInjectionPayloads.delete(sessionId)
     // Allow a fresh greeting on next full login / new session cycle.
     greetedSessions.delete(sessionId)
   }
@@ -3803,8 +3834,14 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 })
                 socketRef.send(JSON.stringify({ type: "nomadworks_task_status", ...result, status: "created" }))
 
-                // Start watching for task status changes and stream updates back to client
-                const unwatch = bridge.watchTask(result.taskId, (outgoing) => socketRef.send(outgoing))
+                // Start watching for task status changes and stream updates back to client.
+                // onStatus auto-evicts from taskWatchers; signal enables AbortController cleanup.
+                const unwatch = bridge.watchTask(
+                  result.taskId,
+                  (outgoing) => socketRef.send(outgoing),
+                  () => { taskWatchers.delete(result.taskId) },
+                  watcherAbortController.signal,
+                )
                 taskWatchers.set(result.taskId, unwatch)
               } catch (err) {
                 socketRef.send(JSON.stringify({ type: "error", content: `nomadworks_invoke failed: ${(err as Error).message}` }))
