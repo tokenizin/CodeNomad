@@ -1,8 +1,9 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
 import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
-import BrandedEmptyState from "./branded-empty-state"
+import BrandedEmptyState, { BrandedFullWidthEmptyState } from "./branded-empty-state"
 import QuickActions from "./quick-actions"
+import SuggestionBar from "./suggestion-bar"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -1490,20 +1491,21 @@ export default function MessageSection(props: MessageSectionProps) {
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
-                    <BrandedEmptyState
+                    <BrandedFullWidthEmptyState
                       title={t("messageSection.empty.title")}
                       description={t("messageSection.empty.description")}
                     >
+                      <SuggestionBar />
                       <QuickActions />
-                    </BrandedEmptyState>
+                    </BrandedFullWidthEmptyState>
                   }
                 >
-                  <BrandedEmptyState
+                  <BrandedFullWidthEmptyState
                     title={t("messageSection.empty.title")}
                     description={t("instanceShell.empty.description")}
                   >
-                    <QuickActions />
-                  </BrandedEmptyState>
+                    <SuggestionBar />
+                  </BrandedFullWidthEmptyState>
                 </Show>
               </Show>
 

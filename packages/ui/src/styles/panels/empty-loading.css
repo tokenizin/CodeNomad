@@ -94,3 +94,220 @@
 .message-load-error-retry:hover {
   background: var(--accent-hover);
 }
+
+/* ── Full-width empty state variant ──────────────────────────────── */
+
+.empty-state--full-width {
+  @apply items-start;
+}
+
+.empty-state-content--full-width {
+  @apply max-w-full w-full text-center;
+  max-width: none;
+}
+
+/* ── Suggestion bar ──────────────────────────────────────────────── */
+
+.suggestion-bar {
+  @apply w-full flex flex-col items-center gap-4 mt-6;
+}
+
+.suggestion-bar-categories {
+  @apply flex flex-wrap items-center justify-center gap-2;
+}
+
+.suggestion-category-chip {
+  @apply px-3 py-1 text-xs font-medium border transition-colors cursor-pointer;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+  color: var(--text-secondary);
+}
+
+.suggestion-category-chip:hover {
+  background-color: var(--surface-hover);
+}
+
+.suggestion-category-chip.is-active {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.suggestion-bar-icons {
+  @apply flex flex-wrap items-center justify-center gap-2 w-full;
+  max-width: 640px;
+}
+
+.suggestion-icon-btn {
+  @apply flex items-center justify-center transition-colors cursor-pointer border;
+  width: 40px;
+  height: 40px;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+  color: var(--text-secondary);
+}
+
+.suggestion-icon-btn:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.suggestion-icon-btn:focus-visible {
+  @apply outline-none ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+}
+
+.suggestion-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────── */
+
+.suggestion-tooltip {
+  @apply px-3 py-2 text-xs max-w-[260px] z-50;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.suggestion-tooltip-title {
+  @apply font-medium mb-0.5;
+  color: var(--text-primary);
+}
+
+.suggestion-tooltip-description {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ── Popout ──────────────────────────────────────────────────────── */
+
+.suggestion-popout-anchor {
+  @apply absolute;
+  width: 0;
+  height: 0;
+}
+
+.suggestion-popout-content {
+  @apply flex flex-col gap-3 p-4 z-50;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.suggestion-popout-header {
+  @apply flex items-start gap-3;
+}
+
+.suggestion-popout-icon-wrap {
+  @apply flex items-center justify-center flex-shrink-0;
+  width: 36px;
+  height: 36px;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  color: var(--accent-primary);
+}
+
+.suggestion-popout-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.suggestion-popout-titles {
+  @apply flex-1 min-w-0;
+}
+
+.suggestion-popout-title {
+  @apply text-sm font-semibold;
+  color: var(--text-primary);
+}
+
+.suggestion-popout-description {
+  @apply text-xs mt-0.5;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.suggestion-popout-close {
+  @apply flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+}
+
+.suggestion-popout-close:hover {
+  color: var(--text-primary);
+}
+
+.suggestion-popout-close-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.suggestion-popout-tags {
+  @apply flex flex-wrap gap-1.5;
+}
+
+.suggestion-popout-tag {
+  @apply px-2 py-0.5 text-xs font-medium;
+  background-color: var(--badge-neutral-bg);
+  color: var(--badge-neutral-text);
+}
+
+.suggestion-popout-preview {
+  @apply p-2 overflow-hidden;
+  background-color: var(--surface-code);
+  border: 1px solid var(--border-base);
+}
+
+.suggestion-popout-preview-code {
+  @apply text-xs whitespace-pre-wrap break-words;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  line-height: 1.5;
+  max-height: 5em;
+  overflow: hidden;
+}
+
+.suggestion-popout-cta {
+  @apply flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-none;
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.suggestion-popout-cta:hover {
+  background-color: var(--accent-hover);
+}
+
+.suggestion-popout-cta-arrow {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .suggestion-bar-icons {
+    @apply gap-1.5;
+  }
+
+  .suggestion-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .suggestion-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .suggestion-popout-content {
+    width: calc(100vw - 24px);
+  }
+}

@@ -12,6 +12,10 @@ export const messagingMessages = {
   "messageSection.empty.brandTitle": "Tokenizin",
   "messageSection.empty.title": "Build the hospitality stack",
   "messageSection.empty.description": "Prompt NomadWorks agents for Tokenizin × StarWorld — or open the Command Palette:",
+
+  "messageSection.suggestionBar.all": "All",
+  "messageSection.suggestionPopout.useThis": "Use this",
+  "messageSection.suggestionPopout.close": "Close suggestion details",
   "messageSection.empty.tips.commandPalette": "Command Palette",
   "messageSection.empty.tips.askAboutCodebase": "Ask about your codebase",
   "messageSection.empty.tips.attachFilesPrefix": "Attach files with",
