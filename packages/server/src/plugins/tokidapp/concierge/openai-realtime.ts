@@ -1542,6 +1542,7 @@ export function createRealtimeSession(
   onError: (error: string) => void,
   onReady?: () => void,
   onUserTranscript?: (text: string) => void,
+  onUserTranscriptDelta?: (text: string) => void,
   onResponseDone?: () => void,
   outputVoice: RealtimeVoiceId = normalizeRealtimeVoice(undefined),
   userId?: string,
@@ -1776,6 +1777,9 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
           const delta = typeof parsed.delta === "string" ? parsed.delta : ""
           if (delta) {
             console.log("[openai-realtime] user transcript delta for session:", sessionId, "→", delta.slice(0, 80))
+            onUserTranscriptDelta?.(delta)
+            // Send partial transcript to client for real-time chat display
+            session.sendToClient?.(JSON.stringify({ type: "user_transcript_partial", delta }))
           }
           break
         }

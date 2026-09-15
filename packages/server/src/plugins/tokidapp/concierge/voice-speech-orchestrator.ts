@@ -481,6 +481,7 @@ function createOpenAISession(params: CreateVoiceSessionParams): VoiceSession {
     /* onError */ (err) => errorCb(new Error(err)),
     /* onReady */ () => emitStatus("connected"),
     /* onUserTranscript */ (text) => transcriptCb(text, true),
+    /* onUserTranscriptDelta */ (text) => transcriptCb(text, false),
     /* onResponseDone */ () => emitStatus("idle"),
     /* outputVoice */ (params.voice as RealtimeVoiceId) || undefined,
     userId,
