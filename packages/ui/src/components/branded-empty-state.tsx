@@ -40,18 +40,36 @@ interface BrandedFullWidthEmptyStateProps {
   description: JSX.Element
   class?: string
   children?: JSX.Element
+  /**
+   * Layout variant:
+   * - "centered" (default): full-width content with padding, centered
+   * - "full-bleed": removes all padding for edge-to-edge landing page layout
+   */
+  variant?: "centered" | "full-bleed"
 }
 
 /**
  * Full-width variant of BrandedEmptyState for the compact suggestion bar
  * layout. Removes the `max-w-sm` constraint so children can span full width.
+ *
+ * Use variant="full-bleed" for the landing page to remove all padding
+ * and span the entire available body.
  */
 export const BrandedFullWidthEmptyState: Component<BrandedFullWidthEmptyStateProps> = (props) => {
   const { t } = useI18n()
+  const isFullBleed = props.variant === "full-bleed"
+
+  const stateClass = isFullBleed
+    ? "empty-state--landing"
+    : "empty-state--full-width"
+
+  const contentClass = isFullBleed
+    ? "empty-state-content--landing"
+    : "empty-state-content--full-width"
 
   return (
-    <div class={`empty-state empty-state--full-width ${isPrestixSilo() ? "silo-prestix " : ""}${props.class ?? ""}`.trim()}>
-      <div class="empty-state-content empty-state-content--full-width">
+    <div class={`empty-state ${stateClass} ${isPrestixSilo() ? "silo-prestix " : ""}${props.class ?? ""}`.trim()}>
+      <div class={`empty-state-content ${contentClass}`}>
         <div class="flex flex-col items-center gap-3 mb-6">
           <TokenizinLogo3D
             width={192}

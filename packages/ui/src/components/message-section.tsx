@@ -1503,6 +1503,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <BrandedFullWidthEmptyState
                     title={t("messageSection.empty.title")}
                     description={t("instanceShell.empty.description")}
+                    variant="full-bleed"
                   >
                     <SuggestionBar />
                   </BrandedFullWidthEmptyState>
