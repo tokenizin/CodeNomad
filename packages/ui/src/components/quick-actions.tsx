@@ -27,6 +27,13 @@ import {
   Coins,
   GitBranch,
   ArrowRight,
+  Box,
+  PlayCircle,
+  Layers,
+  Video,
+  LayoutDashboard,
+  Palette,
+  Paintbrush,
 } from "lucide-solid"
 import {
   QUICK_ACTIONS,
@@ -50,6 +57,13 @@ const ICON_MAP: Record<string, Component<{ class?: string }>> = {
   TrendingUp,
   Coins,
   GitBranch,
+  Box,
+  PlayCircle,
+  Layers,
+  Video,
+  LayoutDashboard,
+  Palette,
+  Paintbrush,
 }
 
 // ── Single card ─────────────────────────────────────────────────────

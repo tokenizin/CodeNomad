@@ -19,6 +19,8 @@ export type QuickActionCategory =
   | 'refactor'
   | 'docs'
   | 'ecosystem'
+  | '3d'
+  | 'design'
 
 export interface QuickActionCard {
   id: string
@@ -271,6 +273,144 @@ Please:
 3. **Flag concerns** — anything that looks risky, incomplete, or contradictory
 4. **Suggest next** — what should happen based on the trajectory`,
   },
+
+  // ── 3D ───────────────────────────────────────────────────────────────
+
+  {
+    id: '3d-model-materials',
+    title: '3D model with materials',
+    description: 'Create a 3D model with PBR materials, textures, and structural properties',
+    icon: 'Box',
+    category: '3d',
+    tags: ['3D', 'Materials', 'Model'],
+    promptTemplate: `Create a 3D model with materials for this project.
+
+ASSET: [what to model — character / object / environment / brand asset]
+STYLE: [realistic / stylized / low-poly / cinematic]
+MATERIALS: [metal / glass / fabric / organic / custom — specify PBR maps needed]
+
+Please:
+1. **Mesh** — topology, poly count target, LOD strategy
+2. **Materials** — PBR workflow (albedo, normal, roughness, metallic, AO)
+3. **UVs** — unwrap strategy, texel density, tiling vs unique
+4. **Export** — format (glTF / FBX / USD) and integration path for the target engine`,
+  },
+  {
+    id: '3d-animate',
+    title: 'Animate a 3D mesh',
+    description: 'Build skeletal or keyframe animations for a 3D model',
+    icon: 'PlayCircle',
+    category: '3d',
+    tags: ['3D', 'Animation', 'Rig'],
+    promptTemplate: `Animate a 3D mesh for this project.
+
+ASSET: [model to animate]
+ANIMATION TYPE: [skeletal / procedural / physics-based / morph-target / keyframe]
+ACTION: [walk cycle / idle / interaction / cinematic sequence / loop]
+
+Please:
+1. **Rig** — bone hierarchy, IK/FK setup, control rig design
+2. **Animation** — keyframe breakdown, easing curves, timing
+3. **Export** — animation clips, blend shapes, engine integration
+4. **Optimization** — bone count, compression, runtime considerations`,
+  },
+  {
+    id: '3d-scene',
+    title: 'Build a 3D scene',
+    description: 'Compose an optimized 3D scene with lighting, LOD, and spatial arrangement',
+    icon: 'Layers',
+    category: '3d',
+    tags: ['3D', 'Scene', 'Lighting'],
+    promptTemplate: `Build a 3D scene for this project.
+
+PURPOSE: [brand environment / product viz / game level / AR/VR / presentation]
+STYLE: [photorealistic / stylized / abstract / technical]
+ASSETS NEEDED: [list key objects / environments / characters]
+
+Please:
+1. **Composition** — spatial layout, camera angles, focal points
+2. **Lighting** — HDRI setup, key/fill/rim, shadows, mood
+3. **Optimization** — LOD strategy, occlusion culling, draw call budget
+4. **Render** — engine choice (StarRender / Three.js / WebGPU), output format`,
+  },
+  {
+    id: '3d-capture',
+    title: 'Capture 3D animation',
+    description: 'Record 3D viewport output and generate video clips or rendered sequences',
+    icon: 'Video',
+    category: '3d',
+    tags: ['3D', 'Video', 'Render'],
+    promptTemplate: `Capture a 3D animation for this project.
+
+SOURCE: [viewport recording / rendered sequence / real-time capture]
+OUTPUT: [video clip / GIF / image sequence / social media / presentation]
+DURATION: [length in seconds]
+QUALITY: [draft / production / broadcast]
+
+Please:
+1. **Setup** — camera path, resolution, frame rate, codec
+2. **Capture** — viewport recording vs offline render, anti-aliasing
+3. **Post** — color grading, compositing, audio sync if needed
+4. **Deliver** — export format, compression, platform targeting`,
+  },
+
+  // ── Design ───────────────────────────────────────────────────────────
+
+  {
+    id: 'design-landing',
+    title: 'Design a landing page',
+    description: 'Create a brand-consistent landing page layout with visual hierarchy',
+    icon: 'LayoutDashboard',
+    category: 'design',
+    tags: ['Design', 'UI', 'Landing'],
+    promptTemplate: `Design a landing page for this project.
+
+AUDIENCE: [who is this for]
+GOAL: [conversion / awareness / signup / showcase]
+SECTIONS: [hero / features / social proof / CTA / footer — specify]
+
+Please:
+1. **Layout** — section order, visual hierarchy, whitespace strategy
+2. **Brand** — color tokens, typography, iconography aligned to Tokenizin brand
+3. **Components** — reusable MUI v9 / Tailwind patterns
+4. **Responsive** — mobile-first breakpoints, tablet adaptation`,
+  },
+  {
+    id: 'design-system',
+    title: 'Create a design system',
+    description: 'Build a component design system with design tokens and style guides',
+    icon: 'Palette',
+    category: 'design',
+    tags: ['Design', 'System', 'Tokens'],
+    promptTemplate: `Create a design system for this project.
+
+SCOPE: [full system / component library / token set / pattern library]
+BRAND: [Tokenizin / StarWorld / custom — specify brand context]
+
+Please:
+1. **Tokens** — color, typography, spacing, elevation, motion design tokens
+2. **Components** — core component inventory (buttons, cards, inputs, navigation)
+3. **Guidelines** — usage rules, do/don't examples, accessibility requirements
+4. **Implementation** — MUI v9 theme structure, Tailwind config, CSS custom properties`,
+  },
+  {
+    id: 'design-component',
+    title: 'Style a component',
+    description: 'Apply brand-aligned styling to a specific UI component',
+    icon: 'Paintbrush',
+    category: 'design',
+    tags: ['Design', 'Component', 'Style'],
+    promptTemplate: `Style a component for this project.
+
+COMPONENT: [what to style — button / card / modal / nav / form / custom]
+VARIANTS: [default / hover / active / disabled / error / loading]
+
+Please:
+1. **Visual design** — color, typography, spacing, borders, shadows
+2. **States** — all interaction states, transitions, animations
+3. **Accessibility** — focus indicators, contrast, ARIA attributes
+4. **Code** — MUI v9 sx prop or Tailwind classes matching project patterns`,
+  },
 ]
 
 // ── Derived data ────────────────────────────────────────────────────
@@ -282,6 +422,8 @@ export const QUICK_ACTION_CATEGORIES: { id: QuickActionCategory; label: string }
   { id: 'refactor', label: 'Refactor' },
   { id: 'docs', label: 'Docs' },
   { id: 'ecosystem', label: 'Web3' },
+  { id: '3d', label: '3D' },
+  { id: 'design', label: 'Design' },
 ]
 
 // ── Signal store ────────────────────────────────────────────────────

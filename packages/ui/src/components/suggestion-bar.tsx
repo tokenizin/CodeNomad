@@ -29,6 +29,13 @@ import {
   TrendingUp,
   Coins,
   GitBranch,
+  Box,
+  PlayCircle,
+  Layers,
+  Video,
+  LayoutDashboard,
+  Palette,
+  Paintbrush,
 } from "lucide-solid"
 import { Tooltip } from "@kobalte/core/tooltip"
 import {
@@ -55,6 +62,13 @@ const ICON_MAP: Record<string, Component<{ class?: string }>> = {
   TrendingUp,
   Coins,
   GitBranch,
+  Box,
+  PlayCircle,
+  Layers,
+  Video,
+  LayoutDashboard,
+  Palette,
+  Paintbrush,
 }
 
 const FALLBACK_ICON = MessageSquare
