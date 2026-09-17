@@ -97,6 +97,16 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "upload-widget",
+    kind: "port",
+    name: "Upload Widget",
+    port: 9966,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ]
 
 /**
