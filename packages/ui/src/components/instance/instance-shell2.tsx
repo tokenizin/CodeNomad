@@ -10,6 +10,7 @@ import {
   type Component,
 } from "solid-js"
 import AppBar from "@suid/material/AppBar"
+import AutoAwesome from "@suid/icons-material/AutoAwesome"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
@@ -1071,6 +1072,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             {rightAppBarButtonIcon()}
                           </IconButton>
                         </Show>
+
+                        {/* Understand-Anything dashboard trigger */}
+                        <IconButton
+                          color="inherit"
+                          onClick={() => window.open("/api/understand/dashboard", "_blank")}
+                          aria-label="Open Understand-Anything knowledge graph dashboard"
+                          size="small"
+                          title="Understand-Anything"
+                        >
+                          <AutoAwesome fontSize="small" />
+                        </IconButton>
                       </div>
                     </div>
 

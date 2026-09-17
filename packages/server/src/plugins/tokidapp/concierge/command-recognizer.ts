@@ -515,9 +515,54 @@ export const ADMIN_COMMANDS: CommandDef[] = [
   },
 ]
 
+/** Understand-Anything commands: analyze, chat, dashboard, domain, explain, diff, knowledge, onboard, figma. */
+export const UNDERSTAND_COMMANDS: CommandDef[] = [
+  {
+    id: "understand",
+    phrases: ["understand codebase", "analyze codebase", "build knowledge graph", "scan project", "understand this project", "analyze this code"],
+    action: "understandAnalyze",
+    params: ["project"],
+  },
+  {
+    id: "understand_dashboard",
+    phrases: ["show dashboard", "open dashboard", "knowledge graph view", "understand dashboard", "visualize graph"],
+    action: "understandDashboard",
+  },
+  {
+    id: "understand_chat",
+    phrases: ["ask understand", "chat about code", "question about codebase", "understand question", "ask the graph"],
+    action: "understandChat",
+    params: ["query"],
+  },
+  {
+    id: "understand_domain",
+    phrases: ["extract domains", "business domains", "domain flow", "understand domains", "extract business knowledge"],
+    action: "understandDomain",
+    params: ["full"],
+  },
+  {
+    id: "understand_explain",
+    phrases: ["explain file", "deep dive", "understand file", "explain code", "what does this do"],
+    action: "understandExplain",
+    params: ["file"],
+  },
+  {
+    id: "understand_diff",
+    phrases: ["impact analysis", "what changed", "understand diff", "impact of changes", "changed files"],
+    action: "understandDiff",
+    params: ["range"],
+  },
+  {
+    id: "understand_onboard",
+    phrases: ["onboard me", "start here", "onboarding guide", "understand onboarding", "how to start"],
+    action: "understandOnboard",
+  },
+]
+
 /** All command sets combined for convenience. */
 export const ALL_COMMANDS: CommandDef[] = [
   ...VENUE_STAFF_COMMANDS,
   ...CONCIERGE_COMMANDS,
   ...ADMIN_COMMANDS,
+  ...UNDERSTAND_COMMANDS,
 ]

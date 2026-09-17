@@ -21,6 +21,7 @@ export type QuickActionCategory =
   | 'ecosystem'
   | '3d'
   | 'design'
+  | 'understand'
 
 export interface QuickActionCard {
   id: string
@@ -274,6 +275,90 @@ Please:
 4. **Suggest next** — what should happen based on the trajectory`,
   },
 
+  // ── Understand-Anything ──────────────────────────────────────
+
+  {
+    id: 'understand-module',
+    title: 'Understand any module',
+    description: 'Deep-dive into a module — architecture, data flow, risks, and hidden logic',
+    icon: 'Search',
+    category: 'understand',
+    tags: ['Analyze', 'Module', 'Deep-dive'],
+    promptTemplate: `Analyze this module in the workspace using the Understand-Anything knowledge graph.
+
+MODULE: [file path, directory, or module name]
+
+Please:
+1. **Architecture** — what this module does, its layers, and how it connects to the rest of the codebase
+2. **Data flow** — inputs, outputs, state changes, and key function call chains
+3. **Logic audit** — flag any unconventional logic, literal contradictions, dead code, or red flags
+4. **Risks** — security, performance, maintainability concerns
+5. **Quick wins** — 3-5 high-impact improvements
+
+Use the knowledge graph to cross-reference related files and dependencies.`,
+  },
+  {
+    id: 'understand-monorepo',
+    title: 'Understand a monorepo',
+    description: 'Scan an entire monorepo and map all inter-package dependencies',
+    icon: 'Layers',
+    category: 'understand',
+    tags: ['Monorepo', 'Dependencies', 'Map'],
+    promptTemplate: `Analyze this monorepo using the Understand-Anything knowledge graph.
+
+SCOPE: [root directory or package name — defaults to workspace root]
+
+Please:
+1. **Package map** — every package/module and its role
+2. **Dependency graph** — how packages depend on each other (imports, shared libs, circular deps)
+3. **Cross-cutting concerns** — auth, DB, logging, config — where are they handled?
+4. **Logic audit** — flag contradictions, duplicated logic, unconventional patterns across packages
+5. **Red flags** — security gaps, missing tests, outdated deps, fragile couplings
+
+Generate a visual dependency graph and highlight any problematic edges.`,
+  },
+  {
+    id: 'understand-platform',
+    title: 'Understand the full platform',
+    description: 'Scan the entire build and release — full platform analysis with dashboard',
+    icon: 'LayoutDashboard',
+    category: 'understand',
+    tags: ['Platform', 'Full Scan', 'Dashboard'],
+    promptTemplate: `Run a full platform analysis using the Understand-Anything knowledge graph.
+
+SCOPE: entire workspace — all modules, packages, configs, and build artifacts
+
+Please:
+1. **Full architecture map** — every module, layer, and how they connect
+2. **Build & release analysis** — build config, CI/CD, deployment pipeline, versioning
+3. **Logic audit** — scan for contradictions, dead code, unconventional patterns, literal logic errors
+4. **Security & risk** — secrets, injection, access control, dependency vulnerabilities
+5. **Performance** — bottlenecks, N+1 patterns, bundle size, slow imports
+6. **Dashboard** — generate a comprehensive visual dashboard summarizing all findings with severity ratings
+
+Output a structured report with: summary, findings by severity, dependency graph, and recommended actions.`,
+  },
+  {
+    id: 'understand-diagnose',
+    title: 'Diagnose logic errors',
+    description: 'Find logic contradictions, unconventional patterns, and literal bugs',
+    icon: 'Shield',
+    category: 'understand',
+    tags: ['Debug', 'Logic', 'Contradictions'],
+    promptTemplate: `Diagnose logic errors in this codebase using the Understand-Anything knowledge graph.
+
+FOCUS: [specific module / function / or "whole project"]
+
+Please:
+1. **Contradiction scan** — find any logic that contradicts itself (e.g., a condition that can never be true, unreachable branches, inverted guards)
+2. **Unconventional patterns** — flag code that works but is dangerously unclear or non-obvious
+3. **Dead code** — functions, branches, or variables that are never reached or used
+4. **Type/contract mismatches** — places where the code violates its own types or API contracts
+5. **Risk severity** — rate each finding: Critical / High / Medium / Low with explanation
+
+For each finding, show the file, line, the exact logic problem, and the fix.`,
+  },
+
   // ── 3D ───────────────────────────────────────────────────────────────
 
   {
@@ -424,6 +509,7 @@ export const QUICK_ACTION_CATEGORIES: { id: QuickActionCategory; label: string }
   { id: 'ecosystem', label: 'Web3' },
   { id: '3d', label: '3D' },
   { id: 'design', label: 'Design' },
+  { id: 'understand', label: 'Analyze' },
 ]
 
 // ── Signal store ────────────────────────────────────────────────────

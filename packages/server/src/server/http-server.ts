@@ -44,6 +44,7 @@ import { registerNotificationRoutes } from "./routes/notifications.js"
 import { registerChoiceRoutes } from "./routes/choices.js"
 import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
+import { registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
@@ -469,6 +470,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerChoiceRoutes(app, { eventBus: deps.eventBus })
   registerWikiLintRoutes(app)
   registerRefreshModelsRoutes(app)
+  registerUnderstandAnythingRoutes(app)
   registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
   app.get("/api/model-throttle/metrics", async (_request, reply) => {
