@@ -45,7 +45,7 @@ import type {
   WorktreeCreateRequest,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
-} from "../../../server/src/api-types"
+} from '@codenomad/api-types'
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"

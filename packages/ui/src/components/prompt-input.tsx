@@ -7,7 +7,7 @@ import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./promp
 import { preparePromptSubmission } from "./prompt-input/submitPrompt"
 import Kbd from "./kbd"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../stores/worktrees"
-import type { WorkspaceExecResponse } from "../../../server/src/api-types"
+import type { WorkspaceExecResponse } from '@codenomad/api-types'
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands, getBuiltInCommands, registerBuiltInCommand, unregisterBuiltInCommand } from "../stores/commands"
@@ -19,7 +19,7 @@ import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
-import type { FileSystemEntry } from "../../../server/src/api-types"
+import type { FileSystemEntry } from '@codenomad/api-types'
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"

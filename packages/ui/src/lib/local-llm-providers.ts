@@ -1,4 +1,4 @@
-import type { LocalLlmModelsResponse } from "../../../server/src/api-types"
+import type { LocalLlmModelsResponse } from '@codenomad/api-types'
 import type { Provider } from "../types/session"
 import { serverApi } from "./api-client"
 

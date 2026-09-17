@@ -3,7 +3,7 @@ import { Switch } from "@kobalte/core/switch"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import { toDataURL } from "qrcode"
 import { ChevronDown, ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
-import type { NetworkAddress, ServerMeta } from "../../../server/src/api-types"
+import type { NetworkAddress, ServerMeta } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { restartCli } from "../lib/native/cli"
 import { serverSettings, setListeningMode } from "../stores/preferences"

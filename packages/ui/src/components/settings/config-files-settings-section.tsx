@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, type Component } from "solid-js"
 import { ChevronDown, RefreshCw, Save } from "lucide-solid"
-import type { ConfigFileDescriptor } from "../../../../server/src/api-types"
+import type { ConfigFileDescriptor } from '@codenomad/api-types'
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { showToastNotification } from "../../lib/notifications"

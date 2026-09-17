@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { SpeechCapabilitiesResponse } from "../../../server/src/api-types"
+import type { SpeechCapabilitiesResponse } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 

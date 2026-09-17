@@ -1,4 +1,4 @@
-import type { NetworkAddress } from "../../../server/src/api-types"
+import type { NetworkAddress } from '@codenomad/api-types'
 
 export interface RemoteAddressGroups {
   recommended: NetworkAddress | null

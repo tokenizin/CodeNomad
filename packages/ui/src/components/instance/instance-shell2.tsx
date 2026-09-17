@@ -18,7 +18,7 @@ import Toolbar from "@suid/material/Toolbar"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
-import type { BackgroundProcess } from "../../../../server/src/api-types"
+import type { BackgroundProcess } from '@codenomad/api-types'
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"

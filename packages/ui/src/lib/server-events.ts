@@ -1,5 +1,5 @@
 import { batch as solidBatch } from "solid-js"
-import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
+import type { WorkspaceEventPayload, WorkspaceEventType } from '@codenomad/api-types'
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { markBackendOffline, markBackendOnline } from "./connection-recovery"

@@ -1,4 +1,4 @@
-import type { WorktreeDescriptor } from "../../../server/src/api-types"
+import type { WorktreeDescriptor } from '@codenomad/api-types'
 
 type OpenCodeWorkspaceLike = {
   id: string

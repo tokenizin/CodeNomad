@@ -1,5 +1,5 @@
 import type { File as SdkGitFileStatus } from "@opencode-ai/sdk/v2/client"
-import type { WorktreeGitStatusEntry } from "../../../../../../server/src/api-types"
+import type { WorktreeGitStatusEntry } from '@codenomad/api-types'
 
 import type { GitChangeEntry, GitChangeListItem, GitChangeSection, GitChangeStatus } from "./types"
 

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { WorkspaceDescriptor } from "../../../server/src/api-types"
+import type { WorkspaceDescriptor } from '@codenomad/api-types'
 import { tGlobal } from "../lib/i18n"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "../lib/launch-errors"
 

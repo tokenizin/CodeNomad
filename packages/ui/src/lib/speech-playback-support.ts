@@ -1,4 +1,4 @@
-import type { SpeechCapabilitiesResponse } from "../../../server/src/api-types"
+import type { SpeechCapabilitiesResponse } from '@codenomad/api-types'
 import type { SpeechPlaybackMode, SpeechTtsFormat } from "../stores/preferences"
 
 export interface SpeechPlaybackSupportResult {

@@ -1,4 +1,4 @@
-import type { InstanceData, WorkspaceEventPayload } from "../../../server/src/api-types"
+import type { InstanceData, WorkspaceEventPayload } from '@codenomad/api-types'
 import { serverApi } from "./api-client"
 import { serverEvents } from "./server-events"
 import { getLogger } from "./logger"

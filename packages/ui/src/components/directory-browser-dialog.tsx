@@ -1,7 +1,7 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
 import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
-import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
-import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
+import type { FileSystemEntry, FileSystemListingMetadata } from '@codenomad/api-types'
+import { WINDOWS_DRIVES_ROOT } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"

@@ -5,7 +5,7 @@ import {
   writeUseTauriNativeEventTransportPreference,
 } from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
+import type { RemoteServerProfile } from '@codenomad/api-types'
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,

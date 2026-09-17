@@ -7,7 +7,7 @@ import Switch from "@suid/material/Switch"
 import { BellRing, ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
+import type { BackgroundProcess } from '@codenomad/api-types'
 import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"

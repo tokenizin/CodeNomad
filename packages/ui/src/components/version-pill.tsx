@@ -1,5 +1,5 @@
 import { Show, createEffect, createSignal } from "solid-js"
-import type { ServerMeta } from "../../../server/src/api-types"
+import type { ServerMeta } from '@codenomad/api-types'
 import { getServerMeta } from "../lib/server-meta"
 import { useI18n } from "../lib/i18n"
 import { openExternalUrl } from "../lib/external-url"

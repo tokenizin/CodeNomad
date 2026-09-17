@@ -1,5 +1,5 @@
 import { createEffect, createSignal } from "solid-js"
-import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
+import type { ServerMeta, SupportMeta } from '@codenomad/api-types'
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"

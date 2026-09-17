@@ -1,5 +1,5 @@
 import { createContext, createMemo, createSignal, onCleanup, type Accessor, type ParentComponent, useContext } from "solid-js"
-import type { InstanceData } from "../../../server/src/api-types"
+import type { InstanceData } from '@codenomad/api-types'
 import { storage } from "../lib/storage"
 import { getLogger } from "../lib/logger"
 

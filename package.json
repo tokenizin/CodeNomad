@@ -10,7 +10,8 @@
       "packages/ui",
       "packages/electron-app",
       "packages/tauri-app",
-      "packages/opencode-plugin"
+      "packages/opencode-plugin",
+      "packages/api-types"
     ]
   },
   "scripts": {

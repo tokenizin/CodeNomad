@@ -17,7 +17,7 @@ import PushPinIcon from "@suid/icons-material/PushPin"
 import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess, FileSystemEntry } from "../../../../../../server/src/api-types"
+import type { BackgroundProcess, FileSystemEntry } from '@codenomad/api-types'
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"

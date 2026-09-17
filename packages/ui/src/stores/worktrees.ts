@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { WorktreeDescriptor, WorktreeMap } from "../../../server/src/api-types"
+import type { WorktreeDescriptor, WorktreeMap } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { sessions } from "./session-state"
 import { getLogger } from "../lib/logger"

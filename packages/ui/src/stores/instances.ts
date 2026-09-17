@@ -15,7 +15,7 @@ import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from '@codenomad/api-types'
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,

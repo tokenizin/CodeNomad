@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
-import type { PreviewSession } from "../../../server/src/api-types"
+import type { PreviewSession } from '@codenomad/api-types'
 
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"

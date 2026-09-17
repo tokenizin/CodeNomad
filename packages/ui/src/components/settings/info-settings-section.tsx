@@ -3,7 +3,7 @@ import { Info } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { runtimeEnv } from "../../lib/runtime-env"
-import type { ServerMeta } from "../../../../server/src/api-types"
+import type { ServerMeta } from '@codenomad/api-types'
 
 interface UserAgentData {
   platform?: string

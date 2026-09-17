@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
-import type { RemoteServerProfile } from "../../../../server/src/api-types"
+import type { RemoteServerProfile } from '@codenomad/api-types'
 import { showConfirmDialog } from "../../stores/alerts"
 import { tGlobal } from "../i18n"
 import { canOpenRemoteWindows, isElectronHost, isTauriHost } from "../runtime-env"

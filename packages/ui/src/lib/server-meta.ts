@@ -1,4 +1,4 @@
-import type { ServerMeta } from "../../../server/src/api-types"
+import type { ServerMeta } from '@codenomad/api-types'
 import { serverApi } from "./api-client"
 
 let cachedMeta: ServerMeta | null = null

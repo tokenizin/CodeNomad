@@ -20,7 +20,7 @@
 // apply when no StarGuard token is in play (e.g. plain local dev).
 // ---------------------------------------------------------------------------
 
-import type { WorkspaceDescriptor } from "../../../server/src/api-types"
+import type { WorkspaceDescriptor } from '@codenomad/api-types'
 import {
   resetReconnect,
   startReconnect,

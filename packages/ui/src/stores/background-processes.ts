@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { BackgroundProcess } from "../../../server/src/api-types"
+import type { BackgroundProcess } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { sseManager } from "../lib/sse-manager"
 

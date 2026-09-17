@@ -3,7 +3,7 @@ import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
-import type { SideCar } from "../../../server/src/api-types"
+import type { SideCar } from '@codenomad/api-types'
 
 const log = getLogger("api")
 

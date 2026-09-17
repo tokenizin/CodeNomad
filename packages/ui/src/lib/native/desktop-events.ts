@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
+import type { WorkspaceEventPayload } from '@codenomad/api-types'
 import type {
   DesktopEventsStartResult,
   DesktopEventTransportStartOptions,

@@ -2,7 +2,7 @@ import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { ChevronDown, Copy, Trash2 } from "lucide-solid"
-import type { WorktreeDescriptor } from "../../../server/src/api-types"
+import type { WorktreeDescriptor } from '@codenomad/api-types'
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"

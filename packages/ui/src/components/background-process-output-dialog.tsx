@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-import type { BackgroundProcess } from "../../../server/src/api-types"
+import type { BackgroundProcess } from '@codenomad/api-types'
 import { buildBackgroundProcessStreamUrl, serverApi } from "../lib/api-client"
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"

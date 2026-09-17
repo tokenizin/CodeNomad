@@ -29,7 +29,7 @@ import type {
   InstanceStreamEvent,
   InstanceStreamStatus,
   WorkspaceEventPayload,
-} from "../../../server/src/api-types"
+} from '@codenomad/api-types'
 import { getLogger } from "./logger"
 
 const log = getLogger("sse")

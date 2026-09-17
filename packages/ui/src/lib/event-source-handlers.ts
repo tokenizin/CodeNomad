@@ -1,4 +1,4 @@
-import type { WorkspaceEventPayload } from "../../../server/src/api-types"
+import type { WorkspaceEventPayload } from '@codenomad/api-types'
 
 type EventSourceLogger = {
   warn: (message: string) => void

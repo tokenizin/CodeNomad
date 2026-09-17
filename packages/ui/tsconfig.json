@@ -15,7 +15,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@codenomad/api-types": ["../api-types/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
