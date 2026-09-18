@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@codenomad/api-types": "*",
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
     "@opencode-ai/sdk": "^1.17.8",
