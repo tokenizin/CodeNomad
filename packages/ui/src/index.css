@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 @import './styles/tokens.css';
 @import './styles/tokens-starworld.css';
 @import './styles/starworld-surfaces.css';
@@ -10,6 +6,10 @@
 @import './styles/messaging.css';
 @import './styles/panels.css';
 @import './styles/markdown.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 * {
   box-sizing: border-box;
