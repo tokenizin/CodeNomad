@@ -116,9 +116,7 @@ export function createCodeNomadUiConfig(enablePwa: boolean, opts?: { base?: stri
     root: "./src/renderer",
     base: opts?.base ?? "/",
     plugins: [solid(), monacoPublicAssetsPlugin(), uiVersionPlugin(), ...(enablePwa ? await pwaPlugins() : [])],
-    css: {
-      postcss: "./postcss.config.js",
-    },
+
     resolve: {
       alias: {
         "@": resolve(__dirname, "./src"),
