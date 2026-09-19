@@ -224,4 +224,10 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
   "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
   "promptInput.resizeHandle.title": "Drag to resize input height",
+
+  // Prompt Recommendations
+  "promptRecommendations.ariaLabel": "Suggested next prompts",
+  "promptRecommendations.title": "Suggested next",
+  "promptRecommendations.dismissAll": "Dismiss all suggestions",
+  "promptRecommendations.dismissOne": "Dismiss this suggestion",
 } as const

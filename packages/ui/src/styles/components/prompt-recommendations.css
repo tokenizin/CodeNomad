@@ -1,0 +1,154 @@
+/* Prompt Recommendation Bar — predictive next-prompt suggestions shown
+   in the input prompt header after the agent finishes responding. */
+
+.prompt-recommendation-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: color-mix(in oklab, var(--accent-primary) 6%, var(--surface-primary));
+  border-bottom: 1px solid color-mix(in oklab, var(--accent-primary) 15%, var(--border-base));
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.prompt-recommendation-bar.is-entering {
+  animation: recommendation-slide-in 0.25s ease-out;
+}
+
+@keyframes recommendation-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.prompt-recommendation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prompt-recommendation-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.prompt-recommendation-dismiss-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  padding: 0;
+}
+
+.prompt-recommendation-dismiss-all:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.prompt-recommendation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prompt-recommendation-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in oklab, var(--accent-primary) 25%, var(--border-base));
+  border-radius: 999px;
+  background-color: var(--surface-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  max-width: 220px;
+  white-space: nowrap;
+}
+
+.prompt-recommendation-chip:hover {
+  border-color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 8%, var(--surface-primary));
+  color: var(--text-primary);
+}
+
+.prompt-recommendation-chip:active {
+  transform: scale(0.98);
+}
+
+.prompt-recommendation-chip-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.prompt-recommendation-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-recommendation-chip-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  padding: 0;
+}
+
+.prompt-recommendation-chip:hover .prompt-recommendation-chip-dismiss {
+  opacity: 1;
+}
+
+.prompt-recommendation-chip-dismiss:hover {
+  color: var(--status-error);
+  background-color: color-mix(in oklab, var(--status-error) 10%, transparent);
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  .prompt-recommendation-bar {
+    background-color: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-primary));
+    border-bottom-color: color-mix(in oklab, var(--accent-primary) 20%, var(--border-base));
+  }
+
+  .prompt-recommendation-chip {
+    background-color: color-mix(in oklab, var(--surface-secondary) 50%, transparent);
+  }
+
+  .prompt-recommendation-chip:hover {
+    background-color: color-mix(in oklab, var(--accent-primary) 15%, var(--surface-secondary));
+  }
+}

@@ -33,8 +33,14 @@ import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
 import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
 import { voiceConversationStore } from "./voice-conversation/store"
 import ChoiceBar from "./choice-bar"
+import PromptRecommendationBar from "./prompt-input/prompt-recommendation-bar"
 import { sseManager } from "../lib/sse-manager"
 import type { ChatChoiceAskedPayload, ChatChoiceRepliedPayload } from "../types/notify"
+import {
+  generateRecommendations,
+  resetRecommendations,
+} from "../stores/prompt-recommendations"
+import { messageStoreBus } from "../stores/message-v2/bus"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
@@ -980,6 +986,28 @@ export default function PromptInput(props: PromptInputProps) {
 
   const instance = () => getActiveInstance()
 
+  // ── Prompt Recommendations ──────────────────────────────────────
+  // When the user clicks a recommendation, populate the textarea with
+  // the suggested prompt text and focus the input so they can edit or send.
+  const handleRecommendationSelect = (recommendationPrompt: string) => {
+    const textarea = textareaRef
+    if (textarea) {
+      textarea.value = recommendationPrompt
+      textarea.dispatchEvent(new Event("input", { bubbles: true }))
+      queueMicrotask(() => {
+        try {
+          textarea.focus({ preventScroll: true } as any)
+        } catch {
+          textarea.focus()
+        }
+        // Auto-scroll to end so the user sees the full prompt
+        textarea.scrollTop = textarea.scrollHeight
+      })
+    } else {
+      setPrompt(recommendationPrompt)
+    }
+  }
+
   // Auto-restore previous voice conversation session on mount
   createEffect(() => {
     const sid = props.sessionId
@@ -991,6 +1019,61 @@ export default function PromptInput(props: PromptInputProps) {
     }
   })
 
+  // ── Recommendation trigger: agent finished responding ───────────
+  // Watch for busy → idle transitions. When the agent finishes responding,
+  // pull the last assistant message and generate predictive suggestions.
+  let prevBusy = false
+  createEffect(() => {
+    const busy = props.isSessionBusy
+    const wasJustBusy = prevBusy && !busy
+    prevBusy = busy
+
+    if (!wasJustBusy) return
+
+    // Small delay to let the final message render in the store
+    const timer = setTimeout(() => {
+      try {
+        const store = messageStoreBus.getOrCreate(props.instanceId)
+        const messageIds = store.getSessionMessageIds(props.sessionId)
+        if (!messageIds || messageIds.length === 0) return
+
+        // Walk backwards to find the last assistant message
+        for (let i = messageIds.length - 1; i >= 0; i--) {
+          const msg = store.getMessage(messageIds[i])
+          if (msg && msg.role === "assistant") {
+            // Extract text from message parts
+            const textParts: string[] = []
+            for (const partId of msg.partIds) {
+              const partRecord = msg.parts[partId]
+              if (!partRecord?.data) continue
+              const data = partRecord.data as any
+              if (data.type === "text" && typeof data.text === "string") {
+                textParts.push(data.text)
+              }
+            }
+            const fullText = textParts.join("\n")
+            if (fullText.trim().length > 0) {
+              generateRecommendations(fullText)
+            }
+            return
+          }
+        }
+      } catch (err) {
+        log.debug("Failed to generate prompt recommendations:", err)
+      }
+    }, 500)
+
+    onCleanup(() => clearTimeout(timer))
+  })
+
+  // Reset recommendations when session changes
+  createEffect(() => {
+    const sid = props.sessionId
+    if (sid) {
+      resetRecommendations()
+    }
+  })
+
   return (
     <div class="prompt-input-container">
       <Show when={showToolbarModeToggle()}>
@@ -998,6 +1081,7 @@ export default function PromptInput(props: PromptInputProps) {
           <ModeToggle />
         </div>
       </Show>
+      <PromptRecommendationBar onSelect={handleRecommendationSelect} />
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
