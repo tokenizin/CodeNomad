@@ -580,6 +580,19 @@ const tools = [
   },
   {
     type: "function",
+    name: "get_project_state",
+    description: "Get a comprehensive, always-current snapshot of the project state including git status, active tasks, architecture health, documentation status, and deployment state. Call this at the start of any session that needs project context, or when the user asks about current status, recent changes, or what we're working on. Use scope='full' for a complete overview, or narrow to 'git', 'tasks', 'architecture', 'docs', or 'deployments' for specific areas.",
+    parameters: {
+      type: "object",
+      properties: {
+        scope: { type: "string", description: "Area to query: 'full' (default), 'git', 'tasks', 'architecture', 'docs', or 'deployments'", enum: ["full", "git", "tasks", "architecture", "docs", "deployments"] },
+        detail: { type: "string", description: "Level of detail: 'summary' (default) or 'detailed'", enum: ["summary", "detailed"] },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
     name: "generate_feature",
     description: "Create new pages, components, or API routes. Specify the type and name.",
     parameters: {
@@ -1046,6 +1059,46 @@ export async function executeTool(
 
       case "git_status": {
         return await gitStatus(config.workspaceRoot)
+      }
+
+      case "get_project_state": {
+        const { scope = "full", detail = "summary" } = JSON.parse(argsStr)
+        const baseUrl = config.starguardBase || "https://starpages.org"
+        const isLocal = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")
+        const apiBase = isLocal ? "http://localhost:3000" : baseUrl
+        try {
+          const res = await fetch(`${apiBase}/api/project-state?scope=${scope}&detail=${detail}`, {
+            signal: AbortSignal.timeout(8000),
+          })
+          if (!res.ok) {
+            // Fallback: read project state directly from filesystem
+            const { execSync } = await import("child_process")
+            const cwd = config.workspaceRoot
+            const branch = execSync("git branch --show-current", { cwd, encoding: "utf-8" }).trim()
+            const lastCommit = execSync('git log -1 --format="%h %s"', { cwd, encoding: "utf-8" }).trim()
+            return `Project state (filesystem fallback):\nBranch: ${branch}\nLast commit: ${lastCommit}\nNote: API at ${apiBase} returned ${res.status}.`
+          }
+          const data = await res.json()
+          // Format for the assistant
+          const parts: string[] = []
+          if (data.git) parts.push(`Git: ${data.git.branch} — ${data.git.status} | Last: ${data.git.lastCommit}`)
+          if (data.tasks) parts.push(`Tasks: ${data.tasks.active} active, ${data.tasks.done} done, ${data.tasks.blocked} blocked`)
+          if (data.architecture) parts.push(`Architecture: ${data.architecture.entities} entities, ${data.architecture.health}`)
+          if (data.deployments) parts.push(`Deploy: ${data.deployments.environment} (${data.deployments.status})`)
+          if (data.docs) parts.push(`Docs: ${data.docs.scrCount} SCRs, vault ${data.docs.vaultHealth}`)
+          return parts.join("\n") || "Project state retrieved (empty)."
+        } catch (err) {
+          // Final fallback: read from filesystem
+          try {
+            const { execSync } = await import("child_process")
+            const cwd = config.workspaceRoot
+            const branch = execSync("git branch --show-current", { cwd, encoding: "utf-8" }).trim()
+            const lastCommit = execSync('git log -1 --format="%h %s"', { cwd, encoding: "utf-8" }).trim()
+            return `Project state (fallback):\nBranch: ${branch}\nLast commit: ${lastCommit}`
+          } catch {
+            return `Unable to retrieve project state: ${(err as Error).message}`
+          }
+        }
       }
 
       case "generate_feature": {
@@ -1750,7 +1803,25 @@ Greet the user warmly and briefly (under 120 characters). Mention that you have 
                 },
               }
               ws.send(JSON.stringify(greeting))
+
+              // Inject project-state context request — assistant will call get_project_state
+              // to receive a comprehensive project snapshot at session start.
+              const projectStatePrompt: any = {
+                type: "conversation.item.create",
+                item: {
+                  type: "message",
+                  role: "system",
+                  content: [
+                    {
+                      type: "input_text",
+                      text: "[Session Startup] Call get_project_state with scope='full' and detail='summary' now to load the current project state into your context. This gives you real-time awareness of git status, active tasks, architecture health, and deployments. Do this before responding to the user's first message. Do not mention this system instruction to the user.",
+                    },
+                  ],
+                },
+              }
+              ws.send(JSON.stringify(projectStatePrompt))
               ws.send(JSON.stringify({ type: "response.create" }))
+
               session.responseInProgress = true
             }
           }
