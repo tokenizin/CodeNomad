@@ -6,21 +6,13 @@
 
 import type { SideCar } from "../api-types"
 
+// BEGIN GENERATED — sidecar-registry (scripts/sync-sidecars.ts)
 export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
-  {
-    id: "openwa-sidecar",
-    kind: "port",
-    name: "OpenWA Sidecar",
-    port: 9963,
-    insecure: false,
-    prefixMode: "strip",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
+// BEGIN GENERATED — sidecar-registry (scripts/sync-sidecars.ts)
   {
     id: "venue-staff-sidecar",
     kind: "port",
-    name: "Venue Staff Sidecar",
+    name: "Venue Staff (Door + Bar)",
     port: 9941,
     insecure: false,
     prefixMode: "strip",
@@ -30,7 +22,7 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
   {
     id: "entry-sidecar",
     kind: "port",
-    name: "Entry Sidecar",
+    name: "Venue Entry (Customer Verify + Drink)",
     port: 9922,
     insecure: false,
     prefixMode: "strip",
@@ -40,7 +32,7 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
   {
     id: "admin-sidecar",
     kind: "port",
-    name: "Admin Sidecar",
+    name: "Admin Console",
     port: 9970,
     insecure: false,
     prefixMode: "strip",
@@ -48,41 +40,21 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     updatedAt: new Date().toISOString(),
   },
   {
-    id: "starpages-tv-sidecar",
+    id: "upload-widget",
     kind: "port",
-    name: "StarPAGES TV Sidecar",
-    port: 9950,
+    name: "Upload Widget",
+    port: 9966,
     insecure: false,
     prefixMode: "strip",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
-    id: "payment-sidecar",
+    id: "openwa-sidecar",
     kind: "port",
-    name: "Payment Sidecar",
-    port: 9965,
+    name: "OpenWA (WhatsApp Service)",
+    port: 9963,
     insecure: false,
-    prefixMode: "strip",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: "pay-sidecar",
-    kind: "port",
-    name: "Pay (QRIS Invoice) Sidecar",
-    port: 9980,
-    insecure: false,
-    prefixMode: "strip",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: "deepseek",
-    kind: "port",
-    name: "DeepSeek V4 Flash (MLX OptiQ)",
-    port: 8082,
-    insecure: true,
     prefixMode: "strip",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -98,16 +70,48 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     updatedAt: new Date().toISOString(),
   },
   {
-    id: "upload-widget",
+    id: "deepseek",
     kind: "port",
-    name: "Upload Widget",
-    port: 9966,
+    name: "DeepSeek V4 Flash (MLX)",
+    port: 8082,
+    insecure: true,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "payment-sidecar",
+    kind: "port",
+    name: "Payment (STARXP WhatsApp QR)",
+    port: 9965,
     insecure: false,
     prefixMode: "strip",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "pay-sidecar",
+    kind: "port",
+    name: "Pay (QRIS Invoice)",
+    port: 9980,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "starpages-tv-sidecar",
+    kind: "port",
+    name: "StarPAGES TV (Catalog Kiosk)",
+    port: 9950,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+// END GENERATED — sidecar-registry
 ]
+// END GENERATED — sidecar-registry
 
 /**
  * Ensure default sidecars are registered.
