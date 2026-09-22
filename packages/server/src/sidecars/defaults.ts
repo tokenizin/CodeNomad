@@ -50,6 +50,16 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     updatedAt: new Date().toISOString(),
   },
   {
+    id: "powerx-sidecar",
+    kind: "port",
+    name: "PowerX Model Agency",
+    port: 9975,
+    insecure: false,
+    prefixMode: "strip",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
     id: "openwa-sidecar",
     kind: "port",
     name: "OpenWA (WhatsApp Service)",
