@@ -614,7 +614,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   return (
     <>
       <div
-        class={`folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative${isPrestixSilo() ? " silo-prestix" : ""}`}
+        class={`folder-home-root flex w-full items-start py-6 px-4 sm:px-6 lg:px-10 relative${isPrestixSilo() ? " silo-prestix" : ""}`}
         ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
@@ -622,7 +622,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         onDrop={folderDrop.bind.onDrop}
       >
         <div
-          class="folder-home-shell w-full max-w-5xl px-4 sm:px-8 pb-2 flex flex-col"
+          class="folder-home-shell w-full px-4 sm:px-8 pb-2 flex flex-col"
           aria-busy={isLoading() ? "true" : "false"}
         >
           <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
@@ -702,7 +702,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </button>
             </Show>
           </div>
-          <div class="folder-home-hero text-center shrink-0">
+          <div class="folder-home-hero text-center shrink-0 max-w-3xl mx-auto">
             <div class="mb-3 flex justify-center">
               <TokenizinLogo3D
                 width={160}
@@ -768,7 +768,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
 
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
-            <div class="folder-home-main flex-1 gap-4">
+            <div class="folder-home-main flex-1 gap-4 flex flex-col lg:flex-row">
               {/* Right column: recent folders */}
               <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
                 <div class="folder-home-list-panel panel flex flex-col flex-1">
