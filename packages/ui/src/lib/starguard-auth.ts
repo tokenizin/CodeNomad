@@ -1,5 +1,5 @@
 const STORAGE_KEY = "starguard_jwt"
-const DEFAULT_STARGUARD_PUBLIC_URL = "https://starpages.org"
+const DEFAULT_STARGUARD_PUBLIC_URL = "https://tokenizin.com"
 
 declare global {
   interface Window {

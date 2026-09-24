@@ -150,7 +150,7 @@ const ORNITH_VAD_SILENCE_DURATION_MS = (() => {
 })()
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starpages.org"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://tokenizin.com"
 
 interface OrnithSession {
   ws: WebSocket

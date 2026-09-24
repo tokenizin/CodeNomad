@@ -35,7 +35,7 @@ describe("identifier redaction", () => {
   })
 
   it("redacts URLs including bare www links", () => {
-    expect(sanitizeSpeechText("see https://starpages.org/x?y=1")).not.toContain("starpages.org")
+    expect(sanitizeSpeechText("see https://tokenizin.com/x?y=1")).not.toContain("tokenizin.com")
     expect(sanitizeSpeechText("see www.tokenizin.com/path")).not.toContain("tokenizin.com")
   })
 

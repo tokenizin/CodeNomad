@@ -42,7 +42,7 @@ export function resolveStarGuardPublicUrl(): string {
     }
     return "https://prestix.vip"
   }
-  return "https://starpages.org"
+  return "https://tokenizin.com"
 }
 
 export function readCloudflareAccessEmail(request: FastifyRequest): string | null {

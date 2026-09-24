@@ -135,7 +135,7 @@ const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
 })()
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starpages.org"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://tokenizin.com"
 
 interface RealtimeSession {
   ws: WebSocket
@@ -707,7 +707,7 @@ const tools = [
     parameters: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL to audit (e.g. https://starpages.org or localhost:3000)" },
+        url: { type: "string", description: "URL to audit (e.g. https://tokenizin.com or localhost:3000)" },
       },
       required: ["url"],
     },
@@ -1063,7 +1063,7 @@ export async function executeTool(
 
       case "get_project_state": {
         const { scope = "full", detail = "summary" } = JSON.parse(argsStr)
-        const baseUrl = config.starguardBase || "https://starpages.org"
+        const baseUrl = config.starguardBase || "https://tokenizin.com"
         const isLocal = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")
         const apiBase = isLocal ? "http://localhost:3000" : baseUrl
         try {

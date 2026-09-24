@@ -112,7 +112,7 @@ const FAST_FALLBACK_TIMEOUT = parseInt(process.env.FAST_FALLBACK_TIMEOUT || "100
 const CLOUD_FALLBACK_TIMEOUT = parseInt(process.env.CLOUD_FALLBACK_TIMEOUT || "10000", 10)
 
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
-const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://starpages.org"
+const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://tokenizin.com"
 
 /** Default voice for Deepgram Aura-2 TTS. */
 const DEFAULT_VOICE: DeepgramVoiceId = "aura-asteria-en"
