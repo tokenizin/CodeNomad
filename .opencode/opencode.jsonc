@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "nvidia/z-ai/glm-5.3-flash",
+  "model": "openrouter-fallback/auto",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
@@ -151,6 +151,30 @@
           "limit": {
             "context": 262144,
             "output": 65536
+          }
+        }
+      }
+    },
+    "openrouter-fallback": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "GLM-5.3-Flash (NIM) → Ollama qwen3.6 → Zen fallback (shim :11436)",
+      "options": {
+        "baseURL": "http://127.0.0.1:11436/v1"
+      },
+      "apiKey": "ollama",
+      "models": {
+        "auto": {
+          "id": "auto",
+          "name": "GLM-5.3-Flash (NIM) with automatic Qwen 3.6 / Zen fallback",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": false,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 262144,
+            "output": 32768
           }
         }
       }
