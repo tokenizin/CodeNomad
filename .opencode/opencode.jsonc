@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "nous/meituan/longcat-2.0:free",
+  "model": "nvidia/z-ai/glm-5.3-flash",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
@@ -86,6 +86,71 @@
             "output": [
               "text"
             ]
+          }
+        },
+        "qwen3.6:latest": {
+          "id": "qwen3.6:latest",
+          "name": "Qwen 3.6 (36B MoE, coding fallback)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "ornith:latest": {
+          "id": "ornith:latest",
+          "name": "Ornith 1.0 (vision fallback)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    },
+    "nvidia": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "NVIDIA NIM (GLM-5.3-Flash default)",
+      "apiKey": "{env:NVIDIA_API_KEY}",
+      "options": {
+        "baseURL": "https://integrate.api.nvidia.com/v1"
+      },
+      "models": {
+        "z-ai/glm-5.3-flash": {
+          "id": "z-ai/glm-5.3-flash",
+          "name": "GLM-5.3-Flash (z.ai · NVIDIA NIM)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 262144,
+            "output": 65536
           }
         }
       }
