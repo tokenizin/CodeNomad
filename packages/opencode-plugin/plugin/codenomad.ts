@@ -3,6 +3,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { createCodeNomadClient, createCodeNomadRequester, getCodeNomadConfig } from "./lib/client.js"
 import { createBackgroundProcessTools } from "./lib/background-process.js"
 import { attemptOllamaFallback } from "./lib/ollama-fallback.js"
+import { createToolGateClient, type JevAction, type JevPendingAction } from "./lib/tool-gate.js"
 
 let voiceModeEnabled = false
 
@@ -12,12 +13,22 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
   }
   "chat.message": CodeNomadChatMessageHook
   event: CodeNomadEventHook
+  "permission.ask": CodeNomadPermissionHook
+  "tool.execute.before": CodeNomadToolExecuteBeforeHook
 }> {
   const config = getCodeNomadConfig()
   const client = createCodeNomadClient(config)
   const requester = createCodeNomadRequester(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
   const opencodeClient = input.client
+  const toolGate = createToolGateClient(requester)
+
+  const reportGate = (source: "permission.ask" | "tool.execute.before", action: JevPendingAction, verdict: unknown) => {
+    void client.postEvent({
+      type: "codenomad.jevGate",
+      properties: { source, kind: action.kind, verdict: verdict ?? { status: "degraded", reason: "no-verdict" } },
+    })
+  }
 
   await client.startEvents((event) => {
     if (event.type === "codenomad.ping") {
@@ -62,6 +73,33 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
 
       output.message.system = [output.message.system, buildVoiceModePrompt()].filter(Boolean).join("\n\n")
     },
+    async "permission.ask"(input: CodeNomadPermissionInput, output: { status: JevAction }) {
+      const action: JevPendingAction = {
+        kind: String(input.type ?? "unknown"),
+        target: normalizeTarget(input.pattern ?? input.title),
+        title: typeof input.title === "string" ? input.title : undefined,
+        sessionId: typeof input.sessionID === "string" ? input.sessionID : undefined,
+      }
+
+      const verdict = await toolGate.classify(action, output.status)
+      reportGate("permission.ask", action, verdict)
+
+      // Only an enforced verdict may change the decision, and never to `allow` —
+      // widening authority is never the classifier's job.
+      if (verdict?.enforced && verdict.status === "ok" && verdict.action !== "allow") {
+        output.status = verdict.action
+      }
+    },
+    async "tool.execute.before"(input: { tool: string; sessionID: string; callID: string }, output: { args: any }) {
+      // Observation only: this hook cannot block, and a tool call that reached it
+      // has already passed every permission the harness intended to apply.
+      const action: JevPendingAction = {
+        kind: String(input.tool ?? "unknown"),
+        detail: summarizeArgs(output.args),
+        sessionId: input.sessionID,
+      }
+      toolGate.observe(action, (verdict) => reportGate("tool.execute.before", action, verdict))
+    },
     async event(input: { event: any }) {
       const opencodeEvent = input?.event
       if (!opencodeEvent || typeof opencodeEvent !== "object") return
@@ -85,6 +123,42 @@ type CodeNomadChatMessageHook = (
 ) => Promise<void>
 
 type CodeNomadEventHook = (input: { event: any }) => Promise<void>
+
+/**
+ * Structural mirror of the OpenCode `Permission` payload. Declared locally so the
+ * packaged plugin does not need `@opencode-ai/sdk` as a dependency.
+ */
+type CodeNomadPermissionInput = {
+  type?: string
+  pattern?: string | string[]
+  sessionID?: string
+  title?: string
+}
+
+type CodeNomadPermissionHook = (input: CodeNomadPermissionInput, output: { status: JevAction }) => Promise<void>
+
+type CodeNomadToolExecuteBeforeHook = (
+  input: { tool: string; sessionID: string; callID: string },
+  output: { args: any },
+) => Promise<void>
+
+function normalizeTarget(value: string | string[] | undefined): string | string[] | undefined {
+  if (Array.isArray(value)) return value.map((entry) => String(entry)).filter(Boolean)
+  if (typeof value === "string" && value.trim()) return value
+  return undefined
+}
+
+/** Compact, single-line rendering of tool args for the classifier state. */
+function summarizeArgs(args: unknown): string {
+  if (args === undefined || args === null) return ""
+  if (typeof args === "string") return args
+  try {
+    const json = JSON.stringify(args)
+    return json.length > 800 ? `${json.slice(0, 800)}…` : json
+  } catch {
+    return ""
+  }
+}
 
 function buildVoiceModePrompt(): string {
   return [
