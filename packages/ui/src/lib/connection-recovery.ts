@@ -80,11 +80,7 @@ export function completeInstanceResourceFetch(instanceId: string, resource: stri
     return
   }
 
-  if (!isRecoverableFailure(error)) {
-    return
-  }
-
-  // Cool down the resource either way to avoid hammering a failing endpoint.
+  // Cool down on any failure (401, 500, tunnel, …) so empty-list effects do not poll forever.
   resourceBlockedUntil.set(key, Date.now() + RESOURCE_COOLDOWN_MS)
 
   // Only a genuine tunnel/gateway outage warrants a Mac-host restart request.
