@@ -42,7 +42,8 @@ export default function AgentSelector(props: AgentSelectorProps) {
   })
 
   createEffect(() => {
-    if (instanceAgents().length > 0) return
+    // Distinguish "never fetched" from "fetched but zero agents" (OpenCode can return []).
+    if (agents().has(props.instanceId)) return
     if (!canFetchInstanceResource(props.instanceId, "agents")) return
     void fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
   })

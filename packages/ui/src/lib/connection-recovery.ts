@@ -93,12 +93,16 @@ export function completeInstanceResourceFetch(instanceId: string, resource: stri
 }
 
 export function markBackendOnline(): void {
-  if (!backendOnline) {
-    log.info("Backend connectivity restored")
-  }
+  const wasOffline = !backendOnline
   backendOnline = true
-  resourceBlockedUntil.clear()
-  inFlight.clear()
+  // Only reset fetch cooldowns when recovering from a real outage. SSE reconnects
+  // call onOpen while already online — clearing blockedUntil there caused 500 storms
+  // on /instance/agent (cooldown wiped → immediate retry loop).
+  if (wasOffline) {
+    log.info("Backend connectivity restored")
+    resourceBlockedUntil.clear()
+    inFlight.clear()
+  }
 }
 
 export function markBackendOffline(reason: string): void {

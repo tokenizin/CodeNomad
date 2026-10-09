@@ -771,6 +771,13 @@ async function fetchAgents(instanceId: string): Promise<void> {
     completeInstanceResourceFetch(instanceId, "agents")
   } catch (error) {
     log.error("Failed to fetch agents:", error)
+    // Mark as fetched so AgentSelector does not treat "error" as "never tried".
+    setAgents((prev) => {
+      if (prev.has(instanceId)) return prev
+      const next = new Map(prev)
+      next.set(instanceId, [])
+      return next
+    })
     completeInstanceResourceFetch(instanceId, "agents", error)
   }
 }
