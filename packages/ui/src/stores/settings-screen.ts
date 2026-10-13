@@ -6,6 +6,7 @@ export type SettingsSectionId =
   | "remote"
   | "speech"
   | "opencode"
+  | "playground-rust"
   | "config-files"
   | "sidecars"
   | "info"

@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Settings, Bell, ChevronDown, FileCog, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, Cpu, FileCog, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -14,6 +14,7 @@ import { AppearanceSettingsSection } from "./settings/appearance-settings-sectio
 import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
+import { PlaygroundRustSettingsSection } from "./settings/playground-rust-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
@@ -37,6 +38,7 @@ export const SettingsScreen: Component = () => {
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
+      { id: "playground-rust", icon: Cpu, label: t("settings.nav.playgroundRust") },
       { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
@@ -62,6 +64,8 @@ export const SettingsScreen: Component = () => {
         return <SideCarsSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
+      case "playground-rust":
+        return <PlaygroundRustSettingsSection />
       case "config-files":
         return <ConfigFilesSettingsSection />
       case "info":

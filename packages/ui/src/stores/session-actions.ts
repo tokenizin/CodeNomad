@@ -3,7 +3,12 @@ import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
-import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
+import {
+  addRecentModelPreference,
+  getModelThinkingSelection,
+  preferences,
+  setAgentModelPreference,
+} from "./preferences"
 import { getSessionFamily, getSessionRoot, providers, sessions, setSessionStatus, withSession } from "./session-state"
 import { mapSdkSessionStatus, type SessionStatus } from "../types/session"
 import { getDefaultModel, isModelValid } from "./session-models"
@@ -13,6 +18,8 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { OpencodeApiError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { serverApi } from "../lib/api-client"
+import { parsePlaygroundRustNdjsonStream } from "../lib/playground-rust"
 
 const log = getLogger("actions")
 
@@ -92,11 +99,14 @@ async function sendMessage(
   attachments: any[] = [],
 ): Promise<void> {
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
+  if (!instance) {
     throw new Error("Instance not ready")
   }
 
-  const client = getRootClient(instanceId)
+  const useRust = preferences().useRustPlaygroundEngine
+  if (!useRust && !instance.client) {
+    throw new Error("Instance not ready")
+  }
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -193,6 +203,128 @@ async function sendMessage(
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
   })
+
+  const ui = preferences()
+  if (ui.useRustPlaygroundEngine) {
+    const assistantId = createId("msg")
+    const assistantPartId = createId("prt")
+    const agent =
+      session.agent ||
+      ui.rustPlaygroundDefaultAgent ||
+      undefined
+    const cwd = instance.folder || undefined
+
+    store.upsertMessage({
+      id: assistantId,
+      sessionId,
+      role: "assistant",
+      status: "streaming",
+      parts: [
+        {
+          id: assistantPartId,
+          type: "text" as const,
+          text: "Running Claude Code (Rust)…",
+          synthetic: true,
+          renderCache: undefined,
+        },
+      ],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isEphemeral: true,
+    })
+    setSessionStatus(instanceId, sessionId, "working")
+
+    try {
+      log.info("sendMessage.playgroundRust", { instanceId, sessionId, agent, cwd })
+      const response = await serverApi.runPlaygroundRust({
+        prompt: preparedPrompt.promptToSend,
+        cwd,
+        agent: agent || undefined,
+        jsonl: true,
+        persist: ui.rustPlaygroundPersist,
+      })
+      const result = await parsePlaygroundRustNdjsonStream(response, (ev) => {
+        if (ev.type === "stdout" && typeof ev.line === "string") {
+          store.upsertMessage({
+            id: assistantId,
+            sessionId,
+            role: "assistant",
+            status: "streaming",
+            parts: [
+              {
+                id: assistantPartId,
+                type: "text" as const,
+                text: ev.line,
+                synthetic: true,
+                renderCache: undefined,
+              },
+            ],
+            createdAt,
+            updatedAt: Date.now(),
+            isEphemeral: true,
+          })
+        }
+      })
+      const text =
+        result.finalText.trim() ||
+        (result.exitCode === 0 ? "(empty response)" : `Rust engine failed (exit ${result.exitCode})`)
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "user",
+        status: "complete",
+        parts: optimisticParts,
+        createdAt,
+        updatedAt: Date.now(),
+        isEphemeral: true,
+        clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
+      })
+      store.upsertMessage({
+        id: assistantId,
+        sessionId,
+        role: "assistant",
+        status: "complete",
+        parts: [
+          {
+            id: assistantPartId,
+            type: "text" as const,
+            text,
+            synthetic: true,
+            renderCache: undefined,
+          },
+        ],
+        createdAt,
+        updatedAt: Date.now(),
+        isEphemeral: true,
+      })
+      setSessionStatus(instanceId, sessionId, "idle")
+    } catch (error) {
+      log.error("Failed to run playground rust", error)
+      store.upsertMessage({
+        id: assistantId,
+        sessionId,
+        role: "assistant",
+        status: "error",
+        parts: [
+          {
+            id: assistantPartId,
+            type: "text" as const,
+            text: error instanceof Error ? error.message : String(error),
+            synthetic: true,
+            renderCache: undefined,
+          },
+        ],
+        createdAt,
+        updatedAt: Date.now(),
+        isEphemeral: true,
+      })
+      setSessionStatus(instanceId, sessionId, "idle")
+      throw error
+    }
+    return
+  }
+
+  const client = getRootClient(instanceId)
 
   const requestBody = {
     parts: requestParts,

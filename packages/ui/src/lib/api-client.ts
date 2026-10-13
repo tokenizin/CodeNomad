@@ -648,6 +648,21 @@ export const serverApi = {
     return request<Record<string, unknown>>("/api/wiki-lint")
   },
 
+  fetchPlaygroundRustStatus(): Promise<import("./playground-rust").PlaygroundRustStatus> {
+    return request("/api/playground/rust/status")
+  },
+
+  runPlaygroundRust(
+    body: import("./playground-rust").PlaygroundRustRunRequest,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    return requestRaw("/api/playground/rust/run", {
+      method: "POST",
+      body: JSON.stringify({ jsonl: true, ...body }),
+      signal,
+    })
+  },
+
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,

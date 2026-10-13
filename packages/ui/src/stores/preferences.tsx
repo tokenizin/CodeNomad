@@ -86,6 +86,13 @@ export interface UiSettings {
   osNotificationsAllowWhenVisible: boolean
   notifyOnNeedsInput: boolean
   notifyOnIdle: boolean
+
+  /** Route chat sends through playground/rust instead of OpenCode. */
+  useRustPlaygroundEngine: boolean
+  /** Persist Rust bridge transcripts to Neon + MinIO. */
+  rustPlaygroundPersist: boolean
+  /** Optional default agent for Rust runs when session has none (e.g. product_manager). */
+  rustPlaygroundDefaultAgent: string
 }
 
 // Backwards-compatible alias for older imports.
@@ -174,6 +181,10 @@ const defaultUiSettings: UiSettings = {
   osNotificationsAllowWhenVisible: false,
   notifyOnNeedsInput: true,
   notifyOnIdle: true,
+
+  useRustPlaygroundEngine: false,
+  rustPlaygroundPersist: false,
+  rustPlaygroundDefaultAgent: "",
 }
 
 function normalizeExpansionPreference(value: unknown, fallback: ExpansionPreference): ExpansionPreference {
@@ -256,6 +267,12 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
     notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
     notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
+    useRustPlaygroundEngine: sanitized.useRustPlaygroundEngine ?? defaultUiSettings.useRustPlaygroundEngine,
+    rustPlaygroundPersist: sanitized.rustPlaygroundPersist ?? defaultUiSettings.rustPlaygroundPersist,
+    rustPlaygroundDefaultAgent:
+      typeof sanitized.rustPlaygroundDefaultAgent === "string"
+        ? sanitized.rustPlaygroundDefaultAgent
+        : defaultUiSettings.rustPlaygroundDefaultAgent,
   }
 }
 
@@ -556,6 +573,18 @@ async function patchStateOwner(owner: string, patch: unknown) {
   await ensureLoaded()
   const updated = await storage.patchStateOwner(owner, patch)
   if (owner === "ui") setUiStateBucket(updated as any)
+}
+
+export function toggleUseRustPlaygroundEngine() {
+  updateUiSettings({ useRustPlaygroundEngine: !preferences().useRustPlaygroundEngine })
+}
+
+export function setRustPlaygroundPersist(enabled: boolean) {
+  updateUiSettings({ rustPlaygroundPersist: enabled })
+}
+
+export function setRustPlaygroundDefaultAgent(agent: string) {
+  updateUiSettings({ rustPlaygroundDefaultAgent: agent.trim() })
 }
 
 function updateUiSettings(updates: Partial<UiSettings>) {
@@ -1088,6 +1117,9 @@ export {
   toggleAutoCleanupBlankSessions,
   togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
+  toggleUseRustPlaygroundEngine,
+  setRustPlaygroundPersist,
+  setRustPlaygroundDefaultAgent,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
