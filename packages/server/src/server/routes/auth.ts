@@ -9,6 +9,7 @@ import {
   tryBootstrapCloudflareAccessSession,
 } from "../../auth/auth-provider"
 import { isLoopbackAddress } from "../../auth/http-auth"
+import { CODENOMAD_HANDOFF_AUDIENCE, exchangeStarGuardHandoff } from "../../auth/starguard-handoff"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -115,8 +116,27 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    const query = request.query as { token?: string; starguard_token?: string }
-    const token = (query.starguard_token ?? query.token)?.trim()
+    const query = request.query as { token?: string; starguard_token?: string; handoff?: string; audience?: string }
+
+    // Handoff flow (portal SSO_HANDOFF_AUDIENCES ∋ codeNomad): swap the 60 s single-use handoff for a portal
+    // session. A failed exchange must answer 401 here — redirecting to /login would bounce the visitor back to
+    // the portal's ?codenomad=signin, which launches again (the endless loop).
+    const handoff = query.handoff?.trim()
+    let token: string | undefined
+    if (handoff) {
+      if (query.audience !== CODENOMAD_HANDOFF_AUDIENCE) {
+        reply.code(400).type("text/plain").send("Invalid StarGuard handoff audience")
+        return
+      }
+      const exchanged = await exchangeStarGuardHandoff(handoff)
+      if (!exchanged) {
+        reply.code(401).type("text/plain").send("Invalid or expired StarGuard handoff")
+        return
+      }
+      token = exchanged
+    } else {
+      token = (query.starguard_token ?? query.token)?.trim()
+    }
     if (!token) {
       reply.redirect("/login")
       return
