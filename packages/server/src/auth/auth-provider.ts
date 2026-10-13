@@ -42,7 +42,8 @@ export function resolveStarGuardPublicUrl(): string {
     }
     return "https://prestix.vip"
   }
-  return "https://tokenizin.com"
+  // Prefer www — apex tokenizin.com 308s and SSO cookies are host-scoped to www.
+  return "https://www.tokenizin.com"
 }
 
 export function readCloudflareAccessEmail(request: FastifyRequest): string | null {
