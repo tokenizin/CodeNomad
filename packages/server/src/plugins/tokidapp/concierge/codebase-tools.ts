@@ -4,7 +4,7 @@ import * as os from "os"
 import * as path from "path"
 import { fileURLToPath } from "url"
 import { rollbackToPreviousCommit } from "../orchestrator/rollback.js"
-import { apiGet } from "../orchestrator/starguard-client.js"
+import { apiGet, apiPost } from "../orchestrator/starguard-client.js"
 import { searchText, formatSearchResult, searchAvailability } from "./text-search.js"
 
 // ESM package — __dirname is not defined, so derive it from import.meta.url.
@@ -49,6 +49,47 @@ export async function queryKnowledgeBase(
     }).join("\n\n")
   } catch (err) {
     return `Knowledge base query failed: ${(err as Error).message}`
+  }
+}
+
+/** Query the chat-derived knowledge base via StarGuard semantic search. */
+export async function queryChatKnowledgeBase(
+  query: string,
+  collection?: string,
+  topK?: number,
+): Promise<string> {
+  if (!query?.trim()) {
+    return "Please provide a search query."
+  }
+
+  try {
+    const res = await apiPost("/api/knowledge/search", {
+      query: query.trim(),
+      collection: collection?.trim() || undefined,
+      topK: topK ?? 8,
+    })
+    if (!res.ok) {
+      return `Chat knowledge base unavailable (${res.status}). Try query_knowledge_base instead.`
+    }
+    const data = await res.json()
+    const hits = data.hits || []
+    if (!Array.isArray(hits) || hits.length === 0) {
+      return "No matching knowledge found in the chat-derived knowledge base."
+    }
+
+    return hits.map((h: any) => {
+      const e = h.entity || {}
+      const lines = [
+        `• ${e.name || "(unnamed)"} [${e.category || "unknown"}]`,
+        e.sourceType ? `  Source: ${e.sourceType}` : undefined,
+        e.collection ? `  Collection: ${e.collection}` : undefined,
+        h.content ? `  ${h.content.slice(0, 240)}` : undefined,
+        h.score ? `  Score: ${(h.score * 100).toFixed(1)}%` : undefined,
+      ].filter(Boolean).join("\n")
+      return lines
+    }).join("\n\n")
+  } catch (err) {
+    return `Chat knowledge base query failed: ${(err as Error).message}`
   }
 }
 

@@ -51,6 +51,7 @@ import {
   runTypeCheck,
   gitBranchAction,
   queryKnowledgeBase,
+  queryChatKnowledgeBase,
   getArchitectureDigest,
   getSepoliaDeployments,
   visionAnalyze,
@@ -166,6 +167,20 @@ const tools = [
         domain: { type: "string" as const, description: "Filter by domain" },
         category: { type: "string" as const, description: "Filter by category" },
       },
+    },
+  },
+  {
+    type: "function" as const,
+    name: "query_chat_knowledge_base",
+    description: "Query the chat-derived knowledge base for facts, links, and conversations extracted from WhatsApp/TokiDAPP chats.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string" as const, description: "Free-text semantic search query" },
+        collection: { type: "string" as const, description: "Optional collection name to narrow the search" },
+        topK: { type: "number" as const, description: "Maximum number of results (default 8)" },
+      },
+      required: ["query"],
     },
   },
   {
@@ -423,6 +438,10 @@ async function executeTool(
       case "query_knowledge_base": {
         const { query = "", domain, category } = JSON.parse(argsStr)
         return await queryKnowledgeBase(query, domain, category)
+      }
+      case "query_chat_knowledge_base": {
+        const { query = "", collection, topK } = JSON.parse(argsStr)
+        return await queryChatKnowledgeBase(query, collection, topK)
       }
       case "get_sepolia_deployments":
         return await getSepoliaDeployments()

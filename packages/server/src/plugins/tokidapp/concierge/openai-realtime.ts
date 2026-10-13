@@ -28,6 +28,7 @@ import {
   runTypeCheck,
   gitBranchAction,
   queryKnowledgeBase,
+  queryChatKnowledgeBase,
   getArchitectureDigest,
   getSepoliaDeployments,
   visionAnalyze,
@@ -553,6 +554,20 @@ const tools = [
   },
   {
     type: "function",
+    name: "query_chat_knowledge_base",
+    description: "Query the chat-derived knowledge base for facts, links, and conversations extracted from WhatsApp/TokiDAPP chats. Use this for operational knowledge (venues, merchants, bookings, contacts) that may not be in the architecture KB.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free-text semantic search query" },
+        collection: { type: "string", description: "Optional collection name to narrow the search" },
+        topK: { type: "number", description: "Maximum number of results (default 8)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    type: "function",
     name: "get_sepolia_deployments",
     description: "Get all known Sepolia testnet contract addresses for the StarCARD ecosystem (DynamicSplitter, StarBridge, STARX token, etc.).",
     parameters: {
@@ -1047,6 +1062,11 @@ export async function executeTool(
       case "query_knowledge_base": {
         const { query = "", domain, category } = JSON.parse(argsStr)
         return await queryKnowledgeBase(query, domain, category)
+      }
+
+      case "query_chat_knowledge_base": {
+        const { query = "", collection, topK } = JSON.parse(argsStr)
+        return await queryChatKnowledgeBase(query, collection, topK)
       }
 
       case "get_sepolia_deployments": {
