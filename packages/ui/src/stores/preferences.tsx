@@ -575,15 +575,15 @@ async function patchStateOwner(owner: string, patch: unknown) {
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
-export function toggleUseRustPlaygroundEngine() {
+function toggleUseRustPlaygroundEngine() {
   updateUiSettings({ useRustPlaygroundEngine: !preferences().useRustPlaygroundEngine })
 }
 
-export function setRustPlaygroundPersist(enabled: boolean) {
+function setRustPlaygroundPersist(enabled: boolean) {
   updateUiSettings({ rustPlaygroundPersist: enabled })
 }
 
-export function setRustPlaygroundDefaultAgent(agent: string) {
+function setRustPlaygroundDefaultAgent(agent: string) {
   updateUiSettings({ rustPlaygroundDefaultAgent: agent.trim() })
 }
 
