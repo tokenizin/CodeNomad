@@ -19,6 +19,7 @@ import { ConfigFilesSettingsSection } from "./settings/config-files-settings-sec
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
+import { ModelSyncSettingsSection } from "./settings/model-sync-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 
@@ -41,6 +42,7 @@ export const SettingsScreen: Component = () => {
       { id: "playground-rust", icon: Cpu, label: t("settings.nav.playgroundRust") },
       { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
+      { id: "model-sync", icon: Cpu, label: t("settings.nav.modelSync") },
     ]
 
     if (canOpenRemoteWindows()) {
@@ -62,6 +64,8 @@ export const SettingsScreen: Component = () => {
         return <SpeechSettingsSection />
       case "sidecars":
         return <SideCarsSettingsSection />
+      case "model-sync":
+        return <ModelSyncSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
       case "playground-rust":
