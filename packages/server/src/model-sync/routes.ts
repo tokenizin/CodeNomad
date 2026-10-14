@@ -59,8 +59,10 @@ export async function handleSyncModels(request: Request): Promise<Response> {
     const results = await syncAllProviders(body.providers)
     return Response.json({ results, syncedAt: Date.now() })
   } catch (error) {
-    log.error("Sync models failed", error)
-    return Response.json({ error: error instanceof Error ? error.message : "Sync failed" }, { status: 500 })
+    const err = error as Error | unknown
+    const message = err instanceof Error ? err.message : "Sync failed"
+    log.error("Sync models failed: " + message)
+    return Response.json({ error: message }, { status: 500 })
   }
 }
 
@@ -71,8 +73,10 @@ export async function handleSyncProvider(request: Request, providerId: string): 
     const result = await syncProviderModels(providerId, body.models)
     return Response.json(result)
   } catch (error) {
-    log.error(`Sync provider ${providerId} failed`, error)
-    return Response.json({ error: error instanceof Error ? error.message : "Sync failed" }, { status: 500 })
+    const err = error as Error | unknown
+    const message = err instanceof Error ? err.message : "Sync failed"
+    log.error(`Sync provider ${providerId} failed: ${message}`)
+    return Response.json({ error: message }, { status: 500 })
   }
 }
 
@@ -83,8 +87,10 @@ export async function handleTestModel(request: Request): Promise<Response> {
     const result = await testModel(body)
     return Response.json({ result })
   } catch (error) {
-    log.error("Test model failed", error)
-    return Response.json({ error: error instanceof Error ? error.message : "Test failed" }, { status: 500 })
+    const err = error as Error | unknown
+    const message = err instanceof Error ? err.message : "Test failed"
+    log.error("Test model failed: " + message)
+    return Response.json({ error: message }, { status: 500 })
   }
 }
 
@@ -102,8 +108,10 @@ export async function handleTestModelsBatch(request: Request): Promise<Response>
     const results = await testModelsBatch(options, body.concurrency)
     return Response.json({ results })
   } catch (error) {
-    log.error("Batch test models failed", error)
-    return Response.json({ error: error instanceof Error ? error.message : "Batch test failed" }, { status: 500 })
+    const err = error as Error | unknown
+    const message = err instanceof Error ? err.message : "Batch test failed"
+    log.error("Batch test models failed: " + message)
+    return Response.json({ error: message }, { status: 500 })
   }
 }
 
