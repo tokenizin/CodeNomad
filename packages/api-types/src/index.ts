@@ -28,6 +28,16 @@ export type {
   WorktreeDescriptor,
   WorktreeGitStatusEntry,
   WorktreeMap,
+  ModelCapabilities,
+  ModelStatus,
+  SyncedModel,
+  ModelSyncResult,
+  SyncModelsResponse,
+  ModelTestResult,
+  TestModelResponse,
+  TestModelBatchResponse,
+  ProviderConfigDescriptor,
+  ProviderConfigsResponse,
 } from '../../server/src/api-types';
 
 export { WINDOWS_DRIVES_ROOT } from '../../server/src/api-types';

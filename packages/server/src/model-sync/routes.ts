@@ -1,0 +1,159 @@
+import { createLogger } from "../logger"
+import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs } from "./service"
+import { testModel, testModelsBatch, type TestModelOptions, type ModelTestResult } from "./tester"
+import type { ModelSyncResult } from "./service"
+
+const log = createLogger({ component: "model-sync-routes" })
+
+export interface SyncModelsRequest {
+  providers: Array<{
+    id: string
+    name: string
+    models: Array<{
+      id: string
+      name: string
+      limit?: { context?: number; input?: number; output?: number }
+      cost?: { input?: number; output?: number }
+      capabilities?: { tools: boolean; image: boolean; video: boolean; reasoning: boolean; audio: boolean; cloud: boolean }
+      status?: "available" | "insufficient_funds" | "error" | "testing" | "unknown"
+      lastTested?: number
+      errorDetails?: string
+    }>
+  }>
+}
+
+export interface SyncModelsResponse {
+  results: ModelSyncResult[]
+  syncedAt: number
+}
+
+export interface TestModelRequest {
+  providerId: string
+  modelId: string
+  apiKey?: string
+  baseUrl?: string
+  timeoutMs?: number
+}
+
+export interface TestModelBatchRequest {
+  tests: TestModelRequest[]
+  concurrency?: number
+}
+
+export interface TestModelResponse {
+  result: ModelTestResult
+}
+
+export interface TestModelBatchResponse {
+  results: ModelTestResult[]
+}
+
+export interface ProviderConfigsResponse {
+  providers: Array<{ id: string; name: string; enabled: boolean }>
+}
+
+// Sync all providers
+export async function handleSyncModels(request: Request): Promise<Response> {
+  try {
+    const body = (await request.json()) as SyncModelsRequest
+    const results = await syncAllProviders(body.providers)
+    return Response.json({ results, syncedAt: Date.now() })
+  } catch (error) {
+    log.error("Sync models failed", error)
+    return Response.json({ error: error instanceof Error ? error.message : "Sync failed" }, { status: 500 })
+  }
+}
+
+// Sync single provider
+export async function handleSyncProvider(request: Request, providerId: string): Promise<Response> {
+  try {
+    const body = (await request.json()) as { models: SyncModelsRequest["providers"][0]["models"] }
+    const result = await syncProviderModels(providerId, body.models)
+    return Response.json(result)
+  } catch (error) {
+    log.error(`Sync provider ${providerId} failed`, error)
+    return Response.json({ error: error instanceof Error ? error.message : "Sync failed" }, { status: 500 })
+  }
+}
+
+// Test single model
+export async function handleTestModel(request: Request): Promise<Response> {
+  try {
+    const body = (await request.json()) as TestModelRequest
+    const result = await testModel(body)
+    return Response.json({ result })
+  } catch (error) {
+    log.error("Test model failed", error)
+    return Response.json({ error: error instanceof Error ? error.message : "Test failed" }, { status: 500 })
+  }
+}
+
+// Test multiple models
+export async function handleTestModelsBatch(request: Request): Promise<Response> {
+  try {
+    const body = (await request.json()) as TestModelBatchRequest
+    const options: TestModelOptions[] = body.tests.map((t) => ({
+      providerId: t.providerId,
+      modelId: t.modelId,
+      apiKey: t.apiKey,
+      baseUrl: t.baseUrl,
+      timeoutMs: t.timeoutMs,
+    }))
+    const results = await testModelsBatch(options, body.concurrency)
+    return Response.json({ results })
+  } catch (error) {
+    log.error("Batch test models failed", error)
+    return Response.json({ error: error instanceof Error ? error.message : "Batch test failed" }, { status: 500 })
+  }
+}
+
+// Get provider configs
+export async function handleGetProviderConfigs(): Promise<Response> {
+  const providers = getProviderConfigs()
+  return Response.json({ providers })
+}
+
+// Clear sync cache
+export async function handleClearCache(): Promise<Response> {
+  clearSyncCache()
+  return Response.json({ success: true })
+}
+
+// Route handler for the model sync API
+export async function handleModelSyncRoutes(request: Request, path: string): Promise<Response | null> {
+  const url = new URL(request.url)
+  const method = request.method
+  
+  // POST /api/model-sync/sync - sync all providers
+  if (method === "POST" && path === "/api/model-sync/sync") {
+    return handleSyncModels(request)
+  }
+  
+  // POST /api/model-sync/sync/:providerId - sync single provider
+  if (method === "POST" && path.startsWith("/api/model-sync/sync/")) {
+    const providerId = path.split("/api/model-sync/sync/")[1]
+    return handleSyncProvider(request, providerId)
+  }
+  
+  // POST /api/model-sync/test - test single model
+  if (method === "POST" && path === "/api/model-sync/test") {
+    return handleTestModel(request)
+  }
+  
+  // POST /api/model-sync/test/batch - test multiple models
+  if (method === "POST" && path === "/api/model-sync/test/batch") {
+    return handleTestModelsBatch(request)
+  }
+  
+  // GET /api/model-sync/providers - get provider configs
+  if (method === "GET" && path === "/api/model-sync/providers") {
+    return handleGetProviderConfigs()
+  }
+  
+  // POST /api/model-sync/cache/clear - clear sync cache
+  if (method === "POST" && path === "/api/model-sync/cache/clear") {
+    return handleClearCache()
+  }
+  
+  return null
+}

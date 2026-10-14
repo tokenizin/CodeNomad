@@ -144,6 +144,19 @@ export interface Provider {
   defaultModelId?: string
 }
 
+// Model capability flags for UI display
+export interface ModelCapabilities {
+  tools: boolean
+  image: boolean
+  video: boolean
+  reasoning: boolean
+  audio: boolean
+  cloud: boolean
+}
+
+// Model health status from validation
+export type ModelStatus = 'available' | 'insufficient_funds' | 'error' | 'testing' | 'unknown'
+
 // Our client-specific Model interface (simplified version of SDK Model)
 export interface Model {
   id: string
@@ -159,4 +172,8 @@ export interface Model {
     input?: number
     output?: number
   }
+  capabilities?: ModelCapabilities
+  status?: ModelStatus
+  lastTested?: number
+  errorDetails?: string
 }

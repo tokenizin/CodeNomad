@@ -1,8 +1,8 @@
 import { Combobox } from "@kobalte/core/combobox"
-import { createEffect, createMemo, createSignal } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { ChevronDown, PlugZap, Star } from "lucide-solid"
-import type { Model } from "../types/session"
+import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
+import type { Model, ModelCapabilities, ModelStatus } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { uiState, toggleFavoriteModelPreference } from "../stores/preferences"
@@ -41,6 +41,71 @@ type PickerOption = FlatModel | ProviderHeaderOption
 const compareIds = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" })
 
 const isProviderHeaderOption = (option: PickerOption): option is ProviderHeaderOption => "type" in option && option.type === "header"
+
+// Capability icon components
+function CapabilityIcons({ capabilities }: { capabilities?: ModelCapabilities }) {
+  if (!capabilities) return null
+  
+  const icons = [
+    { condition: capabilities.tools, icon: Cpu, title: "Tools", color: "text-blue-400" },
+    { condition: capabilities.image, icon: Image, title: "Vision", color: "text-green-400" },
+    { condition: capabilities.video, icon: Video, title: "Video", color: "text-purple-400" },
+    { condition: capabilities.reasoning, icon: Brain, title: "Reasoning", color: "text-orange-400" },
+    { condition: capabilities.audio, icon: Music, title: "Audio", color: "text-pink-400" },
+    { condition: capabilities.cloud, icon: Cloud, title: "Cloud", color: "text-cyan-400" },
+  ].filter((i) => i.condition)
+  
+  if (icons.length === 0) return null
+  
+  return (
+    <div class="flex items-center gap-1 ml-2">
+      {icons.map((item, idx) => (
+        <div class="relative" title={item.title} {...{ key: idx }}>
+          <item.icon class="w-3.5 h-3.5 opacity-70 hover:opacity-100 transition-opacity" style={{ color: item.color }} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Status badge component
+function StatusBadge({ status, errorDetails }: { status?: ModelStatus; errorDetails?: string }) {
+  if (!status || status === "unknown" || status === "available") return null
+  
+  const configs = {
+    insufficient_funds: { icon: AlertTriangle, color: "text-yellow-400 bg-yellow-400/10", label: "Insufficient Funds", title: errorDetails || "Insufficient credits or quota exceeded" },
+    error: { icon: AlertCircle, color: "text-red-400 bg-red-400/10", label: "Error", title: errorDetails || "Model unavailable" },
+    testing: { icon: Cpu, color: "text-blue-400 bg-blue-400/10 animate-pulse", label: "Testing...", title: "Model is being tested" },
+  }
+  
+  const config = configs[status]
+  if (!config) return null
+  
+  const Icon = config.icon
+  return (
+    <span 
+      class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
+      title={config.title}
+    >
+      <Icon class="w-3 h-3" />
+      <span>{config.label}</span>
+    </span>
+  )
+}
+
+// Check if model is selectable (not in error state)
+function isModelSelectable(model: FlatModel): boolean {
+  return !model.status || model.status === "unknown" || model.status === "available" || model.status === "testing"
+}
+
+// Format context window for display
+function formatContextWindow(limit?: { context?: number; input?: number; output?: number }): string | null {
+  if (!limit?.context) return null
+  const ctx = limit.context
+  if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(1)}M`
+  if (ctx >= 1_000) return `${(ctx / 1_000).toFixed(0)}K`
+  return String(ctx)
+}
 
 export default function ModelSelector(props: ModelSelectorProps) {
   const { t } = useI18n()
@@ -264,6 +329,12 @@ export default function ModelSelector(props: ModelSelectorProps) {
     setTimeout(() => searchInputRef?.focus(), 0)
   }
 
+  const isOptionDisabled = (option: PickerOption): boolean => {
+    if (isProviderHeaderOption(option)) return true
+    // For model options, the option itself is the FlatModel
+    return !isModelSelectable(option as FlatModel)
+  }
+
   return (
     <div class="sidebar-selector">
       <Combobox<PickerOption>
@@ -278,7 +349,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         optionValue="key"
         optionTextValue="searchText"
         optionLabel={(option) => (isProviderHeaderOption(option) ? option.providerName : option.name)}
-        optionDisabled={isProviderHeaderOption}
+        optionDisabled={isOptionDisabled}
         placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
         allowsEmptyCollection
@@ -297,6 +368,17 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
           const model = itemProps.item.rawValue
           const isFavorite = () => favoriteKeySet().has(model.key)
+          const selectable = isModelSelectable(model)
+          const contextWindow = formatContextWindow(model.limit)
+          const currentlyFavorite = isFavorite()
+          
+          // Auto-remove favorite if model becomes unavailable
+          createEffect(() => {
+            if (currentlyFavorite && !selectable) {
+              toggleFavoriteModelPreference({ providerId: model.providerId, modelId: model.id })
+            }
+          })
+
           return (
             <Combobox.Item
               item={itemProps.item}
@@ -305,8 +387,11 @@ export default function ModelSelector(props: ModelSelectorProps) {
               <>
                 <div class="selector-option-content">
                   <Combobox.ItemLabel class="selector-option-label">{model.name}</Combobox.ItemLabel>
-                  <Combobox.ItemDescription class="selector-option-description">
-                    {model.providerName} • {model.providerId}/{model.id}
+                  <Combobox.ItemDescription class="selector-option-description flex items-center gap-2">
+                    <span>{model.providerName} • {model.providerId}/{model.id}</span>
+                    {contextWindow && <span class="text-xs text-muted-foreground px-1.5 py-0.5 rounded bg-muted">Ctx: {contextWindow}</span>}
+                    <CapabilityIcons capabilities={model.capabilities} />
+                    <StatusBadge status={model.status} errorDetails={model.errorDetails} />
                   </Combobox.ItemDescription>
                 </div>
                 <Combobox.ItemIndicator class="selector-option-indicator">
@@ -323,6 +408,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                       ? t("modelSelector.favorite.remove")
                       : t("modelSelector.favorite.add")
                   }
+                  disabled={!selectable}
                   onPointerDown={preventListboxPress}
                   onPointerUp={preventListboxPress}
                   onMouseDown={preventListboxPress}
@@ -339,15 +425,18 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
-                    toggleFavoriteModelPreference({
-                      providerId: model.providerId,
-                      modelId: model.id,
-                    })
+                    if (selectable) {
+                      toggleFavoriteModelPreference({
+                        providerId: model.providerId,
+                        modelId: model.id,
+                      })
+                    }
                   }}
                 >
                   <Star
-                    class="w-4 h-4"
+                    class="w-4 h-4 transition-colors"
                     fill={isFavorite() ? "currentColor" : "none"}
+                    style={{ opacity: selectable ? 1 : 0.4 }}
                   />
                 </button>
               </>

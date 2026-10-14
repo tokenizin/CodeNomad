@@ -334,3 +334,48 @@
   @apply w-4 h-4 animate-spin;
   color: var(--accent-primary);
 }
+
+/* Disabled model styles */
+.selector-option:disabled,
+.selector-option[aria-disabled="true"],
+.selector-option[data-disabled] {
+  @apply opacity-40 cursor-not-allowed;
+}
+
+.selector-option:disabled .selector-option-label,
+.selector-option[aria-disabled="true"] .selector-option-label,
+.selector-option[data-disabled] .selector-option-label {
+  color: var(--text-muted);
+}
+
+.selector-option:disabled .selector-option-star,
+.selector-option[aria-disabled="true"] .selector-option-star,
+.selector-option[data-disabled] .selector-option-star {
+  opacity: 0.3;
+}
+
+/* Capability icons container */
+.selector-option-description {
+  @apply text-xs flex items-center gap-1 flex-wrap;
+  color: var(--text-muted);
+}
+
+/* Context window badge */
+.selector-option-description .bg-muted {
+  @apply text-[10px] font-medium;
+}
+
+/* Status badges */
+.selector-option-description span[class*="bg-"] {
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium;
+}
+
+/* Pulse animation for testing status */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

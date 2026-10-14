@@ -403,6 +403,72 @@ export interface LocalLlmModelsResponse {
   host: string
 }
 
+export interface ModelCapabilities {
+  tools: boolean
+  image: boolean
+  video: boolean
+  reasoning: boolean
+  audio: boolean
+  cloud: boolean
+}
+
+export type ModelStatus = "available" | "insufficient_funds" | "error" | "testing" | "unknown"
+
+export interface SyncedModel {
+  id: string
+  name: string
+  providerId: string
+  limit: { context: number; input: number; output: number }
+  cost: { input: number; output: number }
+  capabilities: ModelCapabilities
+  status: ModelStatus
+  lastTested: number
+  errorDetails?: string
+  source: "config" | "live" | "merged"
+}
+
+export interface ModelSyncResult {
+  providerId: string
+  providerName: string
+  models: SyncedModel[]
+  added: number
+  removed: number
+  updated: number
+  errors: string[]
+}
+
+export interface SyncModelsResponse {
+  results: ModelSyncResult[]
+  syncedAt: number
+}
+
+export interface ModelTestResult {
+  providerId: string
+  modelId: string
+  status: ModelStatus
+  latencyMs: number
+  errorDetails?: string
+  testedAt: number
+}
+
+export interface TestModelResponse {
+  result: ModelTestResult
+}
+
+export interface TestModelBatchResponse {
+  results: ModelTestResult[]
+}
+
+export interface ProviderConfigDescriptor {
+  id: string
+  name: string
+  enabled: boolean
+}
+
+export interface ProviderConfigsResponse {
+  providers: ProviderConfigDescriptor[]
+}
+
 export interface VoiceModeStateResponse {
   enabled: boolean
 }

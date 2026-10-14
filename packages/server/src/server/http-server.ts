@@ -45,6 +45,7 @@ import { registerChoiceRoutes } from "./routes/choices.js"
 import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
 import { registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
+import { registerModelSyncRoutes } from "./routes/model-sync.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
@@ -472,6 +473,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerWikiLintRoutes(app)
   registerRefreshModelsRoutes(app)
   registerUnderstandAnythingRoutes(app)
+  registerModelSyncRoutes(app)
   registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerPlaygroundRustRoutes(app)
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
