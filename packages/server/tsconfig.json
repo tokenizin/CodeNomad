@@ -9,9 +9,18 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"]
+    "rootDir": "../../../..",
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts", "ui/src/types/**/*"],
-  "exclude": ["dist", "node_modules", "src/**/__tests__"]
+  "include": [
+    "src/**/*.ts",
+    "../ui/src/types/session.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/__tests__"
+  ]
 }

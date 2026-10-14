@@ -1,0 +1,1 @@
+import type { ModelCapabilities } from '../../types/session.ts';

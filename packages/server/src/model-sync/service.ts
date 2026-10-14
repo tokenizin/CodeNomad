@@ -229,9 +229,21 @@ export async function syncProviderModels(
         // Model was removed from provider
         mergedModels.push({
           ...configured,
-          status: "error",
+          providerId: providerId as string,
+          limit: {
+            context: configured.limit?.context ?? 0,
+            input: configured.limit?.input ?? 0,
+            output: configured.limit?.output ?? 0,
+          },
+          cost: {
+            input: configured.cost?.input ?? 0,
+            output: configured.cost?.output ?? 0,
+          },
+          status: "error" as ModelStatus,
           errorDetails: "Model no longer available from provider",
           source: "config",
+          capabilities: configured.capabilities || ("unknown" as unknown as ModelCapabilities),
+          lastTested: configured.lastTested ?? 0,
         })
         removed++
       }
@@ -254,14 +266,13 @@ export async function syncProviderModels(
     return {
       providerId,
       providerName: config.name,
-      models: configuredModels.map((m) => ({
-        ...m,
+      models: configuredModels.map((m) => ({  ...m,
         providerId,
         status: "error" as ModelStatus,
         errorDetails: error instanceof Error ? error.message : String(error),
         lastTested: Date.now(),
         source: "config",
-      })),
+      }) as SyncedModel),
       added: 0,
       removed: 0,
       updated: 0,
@@ -294,19 +305,27 @@ export async function syncAllProviders(
         models: provider.models.map((m) => ({
           ...m,
           providerId: provider.id,
+          limit: {
+            context: m.limit?.context ?? 0,
+            input: m.limit?.input ?? 0,
+            output: m.limit?.output ?? 0,
+          },
+          cost: {
+            input: m.cost?.input ?? 0,
+            output: m.cost?.output ?? 0,
+          },
           status: "error" as ModelStatus,
           errorDetails: error instanceof Error ? error.message : String(error),
           lastTested: Date.now(),
           source: "config" as const,
         })),
-        added: 0,
         removed: 0,
         updated: 0,
         errors: [error instanceof Error ? error.message : String(error)],
       }))
     )
   )
-  return results
+  return results as ModelSyncResult[]
 }
 
 export function clearSyncCache(): void {

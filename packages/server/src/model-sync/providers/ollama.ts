@@ -1,4 +1,4 @@
-import type { ModelCapabilities } from "../../../ui/src/types/session"
+import type { ModelCapabilities } from "../../../../ui/src/types/session"
 import { listLocalLlmModels } from "../../local-llm/service"
 
 export interface OllamaModelConfig {

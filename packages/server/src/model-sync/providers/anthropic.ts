@@ -1,4 +1,4 @@
-import type { ModelCapabilities } from "../../../ui/src/types/session"
+import type { ModelCapabilities } from "../../../../ui/src/types/session"
 
 export interface AnthropicModelConfig {
   id: string
