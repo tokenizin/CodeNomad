@@ -309,6 +309,7 @@ export const settingsMessages = {
   "settings.section.modelSync.subtitle": "Configure model synchronization and validation settings",
   "settings.section.modelSync.syncButton": "Sync Models",
   "settings.section.modelSync.clearCacheButton": "Clear Cache",
+  "settings.section.modelSync.testModelsButton": "Test Models",
   "settings.section.modelSync.modelTitle": "Model Status",
   "settings.section.modelSync.modelSubtitle": "Review model capabilities and availability",
   "settings.section.modelSync.modelInfo": "Model status indicators show availability and health.",

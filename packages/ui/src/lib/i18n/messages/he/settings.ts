@@ -36,6 +36,7 @@ export const settingsMessages = {
   "modelSelector.freeToggle.label": "רק דגמים חינמיים",
   "modelSelector.freeToggle.title": "הצג דגמים חינמיים בלבד (ללא עלות)",
   "settings.section.modelSync.lastTested": "תוכנת לאחרונה",
+  "settings.section.modelSync.testModelsButton": "בדיקת מודלים",
   "thinkingSelector.variant.default": "ברירת מחדל",
   "thinkingSelector.label": "חשיבה: {variant}",
 

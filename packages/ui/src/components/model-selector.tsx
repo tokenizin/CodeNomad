@@ -71,11 +71,11 @@ function CapabilityIcons({ capabilities }: { capabilities?: ModelCapabilities })
 // Status badge component
 function StatusBadge({ status, errorDetails }: { status?: ModelStatus; errorDetails?: string }) {
   const configs = {
-    insufficient_funds: { icon: AlertTriangle, color: "text-yellow-400 bg-yellow-400/10", label: "Insufficient Funds", title: errorDetails || "Insufficient credits or quota exceeded" },
-    error: { icon: AlertCircle, color: "text-red-400 bg-red-400/10", label: "Error", title: errorDetails || "Model unavailable" },
-    testing: { icon: Cpu, color: "text-blue-400 bg-blue-400/10 animate-pulse", label: "Testing...", title: "Model is being tested" },
-    available: { icon: CheckCircle, color: "text-green-400 bg-green-400/10", label: "Available", title: "Model is available for use" },
-    unknown: { icon: Info, color: "text-gray-400 bg-gray-400/10", label: "Unknown", title: errorDetails || "Model status not yet tested" },
+    insufficient_funds: { icon: AlertTriangle, color: "text-yellow-400 bg-yellow-400/10", title: errorDetails || "Insufficient credits or quota exceeded" },
+    error: { icon: AlertCircle, color: "text-red-400 bg-red-400/10", title: errorDetails || "Model unavailable" },
+    testing: { icon: Cpu, color: "text-blue-400 bg-blue-400/10 animate-pulse", title: "Model is being tested" },
+    available: { icon: CheckCircle, color: "text-green-400 bg-green-400/10", title: "Model is available for use" },
+    unknown: { icon: Info, color: "text-gray-400 bg-gray-400/10", title: errorDetails || "Model status not yet tested" },
   }
   
   const config = configs[status as keyof typeof configs]
@@ -88,7 +88,6 @@ function StatusBadge({ status, errorDetails }: { status?: ModelStatus; errorDeta
       title={config.title}
     >
       <Icon class="w-3 h-3" />
-      <span>{config.label}</span>
     </span>
   )
 }

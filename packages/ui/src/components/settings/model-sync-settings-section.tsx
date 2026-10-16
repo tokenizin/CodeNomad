@@ -188,6 +188,61 @@ export const ModelSyncSettingsSection: Component = () => {
     }
   }
 
+  const handleTestModels = async () => {
+    setStatus("testing")
+    setError(null)
+    try {
+      // Build test options from cached models
+      const tests = models().map((m) => ({
+        providerId: m.providerId,
+        modelId: m.modelId,
+        // Note: apiKey and baseUrl are not stored in cache; testing may fail
+        // for models that require authentication not configured in the server
+        apiKey: undefined,
+        baseUrl: undefined,
+        timeoutMs: 15000,
+      }))
+      const body = {
+        tests,
+        concurrency: Math.min(3, tests.length),
+      }
+      const result = await fetch("/api/model-sync/test/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const data = await result.json()
+      if (data && data.results && Array.isArray(data.results)) {
+        const statusPromises = data.results.map((r: any, i: number) => {
+          const m = models()[i] || {}
+          const statusText =
+            r.status === "available" ? "✓ Available" :
+            r.status === "insufficient_funds" ? "⚠ Insufficient Funds" :
+            r.status === "error" ? "✗ Error" :
+            r.status === "testing" ? "🔄 Testing..." : r.status
+          return {
+            model: m.modelName || `Model ${i}`,
+            provider: m.providerId || `Provider ${i}`,
+            status: statusText,
+            latencyMs: r.latencyMs,
+            errorDetails: r.errorDetails,
+          }
+        })
+        setError(
+          statusPromises
+            .filter((s) => s.status.includes("Error") || s.status.includes("Insufficient"))
+            .map((s) => `${s.provider}: ${s.model} - ${s.status}`)
+            .join("\n")
+        )
+      }
+      setStatus("idle")
+    } catch (e: unknown) {
+      const err = e as Error
+      setError("Test failed: " + (err.message || "Unknown error"))
+      setStatus("idle")
+    }
+  }
+
   const capabilityIcons = (caps: SyncedModelRow["capabilities"]) => {
     const icons: { icon: typeof Cpu; title: string; color: string }[] = []
     if (caps.tools) icons.push({ icon: Cpu, title: "Tools", color: "text-blue-400" })
@@ -231,37 +286,27 @@ export const ModelSyncSettingsSection: Component = () => {
       available: {
         icon: CheckCircle,
         color: "text-green-400 bg-green-400/10",
-        label: "Available",
         title: "Model is available for use",
-        showLabel: true,
       },
       insufficient_funds: {
         icon: AlertTriangle,
         color: "text-yellow-400 bg-yellow-400/10",
-        label: "Insufficient Funds",
         title: errorDetails || "Insufficient credits or quota exceeded",
-        showLabel: true,
       },
       error: {
         icon: AlertCircle,
         color: "text-red-400 bg-red-400/10",
-        label: "Error",
         title: errorDetails || "Model unavailable",
-        showLabel: true,
       },
       testing: {
         icon: Cpu,
         color: "text-blue-400 bg-blue-400/10 animate-pulse",
-        label: "Testing...",
         title: "Model is being tested",
-        showLabel: true,
       },
       unknown: {
         icon: Info,
         color: "text-gray-400 bg-gray-400/10",
-        label: "Unknown",
         title: errorDetails || "Model status not yet tested",
-        showLabel: true,
       },
     }
 
@@ -275,7 +320,6 @@ export const ModelSyncSettingsSection: Component = () => {
         title={config.title}
       >
         <Icon class="w-3 h-3" />
-        <span>{config.label}</span>
       </span>
     )
   }
@@ -307,7 +351,6 @@ export const ModelSyncSettingsSection: Component = () => {
         title={config.title}
       >
         <Icon class="w-3 h-3" />
-        <span>{config.title}</span>
       </span>
     )
   }
@@ -357,6 +400,14 @@ export const ModelSyncSettingsSection: Component = () => {
                 <RefreshCw class="w-4 h-4 mr-2" />
               )}
               {t("settings.section.modelSync.syncButton")}
+            </Button>
+
+            <Button
+              class="selector-button selector-button-secondary"
+              disabled={status() !== "idle"}
+              onClick={handleTestModels}
+            >
+              {t("settings.section.modelSync.testModelsButton")}
             </Button>
 
             <Button
@@ -437,9 +488,9 @@ export const ModelSyncSettingsSection: Component = () => {
                           <td>
                             <TypeIcon type={model.type} />
                           </td>
-                          <td style={{ color: "var(--text-muted)" }}>
-                            {model.lastTested !== null ? new Date(model.lastTested).toLocaleString() : "Never"}
-                          </td>
+<td style={{ color: "var(--text-muted)" }}>
+  {model.lastTested !== null && model.lastTested > 0 ? new Date(model.lastTested).toLocaleString() : "Never"}
+</td>
                         </tr>
                       ))}
                     </>

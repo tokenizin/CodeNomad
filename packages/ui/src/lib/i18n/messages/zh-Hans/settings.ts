@@ -36,6 +36,7 @@ export const settingsMessages = {
   "modelSelector.freeToggle.label": "仅免费模型",
   "modelSelector.freeToggle.title": "仅显示免费模型（无成本）",
   "settings.section.modelSync.lastTested": "最后测试",
+  "settings.section.modelSync.testModelsButton": "测试模型",
   "thinkingSelector.variant.default": "默认",
   "thinkingSelector.label": "思考：{variant}",
 

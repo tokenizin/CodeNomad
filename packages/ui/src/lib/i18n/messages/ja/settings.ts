@@ -36,6 +36,7 @@ export const settingsMessages = {
   "modelSelector.freeToggle.label": "無料モデルのみ",
   "modelSelector.freeToggle.title": "無料モデルのみを表示（無料）",
   "settings.section.modelSync.lastTested": "最終テスト",
+  "settings.section.modelSync.testModelsButton": "モデルをテスト",
   "thinkingSelector.variant.default": "デフォルト",
   "thinkingSelector.label": "思考: {variant}",
 

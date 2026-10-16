@@ -36,6 +36,7 @@ export const settingsMessages = {
   "modelSelector.freeToggle.label": "Только бесплатные модели",
   "modelSelector.freeToggle.title": "Показать только бесплатные модели (без стоимости)",
   "settings.section.modelSync.lastTested": "Последняя проверка",
+  "settings.section.modelSync.testModelsButton": "Тестировать модели",
   "thinkingSelector.variant.default": "По умолчанию",
   "thinkingSelector.label": "Размышления: {variant}",
 
