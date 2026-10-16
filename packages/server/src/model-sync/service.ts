@@ -297,8 +297,13 @@ export async function syncAllProviders(
     }>
   }>
 ): Promise<ModelSyncResult[]> {
+  // If no providers passed, sync ALL built-in providers
+  const providersToSync = configuredProviders.length > 0
+    ? configuredProviders
+    : PROVIDER_CONFIGS.map((c) => ({ id: c.id, name: c.name, models: [] }))
+
   const results = await Promise.all(
-    configuredProviders.map((provider) =>
+    providersToSync.map((provider) =>
       syncProviderModels(provider.id, provider.models).catch((error) => ({
         providerId: provider.id,
         providerName: provider.name,
@@ -319,6 +324,7 @@ export async function syncAllProviders(
           lastTested: Date.now(),
           source: "config" as const,
         })),
+        added: 0,
         removed: 0,
         updated: 0,
         errors: [error instanceof Error ? error.message : String(error)],
