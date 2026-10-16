@@ -129,7 +129,6 @@ export async function handleClearCache(): Promise<Response> {
 
 // Route handler for the model sync API
 export async function handleModelSyncRoutes(request: Request, path: string): Promise<Response | null> {
-  const url = new URL(request.url)
   const method = request.method
   
   // POST /api/model-sync/sync - sync all providers
