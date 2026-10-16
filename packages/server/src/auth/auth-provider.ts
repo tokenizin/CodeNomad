@@ -57,21 +57,21 @@ export function tryBootstrapCloudflareAccessSession(
   request: FastifyRequest,
   reply: FastifyReply,
   authManager: AuthManager,
-): boolean {
+): { username: string; sessionId: string } | null {
   if (resolveAuthProvider() !== "cloudflare-access") {
-    return false
+    return null
   }
 
   const email = readCloudflareAccessEmail(request)
   if (!email) {
-    return false
+    return null
   }
 
   const session = authManager.createSession(email)
   authManager.setSessionCookieWithOptions(reply, session.id, {
     secure: isSecureRequest(request),
   })
-  return true
+  return { username: session.username, sessionId: session.id }
 }
 
 function isSecureRequest(request: FastifyRequest): boolean {

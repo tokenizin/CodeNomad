@@ -341,8 +341,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     let session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
-      tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)
-      session = deps.authManager.getSessionFromRequest(request)
+      session = tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)
     }
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
@@ -378,8 +377,8 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   app.get("/", async (request, reply) => {
     let session = deps.authManager.getSessionFromRequest(request)
-    if (!session && tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)) {
-      session = deps.authManager.getSessionFromRequest(request)
+    if (!session) {
+      session = tryBootstrapCloudflareAccessSession(request, reply, deps.authManager)
     }
     if (!session) {
       reply.redirect("/login")
@@ -1035,12 +1034,10 @@ function setupStaticUi(
     }
 
     if (!session && wantsHtml(request)) {
-      if (tryBootstrapCloudflareAccessSession(request, reply, authManager)) {
-        const bootstrapped = authManager.getSessionFromRequest(request)
-        if (bootstrapped && fs.existsSync(indexPath)) {
-          reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
-          return
-        }
+      const bootstrapped = tryBootstrapCloudflareAccessSession(request, reply, authManager)
+      if (bootstrapped && fs.existsSync(indexPath)) {
+        reply.type("text/html").send(injectUiRuntimeConfig(fs.readFileSync(indexPath, "utf-8")))
+        return
       }
       reply.redirect("/login")
       return
