@@ -360,7 +360,12 @@ export class WorkspaceManager {
 
     this.options.logger.info({ workspaceId: id }, "Stopping workspace")
     const wasRunning = Boolean(workspace.pid)
+    // Mark as "stopping" before sending SIGTERM so the proxy can reject
+    // requests with a clean 503 instead of forwarding to a dying instance
+    // (which returns 400 from OpenCode mid-shutdown).
     if (wasRunning) {
+      workspace.status = "stopping"
+      workspace.updatedAt = new Date().toISOString()
       await this.runtime.stop(id).catch((error) => {
         this.options.logger.warn({ workspaceId: id, err: error }, "Failed to stop workspace process cleanly")
       })

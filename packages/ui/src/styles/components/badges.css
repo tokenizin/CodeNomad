@@ -29,6 +29,11 @@
   color: var(--status-stopped-fg);
 }
 
+.status-badge.stopping {
+  background-color: var(--status-starting-bg);
+  color: var(--status-warning);
+}
+
 .status-dot.ready {
   background-color: var(--status-ready-fg);
 }
@@ -43,4 +48,8 @@
 
 .status-dot.stopped {
   background-color: var(--status-stopped-fg);
+}
+
+.status-dot.stopping {
+  background-color: var(--status-warning);
 }

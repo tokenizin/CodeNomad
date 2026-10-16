@@ -201,7 +201,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
               <span class="text-secondary">{t("instanceInfo.server.status")}</span>
               <span class={`status-badge ${currentInstance().status}`}>
                 <div
-                  class={`status-dot ${currentInstance().status === "ready" ? "ready" : currentInstance().status === "starting" ? "starting" : currentInstance().status === "error" ? "error" : "stopped"} ${currentInstance().status === "ready" || currentInstance().status === "starting" ? "animate-pulse" : ""}`}
+                  class={`status-dot ${currentInstance().status === "ready" ? "ready" : currentInstance().status === "starting" ? "starting" : currentInstance().status === "stopping" ? "stopping" : currentInstance().status === "error" ? "error" : "stopped"} ${currentInstance().status === "ready" || currentInstance().status === "starting" || currentInstance().status === "stopping" ? "animate-pulse" : ""}`}
                 />
                 {currentInstance().status}
               </span>

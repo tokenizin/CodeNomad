@@ -12,7 +12,7 @@ import type {
  * These types are consumed by both the CLI implementation and any UI clients.
  */
 
-export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
+export type WorkspaceStatus = "starting" | "ready" | "stopping" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
   id: string

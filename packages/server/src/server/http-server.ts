@@ -878,6 +878,11 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
+  if (workspace.status === "stopping") {
+    reply.code(503).send({ error: "Workspace instance is stopping", status: "stopping", recoverable: true })
+    return
+  }
+
   const port = workspaceManager.getInstancePort(workspaceId)
   if (!port) {
     reply.code(502).send({ error: "Workspace instance is not ready" })
