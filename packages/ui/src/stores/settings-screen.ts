@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | "playground-rust"
   | "config-files"
   | "sidecars"
+  | "model-sync"
   | "info"
 
 const [settingsOpen, setSettingsOpen] = createSignal(false)

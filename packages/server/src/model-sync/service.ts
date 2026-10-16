@@ -11,6 +11,9 @@ import { getOrnithModels, transformOrnithModels } from "./providers/ornith"
 import { getMLXModels, transformMLXModels } from "./providers/mlx"
 import { getMLXDeepSeekModels, transformMLXDeepSeekModels } from "./providers/mlx-deepseek"
 import { fetchOllamaModels } from "./providers/ollama"
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
 
 export interface SyncedModel {
   id: string
@@ -63,6 +66,9 @@ const PROVIDER_CONFIGS: ProviderConfig[] = [
 let syncCache: Map<string, { data: ModelSyncResult; timestamp: number }> = new Map()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
+// File-based persistence path
+const SYNC_CACHE_FILE = join(homedir(), ".config", "codenomad", "model-sync-cache.json")
+
 function getCachedSync(providerId: string): ModelSyncResult | null {
   const cached = syncCache.get(providerId)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -73,6 +79,165 @@ function getCachedSync(providerId: string): ModelSyncResult | null {
 
 function setCachedSync(providerId: string, data: ModelSyncResult): void {
   syncCache.set(providerId, { data, timestamp: Date.now() })
+  persistSyncCache()
+}
+
+// Persist sync cache to file so it survives server restarts
+function persistSyncCache(): void {
+  try {
+    const dir = join(homedir(), ".config", "codenomad")
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+
+    const serialized: Record<string, { data: ModelSyncResult; timestamp: number }> = {}
+    for (const [key, value] of syncCache.entries()) {
+      serialized[key] = value
+    }
+    writeFileSync(SYNC_CACHE_FILE, JSON.stringify(serialized, null, 2), "utf-8")
+  } catch {
+    // Non-fatal — in-memory cache still works
+  }
+}
+
+// Load sync cache from file on startup
+function loadSyncCacheFromFile(): void {
+  try {
+    if (!existsSync(SYNC_CACHE_FILE)) return
+    const raw = readFileSync(SYNC_CACHE_FILE, "utf-8")
+    const parsed = JSON.parse(raw) as Record<string, { data: ModelSyncResult; timestamp: number }>
+    for (const [key, value] of Object.entries(parsed)) {
+      syncCache.set(key, value)
+    }
+  } catch {
+    // Non-fatal — start with empty cache
+  }
+}
+
+// Load on module init
+loadSyncCacheFromFile()
+
+// ─── Config file persistence: write synced models back to opencode.json ───
+
+/**
+ * Find opencode.json by searching upward from process.cwd() and from the
+ * compiled server directory. Returns the first match or null.
+ */
+function findOpencodeJson(): string | null {
+  const searchDirs = [
+    process.cwd(),
+    join(homedir(), "starworld"),
+    // From compiled JS: dist/model-sync/service.js → go up 5 levels to starworld root
+    join(__dirname, "..", "..", "..", "..", ".."),
+    join(__dirname, "..", "..", "..", "..", "..", ".."),
+  ]
+  for (const dir of searchDirs) {
+    const candidate = join(dir, "opencode.json")
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+/**
+ * Persist synced models back to opencode.json so that OpenCode / NomadWorks
+ * agents pick up the latest model lists, context limits, and capabilities.
+ *
+ * For each provider in the sync cache:
+ *  - New models are added
+ *  - Existing models get updated limits and capability flags
+ *  - Models that were removed from the provider are left untouched (safe merge)
+ */
+export function persistSyncedModelsToConfig(): { updated: number; added: number; path: string } {
+  const configPath = findOpencodeJson()
+  if (!configPath) {
+    throw new Error("opencode.json not found — cannot persist synced models")
+  }
+
+  const raw = readFileSync(configPath, "utf-8")
+  const config = JSON.parse(raw) as {
+    provider?: Record<string, {
+      models?: Record<string, {
+        name?: string
+        tool_call?: boolean
+        reasoning?: boolean
+        attachment?: boolean
+        limit?: { context?: number; output?: number; input?: number }
+        cost?: { input?: number; output?: number }
+      }>
+      [key: string]: unknown
+    }>
+  }
+
+  if (!config.provider) {
+    config.provider = {}
+  }
+
+  let added = 0
+  let updated = 0
+
+  for (const result of getCachedSyncResults()) {
+    const providerId = result.providerId
+    if (!config.provider[providerId]) {
+      // Skip providers not already in opencode.json — don't create new provider entries
+      continue
+    }
+
+    if (!config.provider[providerId].models) {
+      config.provider[providerId].models = {}
+    }
+
+    const modelsMap = config.provider[providerId].models!
+
+    for (const synced of result.models) {
+      const existing = modelsMap[synced.id]
+      const cap = synced.capabilities
+
+      const modelEntry = {
+        name: synced.name,
+        tool_call: cap?.tools ?? existing?.tool_call ?? false,
+        reasoning: cap?.reasoning ?? existing?.reasoning ?? false,
+        attachment: cap?.image ?? existing?.attachment ?? false,
+        limit: {
+          context: synced.limit?.context ?? existing?.limit?.context ?? 0,
+          output: synced.limit?.output ?? existing?.limit?.output ?? 0,
+          ...(synced.limit?.input || existing?.limit?.input
+            ? { input: synced.limit?.input ?? existing?.limit?.input }
+            : {}),
+        },
+        ...(synced.cost?.input || synced.cost?.output
+          ? { cost: { input: synced.cost?.input ?? 0, output: synced.cost?.output ?? 0 } }
+          : existing?.cost
+            ? { cost: existing.cost }
+            : {}),
+      }
+
+      if (!existing) {
+        modelsMap[synced.id] = modelEntry
+        added++
+      } else {
+        // Update existing entry — preserve any extra fields, update known ones
+        modelsMap[synced.id] = { ...existing, ...modelEntry }
+        updated++
+      }
+    }
+  }
+
+  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+  return { updated, added, path: configPath }
+}
+
+// Get all cached sync results (for merging into model selector)
+export function getCachedSyncResults(): ModelSyncResult[] {
+  return Array.from(syncCache.values()).map((v) => v.data)
+}
+
+// Build a lookup map of "providerId/modelId" → SyncedModel for quick merging
+export function getCachedModelMap(): Map<string, SyncedModel> {
+  const map = new Map<string, SyncedModel>()
+  for (const result of getCachedSyncResults()) {
+    for (const model of result.models) {
+      map.set(`${result.providerId}/${model.id}`, model)
+    }
+  }
+  return map
 }
 
 async function fetchProviderModels(config: ProviderConfig): Promise<SyncedModel[]> {

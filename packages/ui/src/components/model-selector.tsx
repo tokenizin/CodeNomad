@@ -1,7 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
+import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, Gift, AlertCircle, AlertTriangle, CheckCircle, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
 import type { Model, ModelCapabilities, ModelStatus } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -119,6 +119,14 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [initialQueryReady, setInitialQueryReady] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
   const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
+  // Capability toggle filters
+  const [capFilterTools, setCapFilterTools] = createSignal(false)
+  const [capFilterImage, setCapFilterImage] = createSignal(false)
+  const [capFilterVideo, setCapFilterVideo] = createSignal(false)
+  const [capFilterReasoning, setCapFilterReasoning] = createSignal(false)
+  const [capFilterAudio, setCapFilterAudio] = createSignal(false)
+  const [capFilterCloud, setCapFilterCloud] = createSignal(false)
+  const [capFilterFree, setCapFilterFree] = createSignal(false)
   let triggerRef!: HTMLButtonElement
   let searchInputRef!: HTMLInputElement
   let listboxRef!: HTMLUListElement
@@ -131,6 +139,15 @@ export default function ModelSelector(props: ModelSelectorProps) {
       fetchProviders(props.instanceId).catch((error) => log.error("Failed to fetch providers", error))
     }
   })
+
+  // Re-fetch providers when model sync completes so capability icons appear
+  const handleSyncComplete = () => {
+    setTimeout(() => {
+      fetchProviders(props.instanceId).catch((error) => log.error("Failed to re-fetch providers after sync", error))
+    }, 500)
+  }
+  window.addEventListener("model-sync-complete", handleSyncComplete)
+  onCleanup(() => window.removeEventListener("model-sync-complete", handleSyncComplete))
 
   const allModels = createMemo<FlatModel[]>(() =>
     instanceProviders().flatMap((p) =>
@@ -199,10 +216,32 @@ export default function ModelSelector(props: ModelSelectorProps) {
   })
 
   const visibleOptions = createMemo<FlatModel[]>(() => {
-    if (!favoritesOnlyEnabled()) {
-      return sortedModels()
+    let models = sortedModels()
+
+    // Apply capability filters (AND logic — model must have ALL toggled capabilities)
+    if (capFilterTools() || capFilterImage() || capFilterVideo() || capFilterReasoning() || capFilterAudio() || capFilterCloud()) {
+      models = models.filter((m) => {
+        const caps = m.capabilities
+        if (!caps) return false
+        if (capFilterTools() && !caps.tools) return false
+        if (capFilterImage() && !caps.image) return false
+        if (capFilterVideo() && !caps.video) return false
+        if (capFilterReasoning() && !caps.reasoning) return false
+        if (capFilterAudio() && !caps.audio) return false
+        if (capFilterCloud() && !caps.cloud) return false
+        return true
+      })
     }
-    return favoriteModels()
+
+    // Apply free model filter — show only models with cost.input === 0 && cost.output === 0
+    if (capFilterFree()) {
+      models = models.filter((m) => (m.cost?.input ?? 0) === 0 && (m.cost?.output ?? 0) === 0)
+    }
+
+    if (!favoritesOnlyEnabled()) {
+      return models
+    }
+    return models.filter((m) => favoriteKeySet().has(m.key))
   })
 
   const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {
@@ -262,6 +301,14 @@ export default function ModelSelector(props: ModelSelectorProps) {
       setInitialQueryReady(false)
       setSearchDirty(false)
       setAutoFavoritesEligibleAtOpen(false)
+      // Reset capability filters when dropdown closes
+      setCapFilterTools(false)
+      setCapFilterImage(false)
+      setCapFilterVideo(false)
+      setCapFilterReasoning(false)
+      setCapFilterAudio(false)
+      setCapFilterCloud(false)
+      setCapFilterFree(false)
     }
   })
 
@@ -492,6 +539,80 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   <Star class="w-4 h-4" fill={favoritesOnlyEnabled() ? "currentColor" : "none"} />
                 </button>
               </div>
+            </div>
+            {/* Capability filter toggle bar */}
+            <div class="selector-capability-filters">
+              {([
+                { signal: capFilterTools, set: setCapFilterTools, icon: Cpu, label: "Tools", color: "var(--status-info, #3b82f6)" },
+                { signal: capFilterImage, set: setCapFilterImage, icon: Image, label: "Vision", color: "var(--status-success, #22c55e)" },
+                { signal: capFilterVideo, set: setCapFilterVideo, icon: Video, label: "Video", color: "#a855f7" },
+                { signal: capFilterReasoning, set: setCapFilterReasoning, icon: Brain, label: "Reasoning", color: "#f97316" },
+                { signal: capFilterAudio, set: setCapFilterAudio, icon: Music, label: "Audio", color: "#ec4899" },
+                { signal: capFilterCloud, set: setCapFilterCloud, icon: Cloud, label: "Cloud", color: "#06b6d4" },
+              ] as const).map((cap) => (
+                <button
+                  type="button"
+                  class="selector-capability-toggle"
+                  data-active={cap.signal()}
+                  aria-pressed={cap.signal()}
+                  aria-label={cap.label}
+                  title={cap.label}
+                  onMouseDown={preventListboxPress}
+                  onPointerDown={preventListboxPress}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    cap.set(!cap.signal())
+                    suppressNextClose = true
+                    setTimeout(() => { suppressNextClose = false }, 0)
+                  }}
+                >
+                  <cap.icon
+                    class="w-3.5 h-3.5"
+                    style={{
+                      color: cap.signal() ? cap.color : "var(--text-muted)",
+                      opacity: cap.signal() ? 1 : 0.4,
+                    }}
+                  />
+                  <span
+                    class="selector-capability-toggle-label"
+                    style={{ color: cap.signal() ? cap.color : "var(--text-muted)" }}
+                  >
+                    {cap.label}
+                  </span>
+                </button>
+              ))}
+              <button
+                type="button"
+                class="selector-capability-toggle"
+                data-active={capFilterFree()}
+                aria-pressed={capFilterFree()}
+                aria-label={t("modelSelector.freeToggle.label")}
+                title={t("modelSelector.freeToggle.title")}
+                onMouseDown={preventListboxPress}
+                onPointerDown={preventListboxPress}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setCapFilterFree(!capFilterFree())
+                  suppressNextClose = true
+                  setTimeout(() => { suppressNextClose = false }, 0)
+                }}
+              >
+                <Gift
+                  class="w-3.5 h-3.5"
+                  style={{
+                    color: capFilterFree() ? "var(--status-success, #22c55e)" : "var(--text-muted)",
+                    opacity: capFilterFree() ? 1 : 0.4,
+                  }}
+                />
+                <span
+                  class="selector-capability-toggle-label"
+                  style={{ color: capFilterFree() ? "var(--status-success, #22c55e)" : "var(--text-muted)" }}
+                >
+                  {t("modelSelector.freeToggle.label")}
+                </span>
+              </button>
             </div>
             <Combobox.Listbox ref={listboxRef} class="selector-listbox" />
             <div class="selector-footer">

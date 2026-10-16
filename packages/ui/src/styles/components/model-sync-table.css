@@ -1,0 +1,42 @@
+/* Model Sync Settings Table — dark-theme aware via CSS token variables */
+
+.model-sync-table-wrapper {
+  overflow-x: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border-base);
+}
+
+.model-sync-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.model-sync-table thead th {
+  text-align: left;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+  border-bottom: 1px solid var(--border-base);
+  background: var(--surface-secondary);
+}
+
+.model-sync-table tbody tr {
+  border-bottom: 1px solid var(--border-muted);
+  transition: background-color 120ms ease-out;
+}
+
+.model-sync-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.model-sync-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.model-sync-table td {
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  vertical-align: middle;
+}

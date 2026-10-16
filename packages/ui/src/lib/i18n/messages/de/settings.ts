@@ -33,6 +33,9 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "Zu Favoriten hinzufügen",
   "modelSelector.favorite.remove": "Aus Favoriten entfernen",
   "modelSelector.manageProviders": "Anbieter verwalten",
+  "modelSelector.freeToggle.label": "Nur kostenlose Modelle",
+  "modelSelector.freeToggle.title": "Nur kostenlose Modelle anzeigen (kein Kostenaufwand)",
+  "settings.section.modelSync.lastTested": "Zuletzt getestet"
 
   "thinkingSelector.variant.default": "Standard",
   "thinkingSelector.label": "Denken: {variant}",

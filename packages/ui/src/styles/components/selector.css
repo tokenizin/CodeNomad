@@ -379,3 +379,44 @@
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* ─── Capability toggle filter bar ─── */
+
+.selector-capability-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-muted);
+  background: var(--surface-secondary);
+}
+
+.selector-capability-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-base);
+  border-radius: 3px;
+  background: var(--surface-base);
+  cursor: pointer;
+  transition: all 120ms ease-out;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  user-select: none;
+}
+
+.selector-capability-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.selector-capability-toggle[data-active="true"] {
+  border-color: currentColor;
+  background: color-mix(in oklab, currentColor 8%, var(--surface-base));
+}
+
+.selector-capability-toggle-label {
+  white-space: nowrap;
+}

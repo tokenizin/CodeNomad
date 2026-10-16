@@ -33,6 +33,8 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "Tambah ke favorit",
   "modelSelector.favorite.remove": "Hapus dari favorit",
   "modelSelector.manageProviders": "Kelola Provider",
+  "modelSelector.freeToggle.label": "Hanya model gratis",
+  "modelSelector.freeToggle.title": "Tampilkan hanya model gratis (tanpa biaya)"
 
   "thinkingSelector.variant.default": "Default",
   "thinkingSelector.label": "Pemikiran: {variant}",

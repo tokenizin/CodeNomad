@@ -33,6 +33,8 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "Agregar a favoritos",
   "modelSelector.favorite.remove": "Quitar de favoritos",
   "modelSelector.manageProviders": "Gestionar proveedores",
+  "modelSelector.freeToggle.label": "Solo modelos gratuitos",
+  "modelSelector.freeToggle.title": "Mostrar solo modelos gratuitos (sin costo)"
 
   "thinkingSelector.variant.default": "Por defecto",
   "thinkingSelector.label": "Pensamiento: {variant}",
@@ -315,6 +317,8 @@ export const settingsMessages = {
   "settings.section.modelSync.error": "Error",
   "settings.section.modelSync.testing": "Testing...",
   "settings.section.modelSync.modelInfo2": "Models with error or insufficient funds are automatically removed from favorites.",
+  "settings.section.modelSync.noModelsYet": "No modelos devueltos del sincronización.",
+  "settings.section.modelSync.lastTested": "Última prueba",
   "settings.section.sidecars.eyebrow": "Servicios del servidor",
   "settings.section.sidecars.title": "SideCars",
   "settings.section.sidecars.subtitle": "Configura servicios locales que escuchan en puertos fijos y que el servidor puede proxificar en pestañas.",

@@ -33,7 +33,11 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "添加到收藏",
   "modelSelector.favorite.remove": "从收藏移除",
   "modelSelector.manageProviders": "管理提供商",
+  "modelSelector.freeToggle.label": "仅免费模型",
+  "modelSelector.freeToggle.title": "仅显示免费模型（无成本）"
 
+  "
+  "settings.section.modelSync.lastTested": "最后测试",
   "thinkingSelector.variant.default": "默认",
   "thinkingSelector.label": "思考：{variant}",
 

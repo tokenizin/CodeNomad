@@ -796,25 +796,42 @@ async function fetchProviders(instanceId: string): Promise<void> {
 
   try {
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    // Do not PATCH /config to sync Ollama models: PATCH does not persist into the
-    // project provider layer and used to spam console 400s. Client merge intersects
-    // OpenCode catalog keys with live /api/tags so the picker never offers a tag
-    // OpenCode getModel cannot resolve (ProviderModelNotFoundError).
     const response = await rootClient.config.providers()
     if (!response.data) return
+
+    // Fetch cached model sync results (capabilities, status) in parallel
+    let syncModelMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
+    try {
+      const syncResp = await fetch("/api/model-sync/cached")
+      if (syncResp.ok) {
+        const syncData = await syncResp.json()
+        syncModelMap = syncData.modelMap ?? {}
+      }
+    } catch {
+      // Non-fatal — sync data is optional enhancement
+    }
 
     const providerList = response.data.providers.map((provider) => ({
       id: provider.id,
       name: provider.name,
       defaultModelId: response.data?.default?.[provider.id],
-      models: Object.entries(provider.models).map(([id, model]) => ({
-        id,
-        name: model.name,
-        providerId: provider.id,
-        limit: model.limit,
-        cost: model.cost,
-        variantKeys: Object.keys(model.variants ?? {}),
-      })),
+      models: Object.entries(provider.models).map(([id, model]) => {
+        const syncKey = `${provider.id}/${id}`
+        const syncEntry = syncModelMap[syncKey]
+        return {
+          id,
+          name: model.name,
+          providerId: provider.id,
+          limit: model.limit,
+          cost: model.cost,
+          variantKeys: Object.keys(model.variants ?? {}),
+          // Merge capabilities and status from model sync cache
+          capabilities: syncEntry?.capabilities as any,
+          status: syncEntry?.status as any,
+          lastTested: syncEntry?.lastTested,
+          errorDetails: syncEntry?.errorDetails,
+        }
+      }),
     }))
 
     const localProvider = await fetchLocalLlmProvider()

@@ -33,6 +33,8 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "Add to favorites",
   "modelSelector.favorite.remove": "Remove from favorites",
   "modelSelector.manageProviders": "Manage Providers",
+  "modelSelector.freeToggle.label": "Free models only",
+  "modelSelector.freeToggle.title": "Show only free models (no cost)",
 
   "thinkingSelector.variant.default": "Default",
   "thinkingSelector.label": "Thinking: {variant}",
@@ -334,6 +336,7 @@ export const settingsMessages = {
   "settings.section.modelSync.syncing": "Syncing models...",
   "settings.section.modelSync.syncComplete": "Sync complete at",
   "settings.section.modelSync.syncError": "Sync failed",
+  "settings.section.modelSync.lastTested": "Last tested",
   "settings.section.modelSync.noModelsYet": "No models returned from sync.",
   "settings.section.modelSync.waitingForSync": "Click \"Sync Models\" to fetch live model lists from all configured providers.",
   "settings.section.modelSync.modelId": "Model ID",

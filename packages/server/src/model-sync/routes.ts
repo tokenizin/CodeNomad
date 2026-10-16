@@ -1,5 +1,5 @@
 import { createLogger } from "../logger"
-import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs } from "./service"
+import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig } from "./service"
 import { testModel, testModelsBatch, type TestModelOptions, type ModelTestResult } from "./tester"
 import type { ModelSyncResult } from "./service"
 
@@ -127,6 +127,34 @@ export async function handleClearCache(): Promise<Response> {
   return Response.json({ success: true })
 }
 
+// Get cached sync results (for merging into model selector)
+export async function handleGetCachedSync(): Promise<Response> {
+  const results = getCachedSyncResults()
+  const modelMap = getCachedModelMap()
+  // Return both the per-provider results and a flat model lookup map
+  const flatMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
+  for (const [key, model] of modelMap.entries()) {
+    flatMap[key] = {
+      capabilities: model.capabilities as unknown as Record<string, boolean>,
+      status: model.status,
+      errorDetails: model.errorDetails,
+      lastTested: model.lastTested,
+    }
+  }
+  return Response.json({ results, modelMap: flatMap })
+}
+
+// Persist synced models to opencode.json config
+export async function handlePersistToConfig(): Promise<Response> {
+  try {
+    const result = persistSyncedModelsToConfig()
+    return Response.json({ success: true, ...result })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    return Response.json({ success: false, error: message }, { status: 500 })
+  }
+}
+
 // Route handler for the model sync API
 export async function handleModelSyncRoutes(request: Request, path: string): Promise<Response | null> {
   const method = request.method
@@ -140,6 +168,16 @@ export async function handleModelSyncRoutes(request: Request, path: string): Pro
   if (method === "POST" && path.startsWith("/api/model-sync/sync/")) {
     const providerId = path.split("/api/model-sync/sync/")[1]
     return handleSyncProvider(request, providerId)
+  }
+  
+  // GET /api/model-sync/cached - get cached sync results (no re-sync)
+  if (method === "GET" && path === "/api/model-sync/cached") {
+    return handleGetCachedSync()
+  }
+
+  // POST /api/model-sync/persist - write synced models to opencode.json
+  if (method === "POST" && path === "/api/model-sync/persist") {
+    return handlePersistToConfig()
   }
   
   // POST /api/model-sync/test - test single model

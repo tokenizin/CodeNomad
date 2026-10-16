@@ -1,5 +1,5 @@
 import { Button } from "@kobalte/core/button"
-import { createSignal, type Component } from "solid-js"
+import { createSignal, onMount, createEffect, type Component } from "solid-js"
 import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { For } from "solid-js"
@@ -15,6 +15,7 @@ interface SyncedModelRow {
   capabilities: { tools: boolean; image: boolean; video: boolean; reasoning: boolean; audio: boolean; cloud: boolean }
   status: string
   type: string
+  lastTested: number | null
 }
 
 export const ModelSyncSettingsSection: Component = () => {
@@ -23,6 +24,85 @@ export const ModelSyncSettingsSection: Component = () => {
   const [lastSync, setLastSync] = createSignal<number | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
+
+  // Load persisted sync results on mount so the table shows cached data immediately
+  onMount(async () => {
+    try {
+      const resp = await fetch("/api/model-sync/cached")
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data?.results && Array.isArray(data.results)) {
+          const cachedRows: SyncedModelRow[] = []
+          for (const r of data.results) {
+            if (r.models) {
+              for (const m of r.models) {
+                const ctx = m.limit?.context ?? 0
+                const ctxStr = ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
+                cachedRows.push({
+                  providerId: r.providerId,
+                  providerName: r.providerName,
+                  modelId: m.id,
+                  modelName: m.name,
+                  contextWindow: ctxStr || "N/A",
+                  capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
+                  status: m.status || "unknown",
+                  type: m.source || "unknown",
+                  lastTested: m.lastTested ?? null,
+                })
+              }
+            }
+          }
+          if (cachedRows.length > 0) {
+            setModels(cachedRows)
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — table starts empty
+    }
+  })
+
+  // Poll for live status updates every 5 seconds
+  createEffect(() => {
+    const poll = async () => {
+      try {
+        const resp = await fetch("/api/model-sync/cached")
+        if (resp.ok) {
+          const data = await resp.json()
+          if (data?.results && Array.isArray(data.results)) {
+            const cachedRows: SyncedModelRow[] = []
+            for (const r of data.results) {
+              if (r.models) {
+                for (const m of r.models) {
+                  const ctx = m.limit?.context ?? 0
+                  const ctxStr = ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
+                  cachedRows.push({
+                    providerId: r.providerId,
+                    providerName: r.providerName,
+                    modelId: m.id,
+                    modelName: m.name,
+                    contextWindow: ctxStr || "N/A",
+                    capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
+                    status: m.status || "unknown",
+                    type: m.source || "unknown",
+                    lastTested: m.lastTested ?? null,
+                  })
+                }
+              }
+            }
+            if (cachedRows.length > 0) {
+              setModels(cachedRows)
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — continue polling
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 5_000)
+    return () => clearInterval(interval)
+  })
 
   const handleSyncModels = async () => {
     setStatus("syncing")
@@ -59,6 +139,17 @@ export const ModelSyncSettingsSection: Component = () => {
       }
       setStatus("syncComplete")
       setLastSync(Date.now())
+
+      // Dispatch event so model selector re-fetches providers with merged sync data
+      window.dispatchEvent(new CustomEvent("model-sync-complete"))
+
+      // Also persist synced models to opencode.json config
+      try {
+        await fetch("/api/model-sync/persist", { method: "POST" })
+      } catch {
+        // Non-fatal — persistence to config is best-effort
+      }
+
       setTimeout(() => setStatus("idle"), 2000)
     } catch (e: unknown) {
       const err = e as Error
@@ -187,44 +278,34 @@ export const ModelSyncSettingsSection: Component = () => {
           )}
 
           {models().length > 0 && (
-            <div class="table-responsive">
-              <table class="w-full collapse-table">
+            <div class="model-sync-table-wrapper">
+              <table class="model-sync-table">
                 <thead>
                   <tr>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.modelId")}
-                    </th>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.modelName")}
-                    </th>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.contextWindow")}
-                    </th>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.capabilities")}
-                    </th>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.status")}
-                    </th>
-                    <th class="px-4 py-2 text-left text-xs font-medium capitalize text-gray-400">
-                      {t("settings.section.modelSync.type")}
-                    </th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.modelId")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.modelName")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.contextWindow")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.capabilities")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.status")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.type")}</th>
+                    <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.lastTested")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <For each={models()}>
                     {(model) => (
-                      <tr class="border-b hover:bg-gray-50" {...{ key: `${model.providerId}-${model.modelId}` }}>
-                        <td class="px-4 py-2 text-sm font-medium text-gray-900">{model.modelId}</td>
-                        <td class="px-4 py-2 text-sm text-gray-500">{model.modelName}</td>
-                        <td class="px-4 py-2 text-sm text-gray-500">{model.contextWindow}</td>
-                        <td class="px-4 py-2">{capabilityIcons(model.capabilities)}</td>
-                        <td class="px-4 py-2">
+                      <tr {...{ key: `${model.providerId}-${model.modelId}` }}>
+                        <td style={{ color: "var(--text-primary)" }}>{model.modelId}</td>
+                        <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
+                        <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>
+                        <td>{capabilityIcons(model.capabilities)}</td>
+                        <td>
                           <span class={`px-2 py-1 rounded text-xs font-medium ${statusBadgeColor(model.status)}`} title={model.status}>
                             {model.status}
                           </span>
                         </td>
-                        <td class="px-4 py-2 text-sm text-gray-500">{model.type}</td>
+                        <td style={{ color: "var(--text-secondary)" }}>{model.type}</td>
+                        <td style={{ color: "var(--text-muted)" }}>{model.lastTested !== null ? new Date(model.lastTested).toLocaleString() : "Never"}</td>
                       </tr>
                     )}
                   </For>

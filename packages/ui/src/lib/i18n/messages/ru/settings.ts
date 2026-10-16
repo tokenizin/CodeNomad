@@ -33,6 +33,9 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "Добавить в избранное",
   "modelSelector.favorite.remove": "Удалить из избранного",
   "modelSelector.manageProviders": "Управление провайдерами",
+  "modelSelector.freeToggle.label": "Только бесплатные модели",
+  "modelSelector.freeToggle.title": "Показать только бесплатные модели (без стоимости)",
+  "settings.section.modelSync.lastTested": "Последняя проверка"
 
   "thinkingSelector.variant.default": "По умолчанию",
   "thinkingSelector.label": "Размышления: {variant}",

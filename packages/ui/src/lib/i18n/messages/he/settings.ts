@@ -33,6 +33,9 @@ export const settingsMessages = {
   "modelSelector.favorite.add": "הוסף למועדפים",
   "modelSelector.favorite.remove": "הסר ממועדפים",
   "modelSelector.manageProviders": "נהל ספקים",
+  "modelSelector.freeToggle.label": "רק דגמים חינמיים",
+  "modelSelector.freeToggle.title": "הצג דגמים חינמיים בלבד (ללא עלות)",
+  "settings.section.modelSync.lastTested": "תוכנת לאחרונה"
 
   "thinkingSelector.variant.default": "ברירת מחדל",
   "thinkingSelector.label": "חשיבה: {variant}",
