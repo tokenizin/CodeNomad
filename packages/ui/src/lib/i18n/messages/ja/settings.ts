@@ -35,8 +35,7 @@ export const settingsMessages = {
   "modelSelector.manageProviders": "プロバイダーを管理",
   "modelSelector.freeToggle.label": "無料モデルのみ",
   "modelSelector.freeToggle.title": "無料モデルのみを表示（無料）",
-  "settings.section.modelSync.lastTested": "最終テスト"
-
+  "settings.section.modelSync.lastTested": "最終テスト",
   "thinkingSelector.variant.default": "デフォルト",
   "thinkingSelector.label": "思考: {variant}",
 

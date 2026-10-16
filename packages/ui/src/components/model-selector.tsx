@@ -70,15 +70,15 @@ function CapabilityIcons({ capabilities }: { capabilities?: ModelCapabilities })
 
 // Status badge component
 function StatusBadge({ status, errorDetails }: { status?: ModelStatus; errorDetails?: string }) {
-  if (!status || status === "unknown" || status === "available") return null
-  
   const configs = {
     insufficient_funds: { icon: AlertTriangle, color: "text-yellow-400 bg-yellow-400/10", label: "Insufficient Funds", title: errorDetails || "Insufficient credits or quota exceeded" },
     error: { icon: AlertCircle, color: "text-red-400 bg-red-400/10", label: "Error", title: errorDetails || "Model unavailable" },
     testing: { icon: Cpu, color: "text-blue-400 bg-blue-400/10 animate-pulse", label: "Testing...", title: "Model is being tested" },
+    available: { icon: CheckCircle, color: "text-green-400 bg-green-400/10", label: "Available", title: "Model is available for use" },
+    unknown: { icon: Info, color: "text-gray-400 bg-gray-400/10", label: "Unknown", title: errorDetails || "Model status not yet tested" },
   }
   
-  const config = configs[status]
+  const config = configs[status as keyof typeof configs]
   if (!config) return null
   
   const Icon = config.icon
@@ -233,9 +233,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
       })
     }
 
-    // Apply free model filter — show only models with cost.input === 0 && cost.output === 0
+    // Apply free model filter — show only models with actual cost object where both input & output are 0
     if (capFilterFree()) {
-      models = models.filter((m) => (m.cost?.input ?? 0) === 0 && (m.cost?.output ?? 0) === 0)
+      models = models.filter((m) => m.cost !== undefined && m.cost.input === 0 && m.cost.output === 0)
     }
 
     if (!favoritesOnlyEnabled()) {

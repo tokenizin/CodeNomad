@@ -1,8 +1,14 @@
 import { Button } from "@kobalte/core/button"
-import { createSignal, onMount, createEffect, type Component } from "solid-js"
+import {
+  createSignal,
+  onMount,
+  onCleanup,
+  createEffect,
+  type Component,
+  createMemo,
+} from "solid-js"
 import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, XCircle, Info, Globe, Sparkles, Star } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
-import { For } from "solid-js"
 import type React from "react"
 
 type ModelSyncStatus = "idle" | "syncing" | "syncComplete" | "syncError"
@@ -18,6 +24,13 @@ interface SyncedModelRow {
   type: string
   lastTested: number | null
   errorDetails?: string
+}
+
+// Group models by provider for the table
+type ProviderGroup = {
+  providerId: string
+  providerName: string
+  models: SyncedModelRow[]
 }
 
 export const ModelSyncSettingsSection: Component = () => {
@@ -50,6 +63,7 @@ export const ModelSyncSettingsSection: Component = () => {
                   status: m.status || "unknown",
                   type: m.source || "unknown",
                   lastTested: m.lastTested ?? null,
+                  errorDetails: m.errorDetails ?? null,
                 })
               }
             }
@@ -88,6 +102,7 @@ export const ModelSyncSettingsSection: Component = () => {
                     status: m.status || "unknown",
                     type: m.source || "unknown",
                     lastTested: m.lastTested ?? null,
+                    errorDetails: m.errorDetails ?? null,
                   })
                 }
               }
@@ -103,7 +118,7 @@ export const ModelSyncSettingsSection: Component = () => {
     }
     poll()
     const interval = setInterval(poll, 5_000)
-    return () => clearInterval(interval)
+    onCleanup(() => clearInterval(interval))
   })
 
   const handleSyncModels = async () => {
@@ -186,14 +201,14 @@ export const ModelSyncSettingsSection: Component = () => {
 
     return (
       <div class="flex items-center gap-1">
-        <For each={icons}>{(item, idx) => {
+        {icons.map((item, idx) => {
           const Icon = item.icon
           return (
-            <div class="relative" title={item.title} {...{ key: idx() }}>
+            <div class="relative" title={item.title} {...{ key: idx }}>
               <Icon class="w-3.5 h-3.5 opacity-70 hover:opacity-100 transition-opacity" style={{ color: item.color }} />
             </div>
           )
-        }}</For>
+        })}
       </div>
     )
   }
@@ -208,57 +223,112 @@ export const ModelSyncSettingsSection: Component = () => {
     return colors[modelStatus] || "text-gray-400 bg-gray-400/10"
   }
 
-// Status icon component
-function StatusIcon({ status, errorDetails }: { status?: string; errorDetails?: string }) {
-  if (!status || status === "unknown" || status === "available") return null
-  
-  const configs = {
-    insufficient_funds: { icon: AlertTriangle, color: "text-yellow-400 bg-yellow-400/10", label: "Insufficient Funds", title: errorDetails || "Insufficient credits or quota exceeded" },
-    error: { icon: AlertCircle, color: "text-red-400 bg-red-400/10", label: "Error", title: errorDetails || "Model unavailable" },
-    testing: { icon: Cpu, color: "text-blue-400 bg-blue-400/10 animate-pulse", label: "Testing...", title: "Model is being tested" },
-  }
-  
-  const config = configs[status as keyof typeof configs] as { icon: any; color: string; label: string; title: string }
-  if (!config) return null
-  
-  const Icon = config.icon
-  return (
-    <span 
-      class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
-      title={config.title}
-    >
-      <Icon class="w-3 h-3" />
-      <span>{config.label}</span>
-    </span>
-  )
-}
+  // Status icon component - shows appropriate icon for each status, displays error details visibly
+  function StatusIcon({ status, errorDetails }: { status?: string; errorDetails?: string }) {
+    if (!status) return null
 
-// Type icon component
-function TypeIcon({ type }: { type?: string }) {
-  if (!type) return null
-  
-  const typeConfigs: Record<string, { icon: any; title: string; color: string }> = {
-    star: { icon: Star, title: "Star", color: "text-yellow-400" },
-    code: { icon: Globe, title: "Code", color: "text-blue-400" },
-    voice: { icon: Music, title: "Voice", color: "text-pink-400" },
-    image: { icon: Image, title: "Image", color: "text-green-400" },
-    agent: { icon: Brain, title: "Agent", color: "text-orange-400" },
+    const configs = {
+      available: {
+        icon: CheckCircle,
+        color: "text-green-400 bg-green-400/10",
+        label: "Available",
+        title: "Model is available for use",
+        showLabel: true,
+      },
+      insufficient_funds: {
+        icon: AlertTriangle,
+        color: "text-yellow-400 bg-yellow-400/10",
+        label: "Insufficient Funds",
+        title: errorDetails || "Insufficient credits or quota exceeded",
+        showLabel: true,
+      },
+      error: {
+        icon: AlertCircle,
+        color: "text-red-400 bg-red-400/10",
+        label: "Error",
+        title: errorDetails || "Model unavailable",
+        showLabel: true,
+      },
+      testing: {
+        icon: Cpu,
+        color: "text-blue-400 bg-blue-400/10 animate-pulse",
+        label: "Testing...",
+        title: "Model is being tested",
+        showLabel: true,
+      },
+      unknown: {
+        icon: Info,
+        color: "text-gray-400 bg-gray-400/10",
+        label: "Unknown",
+        title: errorDetails || "Model status not yet tested",
+        showLabel: true,
+      },
+    }
+
+    const config = configs[status as keyof typeof configs]
+    if (!config) return null
+
+    const Icon = config.icon
+    return (
+      <span
+        class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
+        title={config.title}
+      >
+        <Icon class="w-3 h-3" />
+        <span>{config.label}</span>
+      </span>
+    )
   }
-  
-  const config = typeConfigs[type.toLowerCase()]
-  if (!config) return null
-  
-  const Icon = config.icon
-  return (
-    <span
-      class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
-      title={config.title}
-    >
-      <Icon class="w-3 h-3" />
-      <span>{config.title}</span>
-    </span>
-  )
-}
+
+  // Type icon component with generic fallback for unrecognized source values
+  function TypeIcon({ type }: { type?: string }) {
+    if (!type) return null
+
+    const typeConfigs: Record<string, { icon: any; title: string; color: string }> = {
+      star: { icon: Star, title: "Star", color: "text-yellow-400" },
+      code: { icon: Globe, title: "Code", color: "text-blue-400" },
+      voice: { icon: Music, title: "Voice", color: "text-pink-400" },
+      image: { icon: Image, title: "Image", color: "text-green-400" },
+      agent: { icon: Brain, title: "Agent", color: "text-orange-400" },
+    }
+
+    // Generic fallback for unrecognized source values
+    const fallback: { icon: any; title: string; color: string } = {
+      icon: Info,
+      title: "Custom",
+      color: "text-gray-500",
+    }
+
+    const config = typeConfigs[type.toLowerCase()] || fallback
+    const Icon = config.icon
+    return (
+      <span
+        class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
+        title={config.title}
+      >
+        <Icon class="w-3 h-3" />
+        <span>{config.title}</span>
+      </span>
+    )
+  }
+
+  // Group models by provider for display
+  const providerGroups = createMemo(() => {
+    const groups: Record<string, ProviderGroup> = {}
+    for (const model of models()) {
+      const existing = groups[model.providerId]
+      if (existing) {
+        existing.models.push(model)
+      } else {
+        groups[model.providerId] = {
+          providerId: model.providerId,
+          providerName: model.providerName,
+          models: [model],
+        }
+      }
+    }
+    return Object.values(groups)
+  })
 
   return (
     <div class="settings-section-stack">
@@ -348,20 +418,31 @@ function TypeIcon({ type }: { type?: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {models().map((model) => (
-                    <tr {...{ key: `${model.providerId}-${model.modelId}` as unknown as React.Key }}>
-                      <td style={{ color: "var(--text-primary)" }}>{model.providerName}</td>
-                      <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
-                      <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>
-                      <td>{capabilityIcons(model.capabilities)}</td>
-                      <td>
-                        <StatusIcon status={model.status} errorDetails={model.errorDetails} />
-                      </td>
-                      <td>
-        <TypeIcon type={model.type} />
-      </td>
-                      <td style={{ color: "var(--text-muted)" }}>{model.lastTested !== null ? new Date(model.lastTested).toLocaleString() : "Never"}</td>
-                    </tr>
+                  {providerGroups().map((group: ProviderGroup) => (
+                    <>
+                      <tr {...{ key: group.providerId as unknown as React.Key }} class="provider-group">
+                        <td colSpan={7} class="provider-header">
+                          {t("settings.section.modelSync.provider")}: {group.providerName}
+                        </td>
+                      </tr>
+                      {group.models.map((model: SyncedModelRow) => (
+                          <tr {...{ key: `${model.providerId}-${model.modelId}` as unknown as React.Key }} class="model-row">
+                          <td style={{ color: "var(--text-primary)" }}>{model.providerName}</td>
+                          <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
+                          <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>
+                          <td>{capabilityIcons(model.capabilities)}</td>
+                          <td>
+                            <StatusIcon status={model.status} errorDetails={model.errorDetails} />
+                          </td>
+                          <td>
+                            <TypeIcon type={model.type} />
+                          </td>
+                          <td style={{ color: "var(--text-muted)" }}>
+                            {model.lastTested !== null ? new Date(model.lastTested).toLocaleString() : "Never"}
+                          </td>
+                        </tr>
+                      ))}
+                    </>
                   ))}
                 </tbody>
               </table>

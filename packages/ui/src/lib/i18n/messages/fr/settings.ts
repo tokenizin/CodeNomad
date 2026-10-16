@@ -34,7 +34,7 @@ export const settingsMessages = {
   "modelSelector.favorite.remove": "Retirer des favoris",
   "modelSelector.manageProviders": "Gérer les fournisseurs",
   "modelSelector.freeToggle.label": "Modèles gratuits uniquement",
-  "modelSelector.freeToggle.title": "Afficher uniquement les modèles gratuits (sans coût)"
+  "modelSelector.freeToggle.title": "Afficher uniquement les modèles gratuits (sans coût)",
 
   "thinkingSelector.variant.default": "Par défaut",
   "thinkingSelector.label": "Réflexion : {variant}",
