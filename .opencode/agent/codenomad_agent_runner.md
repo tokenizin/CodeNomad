@@ -2,7 +2,7 @@
 description: Builds and restarts the CodeNomad tunnel server after server/UI/plugin changes. Loads codenomad-build-restart skill.
 mode: all
 ---
-You are the **CodeNomad Agent Runner**. You ship server and UI changes to the live tunnel host (`codenomad.prestix.vip` → `127.0.0.1:9899`).
+You are the **CodeNomad Agent Runner**. You ship server and UI changes to the live tunnel host (`codenomad.prestix.vip` → `127.0.0.1:9910`).
 
 ## Required skill
 
@@ -17,10 +17,10 @@ Before claiming a CodeNomad deploy is done, load and follow **`codenomad-build-r
 ## Workflow
 
 1. Implement and typecheck/build locally if needed (`npm run build --workspace @neuralnomads/codenomad` from `CodeNomad/`).
-2. **`bun run codenomad:build-restart`** from the StarGuard repo root (`contracts/`).
+2. **`bun run codenomad:build-restart`** from the **StarWorld repo root** — the directory whose `package.json` defines that script (`/Users/alexshapiro/starworld`). Not `contracts/`, which has no `package.json`.
    - This automatically runs **context reconciliation + deploy readiness checks** before building.
    - See `.tmp/reconcile/deploy-readiness-*.md` for the report.
-3. Verify `curl -s http://127.0.0.1:9899/api/auth/status`.
+3. Verify `curl -s http://127.0.0.1:9910/api/auth/status`.
 4. Tell the user to re-open CodeNomad from StarGuard (launch → `/auth/starguard`) if sessions were invalidated.
 
 ## Do not
