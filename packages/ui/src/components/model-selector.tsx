@@ -1,7 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, Gift, AlertCircle, AlertTriangle, CheckCircle, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
+import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, Gift, AlertCircle, AlertTriangle, CheckCircle, Info, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
 import type { Model, ModelCapabilities, ModelStatus } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
