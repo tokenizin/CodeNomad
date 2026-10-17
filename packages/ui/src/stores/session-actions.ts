@@ -222,6 +222,8 @@ async function sendMessage(
       parts: [
         {
           id: assistantPartId,
+          sessionID: sessionId,
+          messageID: assistantId,
           type: "text" as const,
           text: "Running Claude Code (Rust)…",
           synthetic: true,
@@ -253,6 +255,8 @@ async function sendMessage(
             parts: [
               {
                 id: assistantPartId,
+                sessionID: sessionId,
+                messageID: assistantId,
                 type: "text" as const,
                 text: ev.line,
                 synthetic: true,
@@ -287,6 +291,8 @@ async function sendMessage(
         parts: [
           {
             id: assistantPartId,
+            sessionID: sessionId,
+            messageID: assistantId,
             type: "text" as const,
             text,
             synthetic: true,
@@ -308,6 +314,8 @@ async function sendMessage(
         parts: [
           {
             id: assistantPartId,
+            sessionID: sessionId,
+            messageID: assistantId,
             type: "text" as const,
             text: error instanceof Error ? error.message : String(error),
             synthetic: true,

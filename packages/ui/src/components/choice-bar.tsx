@@ -47,7 +47,7 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
   createEffect(() => {
     // Access props.choice to trigger on change
     if (props.choice) {
-      setSelectedValues(new Set())
+      setSelectedValues(new Set<string>())
     }
   })
 
@@ -80,7 +80,7 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
     // Auto-dismiss after timeout
     dismissTimerId = setTimeout(() => {
       setCountdown(null)
-      setSelectedValues(new Set())
+      setSelectedValues(new Set<string>())
       props.onDismiss()
     }, totalSeconds * 1000)
 
@@ -131,7 +131,7 @@ const ChoiceBar: Component<ChoiceBarProps> = (props) => {
 
   // Handle dismiss
   const handleDismiss = () => {
-    setSelectedValues(new Set())
+    setSelectedValues(new Set<string>())
     props.onDismiss()
   }
 

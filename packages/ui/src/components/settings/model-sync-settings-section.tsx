@@ -11,7 +11,16 @@ import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircl
 import { useI18n } from "../../lib/i18n"
 import type React from "react"
 
-type ModelSyncStatus = "idle" | "syncing" | "syncComplete" | "syncError"
+type ModelSyncStatus = "idle" | "syncing" | "testing" | "syncComplete" | "syncError"
+
+/** One row produced by the /api/model-sync/test/batch handler below. */
+interface ModelTestSummary {
+  model: string
+  provider: string
+  status: string
+  latencyMs?: number
+  errorDetails?: string
+}
 
 interface SyncedModelRow {
   providerId: string
@@ -213,7 +222,7 @@ export const ModelSyncSettingsSection: Component = () => {
       })
       const data = await result.json()
       if (data && data.results && Array.isArray(data.results)) {
-        const statusPromises = data.results.map((r: any, i: number) => {
+        const statusPromises: ModelTestSummary[] = data.results.map((r: any, i: number) => {
           const m = models()[i] || {}
           const statusText =
             r.status === "available" ? "✓ Available" :
@@ -422,6 +431,7 @@ export const ModelSyncSettingsSection: Component = () => {
           {status() !== "idle" && (
             <div class="settings-sync-status">
               {status() === "syncing" && <span>{t("settings.section.modelSync.syncing")}</span>}
+              {status() === "testing" && <span>{t("settings.section.modelSync.testing")}</span>}
               {status() === "syncComplete" && (
                 <span>
                   {t("settings.section.modelSync.syncComplete")} {new Date(lastSync()!).toLocaleTimeString()}

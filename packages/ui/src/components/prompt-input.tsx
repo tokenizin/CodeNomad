@@ -1024,7 +1024,7 @@ export default function PromptInput(props: PromptInputProps) {
   // pull the last assistant message and generate predictive suggestions.
   let prevBusy = false
   createEffect(() => {
-    const busy = props.isSessionBusy
+    const busy = Boolean(props.isSessionBusy)
     const wasJustBusy = prevBusy && !busy
     prevBusy = busy
 
@@ -1059,7 +1059,7 @@ export default function PromptInput(props: PromptInputProps) {
           }
         }
       } catch (err) {
-        log.debug("Failed to generate prompt recommendations:", err)
+        log.warn("Failed to generate prompt recommendations:", err)
       }
     }, 500)
 
