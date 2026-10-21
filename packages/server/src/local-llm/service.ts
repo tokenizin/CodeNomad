@@ -86,3 +86,96 @@ export async function listLocalLlmModels(baseUrl?: string): Promise<LocalLlmMode
     }
   }
 }
+
+// ─── Per-model official limits (POST /api/show) ─────────────────────────────
+//
+// GET /api/tags only returns model names. The official per-model context window
+// and max output live in POST /api/show under `model_info` (keyed by
+// architecture, e.g. `qwen3.context_length`) and `parameters` (e.g. `num_predict`).
+// We fall back to the Ollama maximum (256K) when the metadata is absent or the
+// request fails, so a missing value never silently shrinks a model's window.
+
+/** Fallback context/output limit — the Ollama maximum (256K). */
+export const DEFAULT_OLLAMA_CONTEXT_LIMIT = 262144
+
+export interface OllamaModelLimits {
+  context: number
+  output: number
+}
+
+/**
+ * Extract the official context window from an Ollama `/api/show` `model_info`
+ * object. Matches any architecture-prefixed key ending in `.context_length`
+ * (which also covers `general.context_length`). Returns null when absent.
+ */
+export function extractOllamaContextLength(
+  modelInfo: Record<string, unknown> | undefined | null,
+): number | null {
+  if (!modelInfo || typeof modelInfo !== "object") return null
+
+  for (const [key, raw] of Object.entries(modelInfo)) {
+    if (!key.endsWith(".context_length")) continue
+    const value = typeof raw === "number" ? raw : Number(raw)
+    if (Number.isFinite(value) && value > 0) return value
+  }
+
+  return null
+}
+
+/**
+ * Extract the advertised max output (`num_predict`) from an Ollama `parameters`
+ * string. Returns null when the directive is absent.
+ */
+export function extractOllamaMaxOutput(parameters: string | undefined | null): number | null {
+  if (!parameters || typeof parameters !== "string") return null
+
+  for (const line of parameters.split("\n")) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const [directive, value] = trimmed.split(/\s+/)
+    if (directive !== "num_predict") continue
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+
+  return null
+}
+
+interface OllamaShowResponse {
+  model_info?: Record<string, unknown>
+  parameters?: string
+}
+
+/**
+ * Resolve the official context window and max output for one Ollama model via
+ * `POST /api/show`. Falls back to the Ollama maximum (256K) for both when the
+ * model does not advertise them or `/api/show` is unreachable.
+ */
+export async function getOllamaModelLimits(
+  modelId: string,
+  baseUrl?: string,
+): Promise<OllamaModelLimits> {
+  const host = normalizeHost(baseUrl)
+  const fallback: OllamaModelLimits = {
+    context: DEFAULT_OLLAMA_CONTEXT_LIMIT,
+    output: DEFAULT_OLLAMA_CONTEXT_LIMIT,
+  }
+
+  try {
+    const response = await fetch(`${host}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelId }),
+      signal: AbortSignal.timeout(5_000),
+    })
+
+    if (!response.ok) return fallback
+
+    const payload = (await response.json()) as OllamaShowResponse
+    const context = extractOllamaContextLength(payload.model_info) ?? DEFAULT_OLLAMA_CONTEXT_LIMIT
+    const output = extractOllamaMaxOutput(payload.parameters) ?? DEFAULT_OLLAMA_CONTEXT_LIMIT
+    return { context, output }
+  } catch {
+    return fallback
+  }
+}

@@ -1,5 +1,5 @@
 import type { ModelCapabilities } from "../../../../ui/src/types/session"
-import { listLocalLlmModels } from "../../local-llm/service"
+import { getOllamaModelLimits, listLocalLlmModels } from "../../local-llm/service"
 
 export interface OllamaModelConfig {
   id: string
@@ -50,19 +50,26 @@ export async function fetchOllamaModels(baseUrl?: string): Promise<OllamaModelCo
     return []
   }
   
-  return response.models.map((model) => ({
-    id: model.id,
-    name: model.name,
-    providerId: "ollama",
-    limit: {
-      context: 32768, // Default, would need model-specific detection
-      input: 32768,
-      output: 8192,
-    },
-    cost: {
-      input: 0,
-      output: 0,
-    },
-    capabilities: detectOllamaCapabilities(model.id),
-  }))
+  // Resolve the official per-model limits via POST /api/show (see local-llm/service.ts).
+  // input mirrors context; output is the model's advertised max output (fallback 256K).
+  return Promise.all(
+    response.models.map(async (model) => {
+      const { context, output } = await getOllamaModelLimits(model.id, baseUrl)
+      return {
+        id: model.id,
+        name: model.name,
+        providerId: "ollama",
+        limit: {
+          context,
+          input: context,
+          output,
+        },
+        cost: {
+          input: 0,
+          output: 0,
+        },
+        capabilities: detectOllamaCapabilities(model.id),
+      }
+    }),
+  )
 }
