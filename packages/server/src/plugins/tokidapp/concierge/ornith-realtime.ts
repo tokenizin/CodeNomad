@@ -3,10 +3,14 @@ import { normalizeRealtimeVoice, type RealtimeVoiceId } from "./realtime-voices"
 import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import { executeTool } from "./openai-realtime"
 import { voiceOrchestratorToolDefinitions } from "./voice-orchestrator-tools"
+import { createLocalTTSConnection } from "./local-tts"
+import { createLocalTtsRouter, type LocalTtsRouter } from "./local-tts-router"
+import { SentenceBuffer } from "./speech-sentence-buffer"
 import {
-  createLocalTTSConnection,
-  type LocalTTSConnection,
-} from "./local-tts"
+  createVoxCpmTTSConnection,
+  pickVoxCpmVoiceForLocale,
+  resolveOrnithVoxVoice,
+} from "./voxcpm-tts"
 import {
   pickPiperVoiceForLocale,
   resolvePiperModelAndSynthesis,
@@ -174,8 +178,12 @@ interface OrnithSession {
   /** Send a message to the frontend client WebSocket (not the Ornith WS).
    *  Used for tool_result, clickflow prompts, and other client-destined messages. */
   sendToClient?: (msg: string) => void
-  /** Local Piper TTS (no OpenAI). */
-  tts?: LocalTTSConnection
+  /** Local TTS (no OpenAI): VoxCPM2 when a voxcpm-* voice is chosen, with Piper as the fallback; Piper otherwise. */
+  tts?: LocalTtsRouter
+  /** Sidecar voice id when this session speaks with VoxCPM2. */
+  voxVoice?: string
+  /** VoxCPM2 only: batches the LLM's token deltas into sentences (one sidecar request per sentence, not per token). */
+  speechBuffer?: SentenceBuffer
   /** Local STT: whisper.cpp or faster-whisper (no OpenAI). */
   stt?: LocalSTTConnection | WhisperSTTConnection
   /** Held on the session so teardown, which only has a sessionId, can attribute. */
@@ -780,9 +788,19 @@ export function createOrnithSession(
     if (agentSessionId) session.agentSessionId = agentSessionId
   })
 
-  // Local Piper TTS — never OpenAI tts-1
-  session.tts = createLocalTTSConnection(
-    { voice: piper.model, synthesis: piper.synthesis },
+  // Local TTS — never OpenAI tts-1. VoxCPM2 (Mac Studio sidecar) when selected, Piper otherwise / as fallback.
+  session.voxVoice = resolveOrnithVoxVoice(voiceId)
+  if (session.voxVoice) {
+    session.speechBuffer = new SentenceBuffer()
+    console.log(`[ornith] Local TTS backend: VoxCPM2 (voice ${session.voxVoice}), Piper fallback`)
+  }
+  session.tts = createLocalTtsRouter(
+    {
+      voxVoice: session.voxVoice,
+      piper: { voice: piper.model, synthesis: piper.synthesis },
+      createPiper: createLocalTTSConnection,
+      createVox: createVoxCpmTTSConnection,
+    },
     {
       onAudio: (base64Chunk) => {
         try {
@@ -1132,6 +1150,9 @@ async function handleResponseCreate(
       }
     }
     
+    // VoxCPM2 speaks sentences: whatever the model wrote after its last full stop is still buffered.
+    if (!session.interpret && session.locale !== "id") await flushBufferedSpeech(session)
+
     // No requestId: Ollama's native /api/chat carries no response id at all,
     // and this stream is consumed once. A generated key is the right one here.
     meterVoiceTurn({
@@ -1147,13 +1168,14 @@ async function handleResponseCreate(
     if (fullResponse) {
       session.transcript.push(`Assistant: ${fullResponse}`)
       if (session.interpret || session.locale === "id") {
-        await sendAudioChunk(session, fullResponse)
+        await sendAudioChunk(session, fullResponse, { complete: true })
       }
     }
     
   } catch (error) {
     console.error(`[ornith] Response creation error:`, error)
   } finally {
+    session.speechBuffer?.reset() // a failed response must not leak its tail into the next one
     // Track total response latency
     setLatencyMetric(session.sessionId, 'responseMs', Date.now() - responseStart)
 
@@ -1169,7 +1191,26 @@ async function handleResponseCreate(
   }
 }
 
+/**
+ * Speak `text`. Piper sessions speak every delta immediately (unchanged). VoxCPM2 sessions buffer deltas into sentences;
+ * pass `complete` when `text` is a whole reply so nothing is left waiting for a terminator.
+ */
 async function sendAudioChunk(
+  session: OrnithSession,
+  text: string,
+  options: { complete?: boolean } = {},
+): Promise<void> {
+  if (!session.speechBuffer) return speakText(session, text)
+  const sentences = session.speechBuffer.push(text)
+  if (options.complete) sentences.push(...session.speechBuffer.flush())
+  for (const sentence of sentences) await speakText(session, sentence)
+}
+
+async function flushBufferedSpeech(session: OrnithSession): Promise<void> {
+  for (const sentence of session.speechBuffer?.flush() ?? []) await speakText(session, sentence)
+}
+
+async function speakText(
   session: OrnithSession,
   text: string
 ): Promise<void> {
@@ -1178,7 +1219,7 @@ async function sendAudioChunk(
   if (!spoken.trim()) return
 
   if (!session.tts) {
-    console.error('[ornith] Local Piper TTS not initialized')
+    console.error('[ornith] Local TTS not initialized')
     return
   }
 
@@ -1202,8 +1243,10 @@ async function sendAudioChunk(
       setLatencyMetric(session.sessionId, 'firstAudioMs', Date.now() - chunkStart)
     }
     session.tts.speak(spoken, {
-      voice: resolved.model,
-      ...resolved.synthesis,
+      piper: { voice: resolved.model, ...resolved.synthesis },
+      vox: session.voxVoice
+        ? { voice: pickVoxCpmVoiceForLocale(session.voxVoice, ttsLang === "id" ? "id" : "en") }
+        : undefined,
     })
     session.tts.flush()
   } catch (error) {

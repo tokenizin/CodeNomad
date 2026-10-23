@@ -1,15 +1,11 @@
 /**
- * Local STT SpeechProvider — faster-whisper batch transcription.
+ * Local SpeechProvider — faster-whisper STT + VoxCPM2 TTS, fully on the Mac Studio.
  *
- * Implements the `SpeechProvider` interface for the speech settings panel.
- * Uses the local Python faster-whisper server for batch transcription
- * (non-streaming). TTS is not supported — use OpenAI or Deepgram for that.
+ * Selected when the speech provider is "local". STT is batch transcription through the local Python faster-whisper
+ * server. TTS (batch and streaming) is the VoxCPM2 sidecar — see `voxcpm-synth.ts` for formats and limits and
+ * docs/LOCAL_VOICE_VOXCPM2.md for setup (VOXCPM_SIDECAR_URL / VOXCPM_SIDECAR_API_KEY).
  *
- * This provider is selected when the speech provider is set to "local"
- * in the speech settings. It requires no API keys — runs fully offline
- * on the Mac Studio Ultra with Metal GPU acceleration.
- *
- * @module local-stt-provider
+ * @module local-speech-provider
  */
 
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../../api-types"
@@ -22,6 +18,7 @@ import type {
   TranscribeAudioInput,
 } from "../service"
 import { createLocalSTTConnection } from "../../plugins/tokidapp/concierge/local-stt"
+import { VoxCpmSynthesizer } from "./voxcpm-synth"
 
 interface LocalSpeechProviderOptions {
   settings: NormalizedSpeechSettings
@@ -37,7 +34,15 @@ interface LocalSpeechProviderOptions {
  * real-time streaming (use the concierge `createLocalSTTConnection` for that).
  */
 export class LocalSpeechProvider implements SpeechProvider {
-  constructor(private readonly options: LocalSpeechProviderOptions) {}
+  private readonly tts: VoxCpmSynthesizer
+
+  constructor(private readonly options: LocalSpeechProviderOptions) {
+    this.tts = new VoxCpmSynthesizer({
+      voice: options.settings.ttsVoice,
+      defaultFormat: options.settings.ttsFormat,
+      logger: options.logger,
+    })
+  }
 
   getCapabilities(): SpeechCapabilitiesResponse {
     return {
@@ -45,14 +50,8 @@ export class LocalSpeechProvider implements SpeechProvider {
       configured: true, // No API key needed — runs locally
       provider: "local",
       supportsStt: true,
-      supportsTts: false, // TTS not supported locally
-      supportsStreamingTts: false,
-      baseUrl: "localhost",
       sttModel: process.env.LOCAL_STT_MODEL?.trim() || "large-v3",
-      ttsModel: "", // Not supported
-      ttsVoice: "", // Not supported
-      ttsFormats: [], // Not supported
-      streamingTtsFormats: [], // Not supported
+      ...this.tts.capabilities(),
     }
   }
 
@@ -112,17 +111,11 @@ export class LocalSpeechProvider implements SpeechProvider {
     })
   }
 
-  async synthesize(_input: SynthesizeSpeechInput): Promise<never> {
-    throw new Error(
-      "Local STT does not support speech synthesis. " +
-      "Use OpenAI or Deepgram for TTS."
-    )
+  synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
+    return this.tts.synthesize(input)
   }
 
-  async synthesizeStream(_input: SynthesizeSpeechInput): Promise<never> {
-    throw new Error(
-      "Local STT does not support speech synthesis. " +
-      "Use OpenAI or Deepgram for TTS."
-    )
+  synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+    return this.tts.synthesizeStream(input)
   }
 }

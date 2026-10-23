@@ -13,11 +13,11 @@
  */
 
 import type { LocalSpeakOverrides, LocalTTSCallbacks, LocalTTSConnection } from "./local-tts"
+import { postSpeech, resolveVoxCpmConfig, sidecarErrorDetail } from "./voxcpm-client"
 import { Pcm16Aligner, createTo24kResampler, int16ToPcm16Bytes, pcm16BytesToInt16, type PcmResampler } from "./pcm-resample"
 
 export const VOXCPM_VOICE_PREFIX = "voxcpm-"
 export const DEFAULT_VOXCPM_VOICE = "concierge"
-const DEFAULT_URL = "http://127.0.0.1:9972"
 /** The sidecar rejects input above 4000 chars; stay under it. */
 const MAX_REQUEST_CHARS = 3500
 const SIDECAR_VOICE_ID = /^[a-z0-9][a-z0-9_-]{1,47}$/
@@ -38,6 +38,42 @@ export function defaultLocalTtsVoice(env: NodeJS.ProcessEnv = process.env): stri
   return env.LOCAL_TTS_BACKEND?.trim().toLowerCase() === "voxcpm"
     ? `${VOXCPM_VOICE_PREFIX}${DEFAULT_VOXCPM_VOICE}`
     : "piper-en-female-professional"
+}
+
+/** Piper profile ids (`piper-en-male-ryan`) and raw Piper model keys (`en_US-lessac-high`). */
+const PIPER_VOICE_LIKE = /^(piper-|[a-z]{2}_[A-Za-z]{2}-)/
+
+/**
+ * Sidecar voice for the `/api/speech` `ttsVoice` setting. Accepts `voxcpm-<id>`, or a bare sidecar voice (the setting
+ * defaults to the OpenAI name "marin", which the sidecar ships as a preset). A Piper id left over from an earlier
+ * setup, or anything that is not a valid sidecar id, resolves to the default voice instead of a 404 on every request.
+ */
+export function resolveSpeechVoice(ttsVoice: string | undefined | null): string {
+  const v = ttsVoice?.trim() ?? ""
+  if (!v) return DEFAULT_VOXCPM_VOICE
+  const prefixed = toSidecarVoiceId(v)
+  if (prefixed) return prefixed
+  if (PIPER_VOICE_LIKE.test(v) || !SIDECAR_VOICE_ID.test(v)) return DEFAULT_VOXCPM_VOICE
+  return v
+}
+
+/**
+ * Sidecar voice for the ornith engine, or undefined to keep Piper. Precedence:
+ *   1. a `voxcpm-<id>` voice from the client → VoxCPM2
+ *   2. an explicit Piper voice from the client → Piper
+ *   3. no explicit TTS voice (an Ornith label such as `ornith-default`, nothing, a placeholder), then
+ *      `LOCAL_TTS_VOICE=voxcpm-<id>` → that voice; `LOCAL_TTS_BACKEND=voxcpm` → the default voice; otherwise Piper.
+ */
+export function resolveOrnithVoxVoice(
+  voiceId: string | undefined | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const explicit = toSidecarVoiceId(voiceId)
+  if (explicit) return explicit
+  if (PIPER_VOICE_LIKE.test(voiceId?.trim() ?? "")) return undefined
+  const fromEnvVoice = toSidecarVoiceId(env.LOCAL_TTS_VOICE?.trim())
+  if (fromEnvVoice) return fromEnvVoice
+  return env.LOCAL_TTS_BACKEND?.trim().toLowerCase() === "voxcpm" ? DEFAULT_VOXCPM_VOICE : undefined
 }
 
 /** Keep the speaker's voice, but swap the stock concierge pair when the reply language changes. */
@@ -118,11 +154,7 @@ export function createVoxCpmTTSConnection<C = unknown>(
   options: VoxCpmOptions,
   callbacks: VoxCpmCallbacks<C> = {},
 ): VoxCpmConnection<C> {
-  const env = process.env
-  const baseUrl = (options.baseUrl ?? env.VOXCPM_SIDECAR_URL?.trim() ?? DEFAULT_URL).replace(/\/$/, "") || DEFAULT_URL
-  const apiKey = options.apiKey ?? env.VOXCPM_SIDECAR_API_KEY?.trim()
-  const timeoutMs = options.timeoutMs ?? (Number(env.VOXCPM_TTS_TIMEOUT_MS) || 120_000)
-  const doFetch = options.fetchImpl ?? fetch
+  const config = resolveVoxCpmConfig(options)
 
   const queue: QueueItem<C>[] = []
   let current: AbortController | null = null
@@ -151,15 +183,10 @@ export function createVoxCpmTTSConnection<C = unknown>(
         ...(item.overrides.control ? { control: item.overrides.control } : {}),
         ...(item.overrides.speed ? { speed: item.overrides.speed } : {}),
       }
-      const res = await doFetch(`${baseUrl}/v1/audio/speech`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-        body: JSON.stringify(body),
-        signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(timeoutMs)]),
-      })
+      const res = await postSpeech(config, body, { signal: ctrl.signal, fetchImpl: options.fetchImpl })
       if (!res.ok || !res.body) {
-        const detail = await res.text().catch(() => "")
-        throw new Error(`VoxCPM2 sidecar ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`)
+        const detail = res.ok ? "" : await sidecarErrorDetail(res)
+        throw new Error(`VoxCPM2 sidecar ${res.status}${detail ? `: ${detail}` : ""}`)
       }
 
       const rate = Number(res.headers.get("x-sample-rate")) || 48000

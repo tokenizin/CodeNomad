@@ -1,16 +1,14 @@
 /**
  * Local voice engine ↔ VoxCPM2 wiring — drives the real createLocalSession.
  *
- * Only the neighbours are mocked (STT, audio buffer, session-end, other engines) plus `fetch` for the sidecar and
- * `../local-tts` for Piper, so what is under test is the orchestrator's backend selection and fallback.
+ * Mocked: the STT and Piper child-process wrappers, the session-end hook (it writes wiki files), and `fetch` for the sidecar.
+ * Nothing else is replaced — bun's mock.module is process-wide, so extra mocks would leak into other test files.
  */
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test"
 
 const piper = { created: [] as Array<{ options: any; speak: Array<[string, any]>; flush: number }> }
 
-mock.module("../openai-realtime", () => ({ createRealtimeSession: mock(() => ({})), endVoiceSession: mock(() => {}) }))
-mock.module("../deepgram-realtime", () => ({ createDeepgramSession: mock(() => ({})), endDeepgramSession: mock(() => {}) }))
 mock.module("../local-stt", () => ({
   createLocalSTTConnection: mock(() => ({ sendAudio: mock(() => {}), close: mock(() => {}), flush: mock(() => {}), isReady: true })),
 }))
@@ -27,26 +25,6 @@ mock.module("../local-tts", () => ({
     }
   }),
   splitSentences: (t: string) => [t],
-}))
-mock.module("../audio-buffer", () => ({
-  AudioBuffer: class {
-    isEmpty = true
-    addChunk() {}
-    commit() {}
-    reset() {}
-  },
-  PreSessionAudioManager: class {
-    add() {}
-    drain() { return [] }
-    clear() {}
-  },
-}))
-mock.module("../speech-sanitize", () => ({
-  sanitizeAsrText: mock((t: string) => t),
-  sanitizeSpeechText: mock((t: string) => t),
-  stripThinkingContent: mock((t: string) => t),
-  isFillerTranscript: mock(() => false),
-  VOICE_INSTRUCTIONS: "You are Star World Assistant.",
 }))
 mock.module("../voice-session-end", () => ({ onVoiceSessionEnd: mock(() => {}) }))
 

@@ -33,7 +33,34 @@ voxcpm-host-bali    VoxCPM2 library voice "host-bali"
   dies *after* audio started is reported as an error and not replayed (it would repeat words).
 - Sessions with a non-VoxCPM voice go through the router in Piper-only mode: Piper is spawned at creation, exactly as before.
 
+## Ornith engine
+
+The `ornith` engine speaks through the same router, so the same voice ids apply:
+
+- `voxcpm-<voice>` → VoxCPM2, with Piper as the per-sentence fallback.
+- `ornith-*` labels (the engine's own defaults) and an unset voice follow `LOCAL_TTS_VOICE=voxcpm-<id>`, then
+  `LOCAL_TTS_BACKEND=voxcpm`, else Piper. An explicit Piper voice always stays Piper.
+- Ornith streams the LLM reply token by token, and Piper speaks each fragment as it arrives. VoxCPM2 cannot — each request is a
+  full generation pass — so on the VoxCPM2 path `speech-sentence-buffer.ts` batches the tokens into sentences (a sentence is
+  released when the next token proves it ended, so "3.5" and "e.g." survive; a run-on is cut at a comma or space after
+  300 characters) and flushes the remainder when the reply ends. The Piper path is untouched.
+
+## `/api/speech` (speech provider `local`)
+
+The `local` speech provider was STT-only (faster-whisper); synthesis threw. It now also synthesizes with VoxCPM2, so selecting
+`local` gives a fully on-device speech stack. The `ttsVoice` setting accepts `voxcpm-<id>` or a bare sidecar voice (the
+default setting, `marin`, is one of the sidecar's presets); a Piper id left over from an earlier setup falls back to `concierge`.
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST /api/speech/synthesize` | One sidecar request in the requested format. `wav` always; `mp3` / `opus` / `aac` need ffmpeg on the **sidecar** host. |
+| `POST /api/speech/synthesize/stream` | `wav`: the sidecar's WAV stream, passed through. `mp3` / `aac`: the sidecar's PCM stream transcoded live by ffmpeg on the **CodeNomad** host (the UI's streaming playback uses MediaSource, which cannot play WAV). `opus`: not streamable — use the non-streaming endpoint. |
+
+- Text is limited to 3500 characters per request (the sidecar rejects more); split longer text.
+- A model that is still loading answers HTTP 503, an unreachable sidecar 502.
+- Closing a streaming response cancels the sidecar request and stops ffmpeg, so a closed tab frees the synthesis slot.
+
 ## Not covered
 
-- `speech/providers/local-tts.ts` (the batch `/api/speech` provider) is still Piper-only.
-- The `ornith` engine still uses Piper for TTS.
+- `speech/providers/local-tts.ts` is an older Piper-based provider that nothing imports (the service routes `local` to
+  `providers/local.ts`). It is left untouched; it can be deleted.
