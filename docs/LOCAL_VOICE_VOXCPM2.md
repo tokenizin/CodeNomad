@@ -59,8 +59,3 @@ default setting, `marin`, is one of the sidecar's presets); a Piper id left over
 - Text is limited to 3500 characters per request (the sidecar rejects more); split longer text.
 - A model that is still loading answers HTTP 503, an unreachable sidecar 502.
 - Closing a streaming response cancels the sidecar request and stops ffmpeg, so a closed tab frees the synthesis slot.
-
-## Not covered
-
-- `speech/providers/local-tts.ts` is an older Piper-based provider that nothing imports (the service routes `local` to
-  `providers/local.ts`). It is left untouched; it can be deleted.
