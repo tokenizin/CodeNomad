@@ -3,7 +3,7 @@
  *
  * Dispatches voice sessions to the correct backend based on engine selection:
  *   engine: 'openai'   → existing OpenAI Realtime path (no changes)
- *   engine: 'local'    → whisper-stt + local-tts + Ollama LLM
+ *   engine: 'local'    → whisper-stt + local-tts (Piper, or VoxCPM2 for `voxcpm-*` voices) + Ollama LLM
  *   engine: 'deepgram' → deepgram-realtime.ts
  *   engine: 'ornith'   → ornith-realtime.ts (31B-dense)
  *
@@ -39,13 +39,18 @@ import {
 } from "./whisper-stt"
 import {
   createLocalTTSConnection,
-  type LocalTTSConnection,
   type LocalTTSCallbacks,
 } from "./local-tts"
 import {
   pickPiperVoiceForLocale,
   resolvePiperModelAndSynthesis,
 } from "./piper-voice-catalog"
+import { createLocalTtsRouter, type LocalTtsRouter } from "./local-tts-router"
+import {
+  createVoxCpmTTSConnection,
+  pickVoxCpmVoiceForLocale,
+  toSidecarVoiceId,
+} from "./voxcpm-tts"
 import {
   detectSpeechLanguage,
   planVoiceLocales,
@@ -633,7 +638,9 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     minBytes: 4800,
   })
 
-  // ── TTS (Piper) ──────────────────────────────────────────────────
+  // ── TTS (Piper, or VoxCPM2 with Piper fallback) ──────────────────
+  // A `voxcpm-<voice>` voice id selects the VoxCPM2 sidecar; anything else is Piper exactly as before.
+  const voxVoice = toSidecarVoiceId(voiceKey)
 
   const ttsCallbacks: LocalTTSCallbacks = {
     onAudio: (base64Chunk) => {
@@ -652,20 +659,27 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     },
   }
 
-  const tts: LocalTTSConnection = createLocalTTSConnection(
-    { voice: piperResolved.model, synthesis: piperResolved.synthesis },
+  const tts: LocalTtsRouter = createLocalTtsRouter(
+    {
+      voxVoice,
+      piper: { voice: piperResolved.model, synthesis: piperResolved.synthesis },
+      createPiper: createLocalTTSConnection,
+      createVox: createVoxCpmTTSConnection,
+    },
     ttsCallbacks,
   )
+  if (voxVoice) console.log(`${LOG_PREFIX} Local TTS backend: VoxCPM2 (voice ${voxVoice}), Piper fallback`)
 
   function speakLocalized(text: string, ttsLang: SpeechLang) {
+    // Piper voice/calibration: the speaking voice for Piper sessions, the fallback voice for VoxCPM2 sessions.
     const profile = pickPiperVoiceForLocale(
-      voiceKey || piperProfile.id,
+      voxVoice ? piperProfile.id : voiceKey || piperProfile.id,
       ttsLang,
     )
     const resolved = resolvePiperModelAndSynthesis(profile.id)
     tts.speak(text, {
-      voice: resolved.model,
-      ...resolved.synthesis,
+      piper: { voice: resolved.model, ...resolved.synthesis },
+      vox: voxVoice ? { voice: pickVoxCpmVoiceForLocale(voxVoice, ttsLang === "id" ? "id" : "en") } : undefined,
     })
     tts.flush()
   }

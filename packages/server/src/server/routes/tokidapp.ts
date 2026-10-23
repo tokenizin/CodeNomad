@@ -36,6 +36,7 @@ import {
 } from "../../plugins/tokidapp/concierge/ornith-realtime"
 import { createAndRegisterVoiceSession, getVoiceSession, endVoiceSession as endOrchestratorVoiceSession, isEngineAvailable } from "../../plugins/tokidapp/concierge/voice-speech-orchestrator"
 import type { VoiceSessionEndReason } from "../../plugins/tokidapp/concierge/voice-session-end"
+import { defaultLocalTtsVoice } from "../../plugins/tokidapp/concierge/voxcpm-tts"
 import type { VoiceEngine as FallbackVoiceEngine } from "../../plugins/tokidapp/concierge/voice-fallback"
 import {
   describeFallback,
@@ -652,7 +653,7 @@ async function startLocalVoiceSession(
     const voice =
       typeof requestedVoice === "string" && requestedVoice !== "local"
         ? requestedVoice
-        : process.env.LOCAL_TTS_VOICE?.trim() || "piper-en-female-professional"
+        : defaultLocalTtsVoice()
 
     const session = await createAndRegisterVoiceSession({
       engine: "local",
