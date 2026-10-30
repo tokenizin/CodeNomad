@@ -42,6 +42,7 @@ export function defaultLocalTtsVoice(env: NodeJS.ProcessEnv = process.env): stri
 
 /** Piper profile ids (`piper-en-male-ryan`) and raw Piper model keys (`en_US-lessac-high`). */
 const PIPER_VOICE_LIKE = /^(piper-|[a-z]{2}_[A-Za-z]{2}-)/
+const DEEPGRAM_VOICE_LIKE = /^aura-/
 
 /**
  * Sidecar voice for the `/api/speech` `ttsVoice` setting. Accepts `voxcpm-<id>`, or a bare sidecar voice (the setting
@@ -53,7 +54,8 @@ export function resolveSpeechVoice(ttsVoice: string | undefined | null): string 
   if (!v) return DEFAULT_VOXCPM_VOICE
   const prefixed = toSidecarVoiceId(v)
   if (prefixed) return prefixed
-  if (PIPER_VOICE_LIKE.test(v) || !SIDECAR_VOICE_ID.test(v)) return DEFAULT_VOXCPM_VOICE
+  // Piper and Deepgram (aura-*) voice names are never sidecar voices.
+  if (PIPER_VOICE_LIKE.test(v) || DEEPGRAM_VOICE_LIKE.test(v) || !SIDECAR_VOICE_ID.test(v)) return DEFAULT_VOXCPM_VOICE
   return v
 }
 

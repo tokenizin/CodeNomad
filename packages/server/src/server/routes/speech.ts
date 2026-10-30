@@ -43,6 +43,9 @@ function getSpeechErrorMessage(error: unknown, fallback: string): string {
 export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async () => deps.speechService.getCapabilities())
 
+  // VoxCPM2 sidecar: reachable / model ready / voices, for the Speech settings page.
+  app.get("/api/speech/voxcpm/status", async () => deps.speechService.voxcpmStatus())
+
   app.post("/api/speech/transcribe", async (request, reply) => {
     try {
       const body = TranscribeBodySchema.parse(request.body ?? {})

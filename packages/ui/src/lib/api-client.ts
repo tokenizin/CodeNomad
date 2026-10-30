@@ -51,6 +51,20 @@ import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
 import { appendStarGuardTokenToUrl, getStarGuardBearerToken } from "./starguard-auth"
 
+export interface VoxCpmStatus {
+  baseUrl: string
+  hasKey: boolean
+  reachable: boolean
+  ready: boolean
+  status?: string
+  device?: string
+  formats?: string[]
+  voices: Array<{ id: string; name: string; type?: string; builtin?: boolean; language?: string | null }>
+  styles: string[]
+  qualities: string[]
+  error?: string
+}
+
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
@@ -468,6 +482,11 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
+  /** VoxCPM2 sidecar: reachable, model ready, voices (Speech settings). */
+  fetchVoxCpmStatus(): Promise<VoxCpmStatus> {
+    return request<VoxCpmStatus>("/api/speech/voxcpm/status")
+  },
+
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
   },

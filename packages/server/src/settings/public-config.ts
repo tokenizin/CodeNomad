@@ -20,6 +20,20 @@ function sanitizeServerOwner(value: SettingsDoc): SettingsDoc {
     speech.hasApiKey = false
   }
 
+  // VoxCPM2 provider secrets: never sent to the browser, only whether they're set.
+  if (isPlainObject(speech.voxcpm)) {
+    const voxcpm: Record<string, unknown> = { ...speech.voxcpm }
+    for (const [field, flag] of [
+      ["apiKey", "hasApiKey"],
+      ["sttApiKey", "hasSttApiKey"],
+    ] as const) {
+      const value = typeof voxcpm[field] === "string" ? (voxcpm[field] as string).trim() : ""
+      delete voxcpm[field]
+      voxcpm[flag] = value.length > 0
+    }
+    speech.voxcpm = voxcpm
+  }
+
   next.speech = speech
   return next
 }

@@ -5,6 +5,10 @@
  * @module voxcpm-client
  */
 
+import fs from "fs"
+import os from "os"
+import path from "path"
+
 const DEFAULT_URL = "http://127.0.0.1:9972"
 const DEFAULT_TIMEOUT_MS = 120_000
 
@@ -14,6 +18,32 @@ export interface VoxCpmConfig {
   timeoutMs: number
 }
 
+/**
+ * The sidecar writes its key to scripts/voxcpm-server/engine-data/.api-key in the
+ * starworld repo (docs/VOXCPM_SETUP.md). Look there so a local setup needs no key copied.
+ */
+export function discoverVoxCpmApiKey(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string | undefined {
+  const relative = path.join("scripts", "voxcpm-server", "engine-data", ".api-key")
+  const roots = [env.STARWORLD, env.CLI_WORKSPACE_ROOT, path.join(os.homedir(), "starworld")]
+  let dir = path.resolve(cwd)
+  for (let i = 0; i < 6; i += 1) {
+    roots.push(dir)
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  for (const root of roots) {
+    if (!root?.trim()) continue
+    try {
+      const key = fs.readFileSync(path.join(root.trim(), relative), "utf8").trim()
+      if (key) return key
+    } catch {
+      /* not here */
+    }
+  }
+  return undefined
+}
+
 export function resolveVoxCpmConfig(
   overrides: { baseUrl?: string; apiKey?: string; timeoutMs?: number } = {},
   env: NodeJS.ProcessEnv = process.env,
@@ -21,7 +51,7 @@ export function resolveVoxCpmConfig(
   const baseUrl = (overrides.baseUrl ?? env.VOXCPM_SIDECAR_URL?.trim() ?? "").replace(/\/$/, "") || DEFAULT_URL
   return {
     baseUrl,
-    apiKey: overrides.apiKey ?? (env.VOXCPM_SIDECAR_API_KEY?.trim() || undefined),
+    apiKey: overrides.apiKey ?? (env.VOXCPM_SIDECAR_API_KEY?.trim() || discoverVoxCpmApiKey(env)),
     timeoutMs: overrides.timeoutMs ?? (Number(env.VOXCPM_TTS_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS),
   }
 }

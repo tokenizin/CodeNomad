@@ -31,9 +31,24 @@ const BATCH_MIME: Record<Format, string> = {
 
 export const STREAMING_FORMATS: readonly Format[] = ["wav", "mp3", "aac"]
 
+/** VoxCPM2 delivery settings sent with every request (all optional; the sidecar has defaults). */
+export interface VoxCpmDelivery {
+  /** professional | calm | enthusiastic | conversational | news */
+  style?: string
+  /** fast (6 steps) | balanced (10) | high (16) */
+  quality?: string
+  /** 0.25 – 4.0 */
+  speed?: number
+  /** Free-text delivery control ("warm, unhurried"). */
+  instructions?: string
+  /** Fixed seed for a repeatable timbre. */
+  seed?: number
+}
+
 export interface VoxCpmSynthOptions {
   /** The `ttsVoice` speech setting. */
   voice: string
+  delivery?: VoxCpmDelivery
   /** The `ttsFormat` speech setting, used when a request names no format. */
   defaultFormat: Format
   logger: Logger
@@ -74,7 +89,7 @@ export class VoxCpmSynthesizer {
     const format = input.format ?? this.options.defaultFormat
     this.options.logger.info({ textLength: text.length, voice: this.voice, format }, "voxcpm.synthesize")
 
-    const res = await this.request({ input: text, voice: this.voice, stream: false, response_format: format })
+    const res = await this.request({ ...this.deliveryBody(), input: text, voice: this.voice, stream: false, response_format: format })
     const audio = Buffer.from(await res.arrayBuffer())
     return { audioBase64: audio.toString("base64"), mimeType: BATCH_MIME[format] }
   }
@@ -94,7 +109,7 @@ export class VoxCpmSynthesizer {
 
     const abort = new AbortController()
     const res = await this.request(
-      { input: text, voice: this.voice, stream: true, response_format: transcoded ? "pcm" : "wav" },
+      { ...this.deliveryBody(), input: text, voice: this.voice, stream: true, response_format: transcoded ? "pcm" : "wav" },
       abort.signal,
     )
     if (!res.body) throw new Error("VoxCPM2 sidecar returned no audio stream")
@@ -105,6 +120,18 @@ export class VoxCpmSynthesizer {
     const sampleRate = Number(res.headers.get("x-sample-rate")) || 48000
     const stream = (this.options.transcode ?? transcodePcmStream)(source, { sampleRate, format: format as TranscodeFormat })
     return { stream, mimeType: TRANSCODE_MIME[format as TranscodeFormat] }
+  }
+
+  /** Delivery fields for the sidecar's /v1/audio/speech (only the ones set). */
+  private deliveryBody(): Record<string, unknown> {
+    const d = this.options.delivery ?? {}
+    const body: Record<string, unknown> = {}
+    if (d.style) body.style = d.style
+    if (d.quality) body.quality = d.quality
+    if (typeof d.speed === "number" && d.speed >= 0.25 && d.speed <= 4) body.speed = d.speed
+    if (d.instructions) body.instructions = d.instructions
+    if (typeof d.seed === "number" && Number.isInteger(d.seed)) body.seed = d.seed
+    return body
   }
 
   private prepare(raw: string): string {
