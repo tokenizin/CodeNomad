@@ -1,5 +1,5 @@
 import { createLogger } from "../logger"
-import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig, applyModelTestResults } from "./service"
+import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig, applyModelTestResults, getRemovedModels, getModelSyncPaths } from "./service"
 import { testModel, testModelsBatch, type TestModelOptions, type ModelTestResult } from "./tester"
 import type { ModelSyncResult } from "./service"
 
@@ -193,6 +193,11 @@ export async function handleModelSyncRoutes(request: Request, path: string): Pro
     return handleTestModelsBatch(request)
   }
   
+  // GET /api/model-sync/removed - models removed after a 404/410, plus where state is stored
+  if (method === "GET" && path === "/api/model-sync/removed") {
+    return Response.json({ ...getModelSyncPaths(), removed: getRemovedModels() })
+  }
+
   // GET /api/model-sync/providers - get provider configs
   if (method === "GET" && path === "/api/model-sync/providers") {
     return handleGetProviderConfigs()
