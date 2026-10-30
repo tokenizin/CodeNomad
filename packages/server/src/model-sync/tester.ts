@@ -2,6 +2,7 @@ import type { ModelStatus } from "../../../ui/src/types/session"
 import { readFileSync, existsSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
+import { randomUUID } from "node:crypto"
 import { findOpencodeJson } from "./service"
 
 export interface ModelTestResult {
@@ -23,6 +24,15 @@ export interface TestModelOptions {
   apiKey?: string
   baseUrl?: string
   timeoutMs?: number
+}
+
+// OpenCode Go rejects requests without a session header ("Request is missing
+// x-opencode-session and cannot be routed efficiently"). OpenCode sends its
+// session id (ses_...); use one id per server process for test calls.
+const OPENCODE_TEST_SESSION = `ses_${randomUUID().replace(/-/g, "")}`
+
+function providerHeaders(providerId: string): Record<string, string> {
+  return providerId === "opencode-go" ? { "x-opencode-session": OPENCODE_TEST_SESSION } : {}
 }
 
 const TEST_PROMPT = "Say 'OK' if you can receive this message."
@@ -161,6 +171,7 @@ async function testModelViaOpenAICompatible(options: TestModelOptions): Promise<
       headers: {
         "Content-Type": "application/json",
         ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+        ...providerHeaders(providerId),
       },
       body: JSON.stringify({
         model: modelId,
@@ -227,6 +238,7 @@ async function testModelViaAnthropic(options: TestModelOptions): Promise<ModelTe
         // OpenCode Go accepts bearer auth on /messages; Anthropic ignores it
         ...(apiKey && providerId !== "anthropic" ? { Authorization: `Bearer ${apiKey}` } : {}),
         "anthropic-version": "2023-06-01",
+        ...providerHeaders(providerId),
       },
       body: JSON.stringify({
         model: modelId,
