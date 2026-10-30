@@ -668,6 +668,36 @@ export const serverApi = {
     return request("/api/local-engine/reset", { method: "POST", body: JSON.stringify({ sessionKey }) })
   },
 
+  fetchLocalEngineHistory(
+    sessionKey: string,
+  ): Promise<{ messages: import("./local-engine").LocalHistoryMessage[]; running?: boolean }> {
+    return request(`/api/local-engine/history?sessionKey=${encodeURIComponent(sessionKey)}`)
+  },
+
+  listLocalSessions(folder: string): Promise<{ sessions: import("./local-engine").LocalSessionRecord[] }> {
+    return request(`/api/local-engine/sessions?folder=${encodeURIComponent(folder)}`)
+  },
+
+  createLocalSession(body: {
+    folder: string
+    title?: string
+    agent?: string
+    model?: { providerId: string; modelId: string }
+  }): Promise<import("./local-engine").LocalSessionRecord> {
+    return request("/api/local-engine/sessions", { method: "POST", body: JSON.stringify(body) })
+  },
+
+  updateLocalSession(
+    id: string,
+    patch: { title?: string; agent?: string; model?: { providerId: string; modelId: string } },
+  ): Promise<import("./local-engine").LocalSessionRecord> {
+    return request(`/api/local-engine/sessions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) })
+  },
+
+  deleteLocalSession(id: string): Promise<{ deleted: boolean }> {
+    return request(`/api/local-engine/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,
