@@ -1114,7 +1114,13 @@ export function useConfig(): ConfigContextValue {
   return context
 }
 
+/** Resolves once settings have loaded from the server (or failed to). */
+function ensurePreferencesLoaded(): Promise<void> {
+  return ensureLoaded()
+}
+
 export {
+  ensurePreferencesLoaded,
   preferences,
   useTauriNativeEventTransport,
   setUseTauriNativeEventTransport,

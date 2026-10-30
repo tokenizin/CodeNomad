@@ -71,6 +71,11 @@ export class SettingsService {
     this.stateStore = new YamlDocStore(location.stateYamlPath, logger.child({ component: "settings-state" }))
   }
 
+  /** Folder holding CodeNomad's persisted server data. */
+  getDataDir(): string {
+    return this.location.baseDir
+  }
+
   getDoc(kind: DocKind): SettingsDoc {
     if (kind !== "config") {
       return this.stateStore.get()

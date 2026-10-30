@@ -17,7 +17,8 @@ export type LocalEngineStatus = {
   }
   rustPlayground?: {
     ok: boolean
-    bridge: string | null
+    /** playground/rust/your_program.sh in the course checkout. */
+    runner: string | null
     playgroundRoot: string | null
     error: string | null
   }
@@ -35,6 +36,8 @@ export type LocalEngineServerSettings = {
   extraRoots?: string[]
 }
 
+export type LocalEngineUpload = { filename: string; mime?: string; data: string }
+
 export type LocalEngineRunRequest = {
   engine: LocalEngineKind
   prompt: string
@@ -43,6 +46,75 @@ export type LocalEngineRunRequest = {
   agent?: string
   model?: string
   persist?: boolean
+  /** Pasted files (data: URLs), sent inline as base64. */
+  uploads?: LocalEngineUpload[]
+  /** Ids already on screen, so saved history matches them after a reload. */
+  messageIds?: { user: string; assistant: string }
+  /** The user's text as shown (without attachment lines). */
+  displayText?: string
+  attachmentNames?: string[]
+}
+
+/** A message saved by the server for a session. */
+export type LocalHistoryMessage = {
+  id: string
+  role: "user" | "assistant"
+  text: string
+  createdAt: number
+  engine?: string
+  agent?: string
+  isError?: boolean
+  attachments?: Array<{ filename: string; mime?: string; path?: string }>
+}
+
+/** A session created through CodeNomad (no OpenCode). */
+export type LocalSessionRecord = {
+  id: string
+  folder: string
+  title: string
+  agent: string
+  model?: { providerId: string; modelId: string }
+  createdAt: number
+  updatedAt: number
+}
+
+export const LOCAL_SESSION_PREFIX = "ses_lcl_"
+
+/** Runs this tab is streaming, keyed by instance + session (so Stop can cancel them). */
+export const localEngineRuns = new Map<string, AbortController>()
+export const localRunKey = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
+
+export function isLocalSessionId(sessionId: string | undefined | null): boolean {
+  return typeof sessionId === "string" && sessionId.startsWith(LOCAL_SESSION_PREFIX)
+}
+
+/** Shapes saved history like OpenCode's session.messages() so the normal loader can seed it. */
+export function historyToApiMessages(sessionId: string, history: LocalHistoryMessage[]): any[] {
+  return history.map((message) => {
+    const attachmentNote = message.attachments?.length
+      ? `\n\n${message.attachments.map((a) => `📎 ${a.filename}`).join("\n")}`
+      : ""
+    const text = message.role === "user" ? `${message.text}${attachmentNote}` : message.text
+    return {
+      info: {
+        id: message.id,
+        sessionID: sessionId,
+        role: message.role,
+        time: { created: message.createdAt, completed: message.createdAt },
+        ...(message.agent ? { agent: message.agent, mode: message.agent } : {}),
+        ...(message.isError ? { error: { name: "LocalEngineError", data: { message: message.text } } } : {}),
+      },
+      parts: [
+        {
+          id: `${message.id}_text`,
+          sessionID: sessionId,
+          messageID: message.id,
+          type: "text",
+          text,
+        },
+      ],
+    }
+  })
 }
 
 export type LocalEngineEvent = {
@@ -179,15 +251,52 @@ export type LocalEngineAttachment =
   | { type: "file"; url: string; filename?: string; mime?: string }
   | { type: "text"; text: string }
 
-/** Builds the prompt for a local engine, including attachments OpenCode would get as parts. */
-export function buildLocalEnginePrompt(prompt: string, attachments: LocalEngineAttachment[]): string {
+export type LocalEnginePrompt = {
+  prompt: string
+  uploads: LocalEngineUpload[]
+  attachmentNames: string[]
+}
+
+/** Splits a "data:<mime>;base64,<data>" URL. Non-base64 data is encoded here. */
+function parseDataUrl(url: string): { mime?: string; data: string } | null {
+  const match = url.match(/^data:([^;,]*)((?:;[^;,]*)*),(.*)$/s)
+  if (!match) return null
+  const mime = match[1] || undefined
+  const isBase64 = /;base64/i.test(match[2])
+  if (isBase64) return { mime, data: match[3] }
+  try {
+    const bytes = new TextEncoder().encode(decodeURIComponent(match[3]))
+    let binary = ""
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    return { mime, data: btoa(binary) }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Builds what a local engine run needs from the prompt and attachments:
+ * file paths go in the prompt, pasted data (images, etc.) is uploaded.
+ */
+export function buildLocalEnginePrompt(prompt: string, attachments: LocalEngineAttachment[]): LocalEnginePrompt {
   const sections: string[] = [prompt]
+  const uploads: LocalEngineUpload[] = []
+  const attachmentNames: string[] = []
   for (const att of attachments) {
     if (att.type === "text") {
       if (att.text.trim()) sections.push(att.text)
       continue
     }
     const label = att.filename || att.url
+    if (att.url.startsWith("data:")) {
+      const parsed = parseDataUrl(att.url)
+      if (parsed) {
+        uploads.push({ filename: att.filename || "pasted", mime: att.mime || parsed.mime, data: parsed.data })
+        attachmentNames.push(att.filename || "pasted")
+      }
+      continue
+    }
+    attachmentNames.push(label)
     if (att.url.startsWith("file://")) {
       let filePath = att.url.slice("file://".length)
       try {
@@ -196,14 +305,11 @@ export function buildLocalEnginePrompt(prompt: string, attachments: LocalEngineA
         /* keep raw */
       }
       sections.push(`Attached file: ${filePath}`)
-    } else if (att.url.startsWith("data:")) {
-      // Inline data (pasted images etc.) can't be handed to the CLI as a path.
-      sections.push(`[Attachment "${label}" (${att.mime ?? "data"}) was not sent: only file attachments reach the local engine.]`)
     } else {
       sections.push(`Attached: ${label} (${att.url})`)
     }
   }
-  return sections.join("\n\n")
+  return { prompt: sections.join("\n\n"), uploads, attachmentNames }
 }
 
 /** True for errors that mean the browser isn't signed in to CodeNomad. */

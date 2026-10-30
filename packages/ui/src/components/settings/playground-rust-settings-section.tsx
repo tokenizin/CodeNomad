@@ -263,7 +263,7 @@ export const PlaygroundRustSettingsSection: Component = () => {
                   <span class="settings-info-label">{t("settings.playgroundRust.status.rust")}</span>
                   <span class="settings-info-value">
                     {current().rustPlayground?.ok
-                      ? current().rustPlayground?.bridge ?? ""
+                      ? current().rustPlayground?.runner ?? ""
                       : current().rustPlayground?.error ?? t("settings.playgroundRust.status.missing")}
                   </span>
                 </div>

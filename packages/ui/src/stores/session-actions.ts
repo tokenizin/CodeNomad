@@ -21,6 +21,9 @@ import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { serverApi } from "../lib/api-client"
 import {
   buildLocalEnginePrompt,
+  isLocalSessionId,
+  localEngineRuns,
+  localRunKey,
   isUnauthorizedError,
   readLocalEngineStream,
   type LocalEngineAttachment,
@@ -99,10 +102,6 @@ function createId(prefix: string): string {
 
 // ---------------------------------------------------------------- local engine (Claude Code CLI / Rust playground)
 
-/** Runs in flight, keyed by instance + session, so Stop can cancel them. */
-const localEngineRuns = new Map<string, AbortController>()
-const localRunKey = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
-
 /** OpenCode's own agents; a local engine uses the configured default agent instead. */
 const OPENCODE_DEFAULT_AGENTS = new Set(["build", "general", "explore"])
 
@@ -154,7 +153,7 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       ? { type: "file" as const, url: String(part.url ?? ""), filename: part.filename, mime: part.mime }
       : { type: "text" as const, text: String(part.text ?? "") },
   )
-  const prompt = buildLocalEnginePrompt(args.prompt, attachments)
+  const built = buildLocalEnginePrompt(args.prompt, attachments)
   const engineLabel = engine === "claude-cli" ? "Claude Code" : "Claude Code (Rust)"
 
   const upsertAssistant = (text: string, status: "streaming" | "complete" | "error") => {
@@ -170,7 +169,8 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
           messageID: assistantId,
           type: "text" as const,
           text,
-          synthetic: true,
+          // Not synthetic: the UI hides synthetic assistant text (it means tool traces).
+          synthetic: false,
           renderCache: undefined,
         },
       ],
@@ -179,13 +179,16 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       isEphemeral: true,
     })
   }
+  // OpenCode would echo the prompt back as real parts; the local engine doesn't,
+  // so the optimistic (synthetic, partly hidden) parts become the real ones.
+  const userParts = userMessage.parts.map((part) => ({ ...part, synthetic: false }))
   const completeUser = () => {
     store.upsertMessage({
       id: userMessage.id,
       sessionId,
       role: "user",
       status: "complete",
-      parts: userMessage.parts,
+      parts: userParts,
       createdAt: userMessage.createdAt,
       updatedAt: Date.now(),
       isEphemeral: true,
@@ -193,6 +196,17 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     })
   }
 
+  store.upsertMessage({
+    id: userMessage.id,
+    sessionId,
+    role: "user",
+    status: "sending",
+    parts: userParts,
+    createdAt: userMessage.createdAt,
+    updatedAt: Date.now(),
+    isEphemeral: true,
+    clientPromptDisplayMetadata: userMessage.displayMetadata,
+  })
   upsertAssistant(`Running ${engineLabel}…`, "streaming")
   setSessionStatus(instanceId, sessionId, "working")
 
@@ -214,15 +228,22 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     const response = await serverApi.runLocalEngine(
       {
         engine,
-        prompt,
+        prompt: built.prompt,
         cwd: args.folder || undefined,
         sessionKey: sessionId,
         agent,
         model,
         persist: engine === "rust-playground" ? ui.rustPlaygroundPersist : undefined,
+        uploads: built.uploads,
+        attachmentNames: built.attachmentNames,
+        displayText: args.prompt,
+        // Saved history reuses these ids, so a reload shows the same messages.
+        messageIds: { user: userMessage.id, assistant: assistantId },
       },
       controller.signal,
     )
+    // The server has the message now; it's saved even if this page goes away.
+    completeUser()
     const result = await readLocalEngineStream(response, (_ev, reply, changed) => {
       if (!changed) return
       lastText = reply.text
@@ -250,6 +271,12 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
   } finally {
     localEngineRuns.delete(key)
     setSessionStatus(instanceId, sessionId, "idle")
+    // The server names a new local session after its first prompt; mirror that.
+    if (isLocalSessionId(sessionId) && args.prompt.trim()) {
+      withSession(instanceId, sessionId, (current) => {
+        if (current.title === "New Session") current.title = args.prompt.trim().replace(/\s+/g, " ").slice(0, 60)
+      })
+    }
   }
 }
 
@@ -264,7 +291,8 @@ async function sendMessage(
     throw new Error("Instance not ready")
   }
 
-  const useRust = preferences().useRustPlaygroundEngine
+  // Local sessions exist only in CodeNomad, so they always use the local engine.
+  const useRust = preferences().useRustPlaygroundEngine || isLocalSessionId(sessionId)
   if (!useRust && !instance.client) {
     throw new Error("Instance not ready")
   }
@@ -365,8 +393,7 @@ async function sendMessage(
     /* trigger reactivity for legacy session data */
   })
 
-  const ui = preferences()
-  if (ui.useRustPlaygroundEngine) {
+  if (useRust) {
     await sendViaLocalEngine({
       instanceId,
       sessionId,
@@ -722,6 +749,12 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
     await setAgentModelPreference(instanceId, agent, nextModel)
   }
 
+  if (isLocalSessionId(sessionId)) {
+    await serverApi
+      .updateLocalSession(sessionId, { agent, ...(shouldApplyModel ? { model: nextModel } : {}) })
+      .catch((error) => log.warn("Failed to save local session agent", error))
+  }
+
   if (shouldApplyModel) {
     updateSessionInfo(instanceId, sessionId)
   }
@@ -752,16 +785,19 @@ async function updateSessionModel(
   }
   addRecentModelPreference(model)
 
+  if (isLocalSessionId(sessionId)) {
+    await serverApi.updateLocalSession(sessionId, { model }).catch((error) => log.warn("Failed to save local session model", error))
+  }
+
   updateSessionInfo(instanceId, sessionId)
 }
 
 async function renameSession(instanceId: string, sessionId: string, nextTitle: string): Promise<void> {
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
+  const isLocal = isLocalSessionId(sessionId)
+  if (!instance || (!instance.client && !isLocal)) {
     throw new Error("Instance not ready")
   }
-
-  const client = getRootClient(instanceId)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -773,14 +809,19 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
-  await requestData(
-    client.session.update({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      title: trimmedTitle,
-    }),
-    "session.update",
-  )
+  if (isLocal) {
+    await serverApi.updateLocalSession(sessionId, { title: trimmedTitle })
+  } else {
+    const client = getRootClient(instanceId)
+    await requestData(
+      client.session.update({
+        sessionID: sessionId,
+        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+        title: trimmedTitle,
+      }),
+      "session.update",
+    )
+  }
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle

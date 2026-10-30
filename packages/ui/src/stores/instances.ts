@@ -19,6 +19,7 @@ import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } fr
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
+  fetchLocalSessions,
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
@@ -35,7 +36,7 @@ import { getRootClient } from "./opencode-client"
 import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { clearInstancePreloadCache, prefetchInteractiveResources } from "../lib/instance-preload"
 import { fetchCommands, clearCommands } from "./commands"
-import { serverSettings } from "./preferences"
+import { ensurePreferencesLoaded, preferences, serverSettings } from "./preferences"
 import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -173,8 +174,20 @@ async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> 
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
 
+/**
+ * With the local engine on, a workspace whose OpenCode failed to start is
+ * still usable: its sessions run through CodeNomad (Claude Code / Rust).
+ */
+function localEngineEnabled(): boolean {
+  return preferences().useRustPlaygroundEngine
+}
+
+function isUsableInstance(instance: { status: string }): boolean {
+  return instance.status === "ready" || (localEngineEnabled() && instance.status === "error")
+}
+
 function syncHasInstancesFlag() {
-  const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
+  const readyExists = Array.from(instances().values()).some((instance) => isUsableInstance(instance))
   setHasInstances(readyExists)
 }
 
@@ -218,7 +231,7 @@ function ensureActiveInstanceSelected(): void {
   if (current && instanceMap.has(current)) return
 
   for (const [id, instance] of instanceMap.entries()) {
-    if (instance.status === "ready") {
+    if (isUsableInstance(instance)) {
       setActiveInstanceId(id)
       return
     }
@@ -238,6 +251,9 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
     // If no tab is currently selected (common after UI refresh),
     // auto-select the first ready instance.
     ensureActiveInstanceSelected()
+  } else if (descriptor.status !== "starting") {
+    // OpenCode isn't running here, but local-engine sessions don't need it.
+    void fetchLocalSessions(descriptor.id).catch((error: unknown) => log.warn("Failed to load local engine sessions", error))
   }
 }
 
@@ -528,15 +544,18 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
   void (async function initializeWorkspaces() {
   try {
     let workspaces = await serverApi.fetchWorkspaces()
+    await ensurePreferencesLoaded().catch(() => undefined)
+    // Errored workspaces are kept when the local engine is on (they still work without OpenCode).
+    const keepErrored = localEngineEnabled()
 
-    for (const workspace of workspaces.filter((entry) => entry.status === "error")) {
+    for (const workspace of workspaces.filter((entry) => entry.status === "error" && !keepErrored)) {
       log.warn("Removing errored workspace on startup", { workspaceId: workspace.id, error: workspace.error })
       await serverApi.deleteWorkspace(workspace.id).catch((error) => {
         log.error("Failed to delete errored workspace", { workspaceId: workspace.id, error })
       })
     }
 
-    workspaces = workspaces.filter((entry) => entry.status !== "error")
+    workspaces = workspaces.filter((entry) => entry.status !== "error" || keepErrored)
 
     const byFolder = new Map<string, WorkspaceDescriptor>()
     for (const workspace of workspaces) {
@@ -729,6 +748,10 @@ async function createInstance(folder: string, _binaryPath?: string, projectName?
       return existing.id
     }
     if (existing?.status === "error") {
+      if (localEngineEnabled()) {
+        setActiveInstanceId(existing.id)
+        return existing.id
+      }
       stopInstance(existing.id)
     }
 
@@ -737,6 +760,20 @@ async function createInstance(folder: string, _binaryPath?: string, projectName?
     setActiveInstanceId(workspace.id)
     return workspace.id
   } catch (error) {
+    // OpenCode couldn't start (not installed, crashed). With the local engine
+    // on, open the workspace anyway: the server keeps it with status "error".
+    if (localEngineEnabled()) {
+      const target = normalizeInstanceFolderPath(folder)
+      const fallback = (await serverApi.fetchWorkspaces().catch(() => [] as WorkspaceDescriptor[])).find(
+        (workspace) => normalizeInstanceFolderPath(workspace.path) === target,
+      )
+      if (fallback) {
+        log.warn("OpenCode failed to start; opening workspace for the local engine", { folder, error })
+        upsertWorkspace(fallback, projectName)
+        setActiveInstanceId(fallback.id)
+        return fallback.id
+      }
+    }
     log.error("Failed to create workspace", error)
     throw error
   }

@@ -43,6 +43,7 @@ import {
   clearSessionSearch,
   isLatestSessionSearch,
   setSessionSearchResults,
+  setSessionStatus,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { fetchLocalLlmProvider, mergeLocalLlmProviders } from "../lib/local-llm-providers"
@@ -62,6 +63,14 @@ import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, p
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options"
+import { serverApi } from "../lib/api-client"
+import {
+  historyToApiMessages,
+  isLocalSessionId,
+  localEngineRuns,
+  localRunKey,
+  type LocalSessionRecord,
+} from "../lib/local-engine"
 
 const log = getLogger("api")
 
@@ -199,8 +208,75 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   })
 }
 
+/** Sessions we marked "working" because a local-engine run was still going on the server. */
+const pendingLocalRefresh = new Set<string>()
+
+// ---------------------------------------------------------------- local engine sessions
+// Sessions made while the local engine (Claude Code CLI / Rust) is on live in
+// CodeNomad's server, not OpenCode, so they work without an OpenCode instance.
+
+function localRecordToSession(instanceId: string, record: LocalSessionRecord, existing?: Session): Session {
+  return {
+    id: record.id,
+    instanceId,
+    title: record.title || "New Session",
+    parentId: null,
+    agent: existing?.agent || record.agent || "",
+    model: existing?.model?.modelId ? existing.model : record.model ?? { providerId: "", modelId: "" },
+    status: existing?.status ?? "idle",
+    retry: existing?.retry ?? null,
+    idleSince: existing?.idleSince ?? null,
+    version: existing?.version || "0",
+    time: { created: record.createdAt, updated: record.updatedAt },
+    metadata: existing?.metadata,
+  } as Session
+}
+
+function upsertLocalSessions(instanceId: string, records: LocalSessionRecord[]) {
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+    for (const record of records) {
+      instanceSessions.set(record.id, localRecordToSession(instanceId, record, instanceSessions.get(record.id)))
+    }
+    next.set(instanceId, instanceSessions)
+    return next
+  })
+  // Oldest first, so the newest ends up at the top of the list.
+  for (const record of [...records].sort((a, b) => a.updatedAt - b.updatedAt)) {
+    prependSessionListId(instanceId, record.id)
+  }
+  syncInstanceSessionIndicator(instanceId)
+}
+
+/** Loads this workspace's local-engine sessions into the session list. */
+async function fetchLocalSessions(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.folder) return
+  const { sessions: records } = await serverApi.listLocalSessions(instance.folder)
+  if (records.length > 0) upsertLocalSessions(instanceId, records)
+}
+
+async function createLocalSessionForInstance(instanceId: string, agent?: string): Promise<Session> {
+  const instance = instances().get(instanceId)
+  if (!instance?.folder) {
+    throw new Error("Instance not ready")
+  }
+  const record = await serverApi.createLocalSession({
+    folder: instance.folder,
+    agent: agent || preferences().rustPlaygroundDefaultAgent || "",
+  })
+  upsertLocalSessions(instanceId, [record])
+  return sessions().get(instanceId)?.get(record.id) ?? localRecordToSession(instanceId, record)
+}
+
 async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
   const instance = instances().get(instanceId)
+  if (instance && !instance.client) {
+    // OpenCode isn't running: local-engine sessions still load.
+    await fetchLocalSessions(instanceId)
+    return
+  }
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
@@ -288,6 +364,8 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     }
 
     setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
+
+    await fetchLocalSessions(instanceId).catch((error) => log.warn("Failed to load local engine sessions", { instanceId, error }))
 
     syncInstanceSessionIndicator(instanceId)
 
@@ -424,6 +502,9 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
 }
 
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
+  if (preferences().useRustPlaygroundEngine) {
+    return createLocalSessionForInstance(instanceId, agent)
+  }
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -566,6 +647,9 @@ async function forkSession(
   sourceSessionId: string,
   options?: { messageId?: string },
 ): Promise<Session> {
+  if (isLocalSessionId(sourceSessionId)) {
+    throw new Error("Forking isn't available for local engine sessions yet")
+  }
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -652,11 +736,10 @@ async function forkSession(
 
 async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
+  const isLocal = isLocalSessionId(sessionId)
+  if (!instance || (!instance.client && !isLocal)) {
     throw new Error("Instance not ready")
   }
-
-  const client = getRootClient(instanceId)
 
   const deletingSession = sessions().get(instanceId)?.get(sessionId)
 
@@ -669,8 +752,13 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   })
 
   try {
-    log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
+    if (isLocal) {
+      await serverApi.deleteLocalSession(sessionId)
+    } else {
+      const client = getRootClient(instanceId)
+      log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
+      await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
+    }
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -884,11 +972,10 @@ async function loadMessages(
   }
 
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
+  const isLocal = isLocalSessionId(sessionId)
+  if (!instance || (!instance.client && !isLocal)) {
     throw new Error("Instance not ready")
   }
-
-  const client = getRootClient(instanceId)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -906,14 +993,48 @@ async function loadMessages(
   setSessionMessagesLoadError(instanceId, sessionId, null)
 
   try {
-    log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
-      "session.messages",
-    )
+    let apiMessages: any[]
+    let runningElsewhere = false
+    if (isLocal) {
+      const { messages, running } = await serverApi.fetchLocalEngineHistory(sessionId)
+      apiMessages = historyToApiMessages(sessionId, messages)
+      runningElsewhere = Boolean(running)
+    } else {
+      const client = getRootClient(instanceId)
+      log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
+      apiMessages = await requestData<any[]>(
+        client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
+        "session.messages",
+      )
+      // Turns sent through the local engine are saved by CodeNomad, not OpenCode.
+      const local = await serverApi.fetchLocalEngineHistory(sessionId).catch(() => null)
+      runningElsewhere = Boolean(local?.running)
+      if (Array.isArray(apiMessages) && local?.messages.length) {
+        const known = new Set(apiMessages.map((m: any) => (m.info || m)?.id))
+        const extra = historyToApiMessages(sessionId, local.messages).filter((m) => !known.has(m.info.id))
+        apiMessages = [...apiMessages, ...extra].sort(
+          (a: any, b: any) => ((a.info || a)?.time?.created ?? 0) - ((b.info || b)?.time?.created ?? 0),
+        )
+      }
+    }
 
     if (!Array.isArray(apiMessages)) {
       return
+    }
+
+    // A local-engine run started before a reload is still going on the server:
+    // show it as working and pick up the reply once it's saved.
+    if (!localEngineRuns.has(localRunKey(instanceId, sessionId))) {
+      if (runningElsewhere) {
+        setSessionStatus(instanceId, sessionId, "working")
+        setTimeout(() => {
+          void loadMessages(instanceId, sessionId, { force: true, skipChildren: true }).catch(() => undefined)
+        }, 3000)
+      } else if (sessions().get(instanceId)?.get(sessionId)?.status === "working" && (isLocal || pendingLocalRefresh.has(sessionId))) {
+        setSessionStatus(instanceId, sessionId, "idle")
+      }
+      if (runningElsewhere) pendingLocalRefresh.add(sessionId)
+      else pendingLocalRefresh.delete(sessionId)
     }
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
@@ -1061,6 +1182,7 @@ export {
   fetchProviders,
 
   fetchSessions,
+  fetchLocalSessions,
   loadMoreSessions,
   searchSessions,
   forkSession,
