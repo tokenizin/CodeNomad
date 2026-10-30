@@ -14,7 +14,7 @@ import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse } from "../../
 import type { Logger } from "../../logger"
 import type { SpeechSynthesisStreamResponse, SynthesizeSpeechInput } from "../service"
 import { postSpeech, resolveVoxCpmConfig, sidecarErrorDetail, type VoxCpmConfig } from "../../plugins/tokidapp/concierge/voxcpm-client"
-import { resolveSpeechVoice } from "../../plugins/tokidapp/concierge/voxcpm-tts"
+import { DEFAULT_VOXCPM_VOICE, resolveSpeechVoice } from "../../plugins/tokidapp/concierge/voxcpm-tts"
 import { TRANSCODE_MIME, ffmpegAvailable, transcodePcmStream, type TranscodeFormat } from "../pcm-transcode"
 
 type Format = NonNullable<SynthesizeSpeechInput["format"]>
@@ -61,7 +61,7 @@ export interface VoxCpmSynthOptions {
 
 export class VoxCpmSynthesizer {
   private readonly config: VoxCpmConfig
-  private readonly voice: string
+  private voice: string
 
   constructor(private readonly options: VoxCpmSynthOptions) {
     this.config = resolveVoxCpmConfig(options.config)
@@ -156,6 +156,19 @@ export class VoxCpmSynthesizer {
   }
 
   private async request(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    try {
+      return await this.send(body, signal)
+    } catch (err) {
+      // A saved voice the sidecar doesn't have (deleted library voice, an OpenAI name like "alloy"):
+      // speak with the default voice instead of failing every request.
+      if (!(err instanceof SidecarUnknownVoiceError) || body.voice === DEFAULT_VOXCPM_VOICE) throw err
+      this.options.logger.warn({ voice: body.voice, fallback: DEFAULT_VOXCPM_VOICE }, "voxcpm.synthesize.unknown-voice")
+      this.voice = DEFAULT_VOXCPM_VOICE
+      return this.send({ ...body, voice: DEFAULT_VOXCPM_VOICE }, signal)
+    }
+  }
+
+  private async send(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
     let res: Response
     try {
       res = await postSpeech(this.config, body, { signal, fetchImpl: this.options.fetchImpl })
@@ -171,6 +184,7 @@ export class VoxCpmSynthesizer {
     }
     // 503 = model still loading or queue full. "not configured" is what the speech route maps to HTTP 503.
     if (res.status === 503) throw new Error(`VoxCPM2 is not configured or not ready: ${detail}`)
+    if (res.status === 404 && /unknown voice/i.test(detail)) throw new SidecarUnknownVoiceError(`VoxCPM2 sidecar: ${detail}`)
     if (res.status === 400 && /response_format|ffmpeg/i.test(detail)) throw new SidecarFormatError(`VoxCPM2 sidecar: ${detail}`)
     throw new Error(`VoxCPM2 sidecar ${res.status}: ${detail}`)
   }
@@ -178,3 +192,6 @@ export class VoxCpmSynthesizer {
 
 /** The sidecar can't produce the requested container (usually: no ffmpeg on its host). */
 export class SidecarFormatError extends Error {}
+
+/** The sidecar has no voice with the requested id. */
+export class SidecarUnknownVoiceError extends Error {}

@@ -107,3 +107,21 @@ test("mp3 without ffmpeg on the sidecar falls back to WAV instead of failing", a
     globalThis.fetch = original
   }
 })
+
+test("a voice the sidecar doesn't have falls back to the default voice", async () => {
+  const voices: string[] = []
+  const original = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body)
+    voices.push(body.voice)
+    if (body.voice !== "concierge") return Response.json({ detail: `unknown voice '${body.voice}'` }, { status: 404 })
+    return new Response(new Uint8Array([1]), { status: 200 })
+  }) as any
+  try {
+    const out = await serviceWith({ provider: "voxcpm", ttsVoice: "alloy", ttsFormat: "wav" }).synthesize({ text: "Hi" })
+    expect(voices).toEqual(["alloy", "concierge"])
+    expect(out.mimeType).toBe("audio/wav")
+  } finally {
+    globalThis.fetch = original
+  }
+})
