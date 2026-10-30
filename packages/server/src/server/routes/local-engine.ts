@@ -113,6 +113,8 @@ const MessageIdSchema = z.object({ messageId: z.string().min(1).max(200) })
 const CopySchema = z.object({ to: z.string().min(1).max(200), beforeMessageId: z.string().max(200).optional() })
 
 const KILL_GRACE_MS = 5000
+/** The agent picker's entry for the full agent; it means "no --agent". */
+const FULL_AGENT = "claude-code"
 /**
  * Status for "the Rust agent isn't set up or failed". Not 502/503: CodeNomad's
  * UI reads those as a tunnel outage and pauses all API calls.
@@ -427,7 +429,9 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const history = sessionKey ? historyForAgent(store.readHistory(sessionKey)) : []
     const uploads = saveUploads(store, sessionKey, body.uploads)
     const prompt = [body.prompt, ...uploads.promptLines].filter((part) => part.trim()).join("\n\n") || "(see attached image)"
-    const agent = body.agent ?? (localSession?.agent || undefined)
+    // "claude-code" is the UI's name for the full agent (no --agent).
+    const requestedAgent = body.agent ?? (localSession?.agent || undefined)
+    const agent = requestedAgent && requestedAgent !== FULL_AGENT ? requestedAgent : undefined
     const model = body.model ?? (localSession?.model?.modelId || undefined)
     let historyFile: string | undefined
     if (history.length) {
