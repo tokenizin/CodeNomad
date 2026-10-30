@@ -261,6 +261,10 @@ function upsertLocalSessions(instanceId: string, records: LocalSessionRecord[]) 
 // from the Rust agent itself (`--catalog`), the way OpenCode fills them.
 
 const rustCatalogs = new Map<string, RustCatalog>()
+/** One catalog request per workspace at a time; a failure is reused for a while. */
+const rustCatalogInFlight = new Map<string, Promise<RustCatalog | undefined>>()
+const rustCatalogFailures = new Map<string, { at: number; error: unknown }>()
+const RUST_CATALOG_RETRY_MS = 30_000
 
 function localEngineEnabled(): boolean {
   return preferences().useRustPlaygroundEngine
@@ -273,6 +277,16 @@ function getRustCatalog(instanceId: string): RustCatalog | undefined {
 
 /** Fills agents, models and slash commands from Claude Code (Rust). */
 async function loadRustCatalog(instanceId: string, options?: { fresh?: boolean }): Promise<RustCatalog | undefined> {
+  const inFlight = rustCatalogInFlight.get(instanceId)
+  if (inFlight && !options?.fresh) return inFlight
+  const failure = rustCatalogFailures.get(instanceId)
+  if (failure && !options?.fresh && Date.now() - failure.at < RUST_CATALOG_RETRY_MS) throw failure.error
+  const promise = fetchRustCatalogFor(instanceId, options).finally(() => rustCatalogInFlight.delete(instanceId))
+  rustCatalogInFlight.set(instanceId, promise)
+  return promise
+}
+
+async function fetchRustCatalogFor(instanceId: string, options?: { fresh?: boolean }): Promise<RustCatalog | undefined> {
   const instance = instances().get(instanceId)
   if (!instance?.folder) return undefined
   try {
@@ -289,8 +303,10 @@ async function loadRustCatalog(instanceId: string, options?: { fresh?: boolean }
       return next
     })
     setCommands(instanceId, catalogCommands(catalog) as any)
+    rustCatalogFailures.delete(instanceId)
     return catalog
   } catch (error) {
+    rustCatalogFailures.set(instanceId, { at: Date.now(), error })
     log.warn("Failed to load the Claude Code (Rust) catalog", { instanceId, error })
     // Still mark agents as fetched so pickers show "none" rather than spinning.
     setAgents((prev) => (prev.has(instanceId) ? prev : new Map(prev).set(instanceId, [])))

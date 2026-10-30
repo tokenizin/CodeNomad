@@ -242,6 +242,8 @@ export function parseCatalog(stdout: string): RustCatalog | null {
 }
 
 const CATALOG_TTL_MS = 60_000
+/** A failed catalog is remembered this long, so page loads don't re-run cargo build each time. */
+const CATALOG_FAILURE_TTL_MS = 30_000
 /** The first call may compile the agent (cargo build --release), so allow time. */
 const CATALOG_TIMEOUT_MS = 10 * 60_000
 const catalogCache = new Map<string, { at: number; value: Promise<RustCatalog> }>()
@@ -272,7 +274,11 @@ export function fetchRustCatalog(runner: string, cwd: string, env: NodeJS.Proces
     })
   })
   catalogCache.set(key, { at: Date.now(), value })
-  value.catch(() => catalogCache.delete(key))
+  value.catch(() => {
+    // Keep the failure briefly (same error, no new process), then let it retry.
+    const entry = catalogCache.get(key)
+    if (entry?.value === value) entry.at = Date.now() - CATALOG_TTL_MS + CATALOG_FAILURE_TTL_MS
+  })
   return value
 }
 

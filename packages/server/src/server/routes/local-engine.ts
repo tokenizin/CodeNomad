@@ -113,6 +113,11 @@ const MessageIdSchema = z.object({ messageId: z.string().min(1).max(200) })
 const CopySchema = z.object({ to: z.string().min(1).max(200), beforeMessageId: z.string().max(200).optional() })
 
 const KILL_GRACE_MS = 5000
+/**
+ * Status for "the Rust agent isn't set up or failed". Not 502/503: CodeNomad's
+ * UI reads those as a tunnel outage and pauses all API calls.
+ */
+const AGENT_FAILED = 424
 /** Pasted screenshots are large once base64-encoded. */
 const RUN_BODY_LIMIT = 40 * 1024 * 1024
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
@@ -394,7 +399,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
 
     const { playgroundRoot, runner, opencodeConfig } = engineSetup()
     if (!playgroundRoot || !runner) {
-      reply.code(503)
+      reply.code(AGENT_FAILED)
       return {
         error: "Claude Code (Rust) not found",
         hint: "Set Engine setup → Playground root to your build-your-own-claude-code checkout.",
@@ -515,11 +520,11 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const cwd = resolveFolder(str(query.folder))
     if (!cwd) return bad(reply, "Folder is not an open CodeNomad workspace", 403)
     const { playgroundRoot, runner, opencodeConfig } = engineSetup()
-    if (!playgroundRoot || !runner) return bad(reply, "Claude Code (Rust) not found. Set Engine setup → Playground root.", 503)
+    if (!playgroundRoot || !runner) return bad(reply, "Claude Code (Rust) not found. Set Engine setup → Playground root.", AGENT_FAILED)
     try {
       return await fetchRustCatalog(runner, cwd, agentEnv(playgroundRoot, opencodeConfig), { fresh: query.fresh === "1" })
     } catch (error) {
-      return bad(reply, error instanceof Error ? error.message : String(error), 502)
+      return bad(reply, error instanceof Error ? error.message : String(error), AGENT_FAILED)
     }
   })
 
