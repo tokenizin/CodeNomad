@@ -2,104 +2,119 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { ClaudeStreamTranslator } from "../claude-stream"
-import { resolveNomadAgent } from "../agents"
-import { checkCwd, planClaudeAgent } from "../../server/routes/local-engine"
+import {
+  failureText,
+  OUTDATED_AGENT_MESSAGE,
+  parseCatalog,
+  rustRunArgs,
+  RustStreamTranslator,
+  toOpencodeTool,
+} from "../rust-runner"
+import { ReplyParts } from "../reply-parts"
+import { checkCwd, historyForAgent } from "../../server/routes/local-engine"
 
 const line = (value: unknown) => JSON.stringify(value)
 
-describe("ClaudeStreamTranslator", () => {
-  test("streams text deltas and reads the final result", () => {
-    const t = new ClaudeStreamTranslator()
+describe("RustStreamTranslator", () => {
+  test("passes text through and maps tools to OpenCode tool cards", () => {
+    const t = new RustStreamTranslator()
     const out = [
-      line({ type: "system", subtype: "init", session_id: "s-1" }),
-      line({ type: "stream_event", event: { type: "message_start", message: { id: "m1" } }, session_id: "s-1" }),
-      line({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "po" } } }),
-      line({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "ng" } } }),
-      // The full assistant message repeats the streamed text; it must not be added twice.
-      line({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "pong" }] } }),
-      line({ type: "result", subtype: "success", is_error: false, result: "pong", session_id: "s-1", total_cost_usd: 0.1 }),
+      line({ type: "meta", model: "qwen3:8b", agent: "pma", baseUrl: "http://x/v1" }),
+      line({ type: "delta", text: "Let me look." }),
+      line({ type: "tool", id: "c1", name: "Read", input: { file_path: "/w/a.ts" } }),
+      line({ type: "tool_result", id: "c1", name: "Read", output: "code", isError: false }),
+      line({ type: "final", text: "Done.", model: "qwen3:8b" }),
     ].flatMap((l) => t.feed(l))
-
-    expect(out[0]).toEqual({ type: "meta", engine: "claude-cli", sessionId: "s-1" })
-    expect(out.filter((e) => e.type === "delta").map((e: any) => e.text).join("")).toBe("pong")
-    expect(out.at(-1)).toMatchObject({ type: "final", text: "pong", isError: false, sessionId: "s-1" })
-    expect(t.sessionId).toBe("s-1")
+    expect(out[0]).toEqual({ type: "meta", engine: "rust", model: "qwen3:8b", agent: "pma" })
+    expect(out[2]).toEqual({ type: "tool", id: "c1", name: "read", input: { file_path: "/w/a.ts", filePath: "/w/a.ts" }, summary: "/w/a.ts" })
+    expect(out[3]).toMatchObject({ type: "tool_result", id: "c1", name: "read", isError: false })
+    expect(out[4]).toMatchObject({ type: "final", text: "Done.", isError: false })
+    expect(t.model).toBe("qwen3:8b")
   })
 
-  test("falls back to assistant text without partial messages and reports tools", () => {
-    const t = new ClaudeStreamTranslator()
-    const out = [
-      line({
-        type: "assistant",
-        message: { id: "m1", content: [{ type: "text", text: "Checking." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls -la" } }] },
-      }),
-      line({ type: "assistant", message: { id: "m2", content: [{ type: "text", text: "Done." }] } }),
-    ].flatMap((l) => t.feed(l))
-
-    expect(out).toContainEqual({ type: "tool", name: "Bash", summary: "ls -la" })
-    expect(t.streamedText).toBe("Checking.\n\nDone.")
+  test("error events become a failed final; non-JSON becomes stderr", () => {
+    const t = new RustStreamTranslator()
+    expect(t.feed(line({ type: "error", message: "endpoint down" }))[0]).toMatchObject({ type: "final", isError: true, text: "endpoint down" })
+    expect(t.isError).toBe(true)
+    expect(t.feed("Compiling foo")).toEqual([{ type: "stderr", line: "Compiling foo" }])
   })
 
-  test("ignores sub-agent messages and turns errors into a final error", () => {
-    const t = new ClaudeStreamTranslator()
-    expect(t.feed(line({ type: "assistant", parent_tool_use_id: "x", message: { content: [{ type: "text", text: "inner" }] } }))).toEqual([])
-    const out = t.feed(
-      line({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: abc"] }),
-    )
-    expect(out[0]).toMatchObject({ type: "final", isError: true, text: "No conversation found with session ID: abc" })
-  })
-
-  test("non-JSON lines become stderr events", () => {
-    expect(new ClaudeStreamTranslator().feed("warning: something")).toEqual([{ type: "stderr", line: "warning: something" }])
+  test("tool name mapping", () => {
+    expect(toOpencodeTool("Bash", { command: "ls" })).toEqual({ tool: "bash", input: { command: "ls" } })
+    expect(toOpencodeTool("Write", { file_path: "a", content: "x" }).input.filePath).toBe("a")
+    expect(toOpencodeTool("nomad_validate", { x: 1 }).tool).toBe("nomad_validate")
   })
 })
 
-describe("agents", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-engine-"))
-  fs.mkdirSync(path.join(root, ".nomadworks", "agents"), { recursive: true })
-  fs.writeFileSync(path.join(root, ".nomadworks", "agents", "pma.md"), "---\ndescription: ignored\n---\nYou are the PMA.")
-  fs.writeFileSync(
-    path.join(root, "opencode.json"),
-    `{
-      // comments and trailing commas are allowed
-      "agent": {
-        "pma": { "description": "Product manager", "prompt": "{file:.nomadworks/agents/pma.md}", },
-        "inline": { "prompt": "Inline prompt" },
-        "missing": { "prompt": "{file:nope.md}" },
-      },
-    }`,
-  )
-  fs.mkdirSync(path.join(root, ".opencode", "agent"), { recursive: true })
-  fs.writeFileSync(path.join(root, ".opencode", "agent", "writer.md"), "---\ndescription: Writes docs\n---\nYou write docs.")
-
-  test("reads opencode.json agents with {file:} prompts", () => {
-    expect(resolveNomadAgent("pma", root)).toMatchObject({ description: "Product manager", prompt: "You are the PMA." })
-    expect(resolveNomadAgent("inline", root)).toMatchObject({ description: "inline", prompt: "Inline prompt" })
-    expect(resolveNomadAgent("missing", root)).toBeNull()
+describe("run args and catalog", () => {
+  test("builds the agent command line", () => {
+    expect(rustRunArgs({ prompt: "hi", model: "qwen3:8b", agent: "pma", images: ["/a.png", "/b.png"], historyFile: "/h.json" })).toEqual([
+      "-p", "hi", "--output-format", "stream-json", "--model", "qwen3:8b", "--agent", "pma",
+      "--image", "/a.png", "--image", "/b.png", "--history", "/h.json",
+    ])
+    expect(rustRunArgs({ prompt: "hi" })).toEqual(["-p", "hi", "--output-format", "stream-json"])
   })
 
-  test("reads markdown agents and rejects odd names", () => {
-    expect(resolveNomadAgent("writer", root)).toMatchObject({ description: "Writes docs", prompt: "You write docs." })
-    expect(resolveNomadAgent("../etc/passwd", root)).toBeNull()
+  test("parses the catalog after build noise", () => {
+    const catalog = parseCatalog('warning: x\n{"version":1,"model":"m","models":[{"id":"m"}],"agents":[],"commands":[{"name":"smoke-echo"}]}')
+    expect(catalog?.commands[0].name).toBe("smoke-echo")
+    expect(parseCatalog("nope")).toBeNull()
+    expect(parseCatalog('{"version":1}')).toBeNull()
   })
 
-  test("maps OpenCode agents onto Claude Code flags", () => {
-    expect(planClaudeAgent("build", root, null)).toEqual({ args: [] })
-    expect(planClaudeAgent("plan", root, null)).toMatchObject({ permissionMode: "plan" })
-    const pma = planClaudeAgent("pma", root, null)
-    expect(pma.args[0]).toBe("--agents")
-    expect(JSON.parse(pma.args[1])).toEqual({ pma: { description: "Product manager", prompt: "You are the PMA." } })
-    expect(pma.args.slice(2)).toEqual(["--agent", "pma"])
-    expect(planClaudeAgent("nobody", root, null).note).toContain("nobody")
+  test("explains an agent checkout without the CodeNomad interface", () => {
+    expect(failureText(2, ["error: unexpected argument '--output-format' found"])).toBe(OUTDATED_AGENT_MESSAGE)
+    expect(failureText(1, ["   Compiling x", "LLM: could not reach"])).toBe("LLM: could not reach")
+  })
+})
+
+describe("history for the agent", () => {
+  test("keeps real turns, drops failures and stopped markers, notes attachments", () => {
+    const turns = historyForAgent([
+      { id: "1", role: "user", text: "look at this", createdAt: 1, attachments: [{ filename: "shot.png" }] },
+      { id: "2", role: "assistant", text: "A red square\n\n_(stopped)_", createdAt: 2 },
+      { id: "3", role: "user", text: "again", createdAt: 3 },
+      { id: "4", role: "assistant", text: "endpoint down", createdAt: 4, isError: true },
+    ])
+    expect(turns).toEqual([
+      { role: "user", content: "look at this\n\n[attached: shot.png]" },
+      { role: "assistant", content: "A red square" },
+      { role: "user", content: "again" },
+    ])
+  })
+})
+
+describe("ReplyParts", () => {
+  test("orders text and tool parts and closes unfinished tools", () => {
+    const r = new ReplyParts()
+    r.apply({ type: "delta", text: "Checking" })
+    r.apply({ type: "delta", text: " files." })
+    r.apply({ type: "tool", id: "c1", name: "bash", input: { command: "ls" } })
+    r.apply({ type: "tool_result", id: "c1", name: "bash", output: "a.ts", isError: false })
+    r.apply({ type: "tool", id: "c2", name: "read", input: { filePath: "a.ts" } })
+    const out = r.finish({ stopped: true, isError: false })
+    expect(out.parts.map((p) => p.type)).toEqual(["text", "tool", "tool", "text"])
+    expect(out.parts[0]).toEqual({ type: "text", text: "Checking files." })
+    expect(out.parts[1]).toMatchObject({ status: "completed", output: "a.ts" })
+    expect(out.parts[2]).toMatchObject({ status: "error", output: "Stopped" })
+    expect(out.text).toBe("Checking files.\n\n_(stopped)_")
   })
 
+  test("shows the error text when a run fails", () => {
+    const r = new ReplyParts()
+    r.apply({ type: "final", text: "endpoint down", isError: true })
+    expect(r.finish({ stopped: false, isError: true }).text).toBe("endpoint down")
+  })
+})
+
+describe("workspace guard", () => {
   test("only allows folders inside open workspaces", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-engine-"))
     const real = fs.realpathSync(root)
     fs.mkdirSync(path.join(root, "sub"), { recursive: true })
     expect(checkCwd(path.join(root, "sub"), [real])).toBe(path.join(real, "sub"))
     expect(checkCwd(os.tmpdir(), [real])).toBeNull()
     expect(checkCwd(path.join(root, "sub", "..", ".."), [real])).toBeNull()
-    expect(checkCwd(path.join(root, "does-not-exist"), [real])).toBeNull()
+    expect(checkCwd(path.join(root, "missing"), [real])).toBeNull()
   })
 })

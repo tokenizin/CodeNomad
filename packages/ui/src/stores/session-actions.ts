@@ -24,6 +24,10 @@ import {
   isLocalSessionId,
   localEngineRuns,
   localRunKey,
+  RUST_DEFAULT_AGENT,
+  RUST_PROVIDER_ID,
+  toOpencodePart,
+  type HistoryPart,
   isUnauthorizedError,
   readLocalEngineStream,
   type LocalEngineAttachment,
@@ -100,9 +104,11 @@ function createId(prefix: string): string {
   return `${prefix}_${hex}${random}`
 }
 
-// ---------------------------------------------------------------- local engine (Claude Code CLI / Rust playground)
+// ---------------------------------------------------------------- Claude Code (Rust)
+// CodeNomad's local engine: build-your-own-claude-code's Rust agent, run by the
+// CodeNomad server (not the official Claude Code app or CLI).
 
-/** OpenCode's own agents; a local engine uses the configured default agent instead. */
+/** OpenCode's own agents; Claude Code (Rust) uses the configured default agent instead. */
 const OPENCODE_DEFAULT_AGENTS = new Set(["build", "general", "explore"])
 
 function hasLocalEngineRun(instanceId: string, sessionId: string): boolean {
@@ -111,10 +117,19 @@ function hasLocalEngineRun(instanceId: string, sessionId: string): boolean {
 
 async function abortLocalEngineRun(instanceId: string, sessionId: string): Promise<void> {
   const controller = localEngineRuns.get(localRunKey(instanceId, sessionId))
-  if (!controller) return
-  controller.abort()
-  // Closing the stream already stops the process; this also covers proxies that keep it open.
+  // Stop tells the server to kill the agent (closing the page alone doesn't).
   await serverApi.abortLocalEngine(sessionId).catch((error) => log.warn("local engine abort failed", error))
+  controller?.abort()
+}
+
+/** The --agent value for a session: none for the full agent or OpenCode's built-ins. */
+function rustAgentFor(sessionAgent: string | undefined): string | undefined {
+  const agent = sessionAgent || ""
+  if (!agent || OPENCODE_DEFAULT_AGENTS.has(agent)) {
+    const fallback = preferences().rustPlaygroundDefaultAgent
+    return fallback && fallback !== RUST_DEFAULT_AGENT ? fallback : undefined
+  }
+  return agent === RUST_DEFAULT_AGENT ? undefined : agent
 }
 
 type LocalEngineSendArgs = {
@@ -130,64 +145,47 @@ type LocalEngineSendArgs = {
 async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
   const { instanceId, sessionId, session, userMessage } = args
   const ui = preferences()
-  const engine = ui.localEngineKind
   const store = messageStoreBus.getOrCreate(instanceId)
   const key = localRunKey(instanceId, sessionId)
   if (localEngineRuns.has(key)) {
-    throw new Error("A local engine run is already in progress for this session")
+    throw new Error("Claude Code (Rust) is already running in this session")
   }
 
   const assistantId = createId("msg")
-  const assistantPartId = createId("prt")
-  const sessionAgent = session.agent || ""
-  const agent =
-    !sessionAgent || OPENCODE_DEFAULT_AGENTS.has(sessionAgent)
-      ? ui.rustPlaygroundDefaultAgent || undefined
-      : sessionAgent
-  const model =
-    engine === "claude-cli" && session.model.providerId === "anthropic" && session.model.modelId
-      ? session.model.modelId
-      : undefined
+  const agent = rustAgentFor(session.agent)
+  // Models picked from the Claude Code (Rust) provider go to the agent as --model.
+  const model = session.model.providerId === RUST_PROVIDER_ID && session.model.modelId ? session.model.modelId : undefined
   const attachments: LocalEngineAttachment[] = args.extraParts.map((part) =>
     part.type === "file"
       ? { type: "file" as const, url: String(part.url ?? ""), filename: part.filename, mime: part.mime }
       : { type: "text" as const, text: String(part.text ?? "") },
   )
   const built = buildLocalEnginePrompt(args.prompt, attachments)
-  const engineLabel = engine === "claude-cli" ? "Claude Code" : "Claude Code (Rust)"
 
-  const upsertAssistant = (text: string, status: "streaming" | "complete" | "error") => {
+  const upsertAssistant = (parts: HistoryPart[], status: "streaming" | "complete" | "error") => {
     store.upsertMessage({
       id: assistantId,
       sessionId,
       role: "assistant",
       status,
-      parts: [
-        {
-          id: assistantPartId,
-          sessionID: sessionId,
-          messageID: assistantId,
-          type: "text" as const,
-          text,
-          // Not synthetic: the UI hides synthetic assistant text (it means tool traces).
-          synthetic: false,
-          renderCache: undefined,
-        },
-      ],
+      // Text and tool parts, shaped like OpenCode's so the same cards render.
+      // Not synthetic: the message view hides synthetic assistant text.
+      parts: parts.map((part, index) => ({ ...toOpencodePart(sessionId, assistantId, part, index), synthetic: false })),
       createdAt: userMessage.createdAt,
       updatedAt: Date.now(),
       isEphemeral: true,
     })
   }
+  const textOnly = (text: string): HistoryPart[] => [{ type: "text", text }]
   // OpenCode would echo the prompt back as real parts; the local engine doesn't,
   // so the optimistic (synthetic, partly hidden) parts become the real ones.
   const userParts = userMessage.parts.map((part) => ({ ...part, synthetic: false }))
-  const completeUser = () => {
+  const upsertUser = (status: "sending" | "complete") => {
     store.upsertMessage({
       id: userMessage.id,
       sessionId,
       role: "user",
-      status: "complete",
+      status,
       parts: userParts,
       createdAt: userMessage.createdAt,
       updatedAt: Date.now(),
@@ -196,44 +194,33 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     })
   }
 
-  store.upsertMessage({
-    id: userMessage.id,
-    sessionId,
-    role: "user",
-    status: "sending",
-    parts: userParts,
-    createdAt: userMessage.createdAt,
-    updatedAt: Date.now(),
-    isEphemeral: true,
-    clientPromptDisplayMetadata: userMessage.displayMetadata,
-  })
-  upsertAssistant(`Running ${engineLabel}…`, "streaming")
+  upsertUser("sending")
+  upsertAssistant(textOnly("Running Claude Code (Rust)…"), "streaming")
   setSessionStatus(instanceId, sessionId, "working")
 
   const controller = new AbortController()
   localEngineRuns.set(key, controller)
 
-  // Re-render at most every 60 ms while text streams in.
-  let pendingText: string | null = null
+  // Re-render at most every 60 ms while the reply streams in.
+  let pending: HistoryPart[] | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const flush = () => {
     flushTimer = null
-    if (pendingText !== null) upsertAssistant(pendingText, "streaming")
-    pendingText = null
+    if (pending) upsertAssistant(pending, "streaming")
+    pending = null
   }
-  let lastText = ""
+  let lastParts: HistoryPart[] = []
 
   try {
-    log.info("sendMessage.localEngine", { instanceId, sessionId, engine, agent, cwd: args.folder })
+    log.info("sendMessage.claudeCodeRust", { instanceId, sessionId, agent, model, cwd: args.folder })
     const response = await serverApi.runLocalEngine(
       {
-        engine,
         prompt: built.prompt,
         cwd: args.folder || undefined,
         sessionKey: sessionId,
         agent,
         model,
-        persist: engine === "rust-playground" ? ui.rustPlaygroundPersist : undefined,
+        persist: ui.rustPlaygroundPersist,
         uploads: built.uploads,
         attachmentNames: built.attachmentNames,
         displayText: args.prompt,
@@ -243,30 +230,34 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       controller.signal,
     )
     // The server has the message now; it's saved even if this page goes away.
-    completeUser()
+    upsertUser("complete")
     const result = await readLocalEngineStream(response, (_ev, reply, changed) => {
       if (!changed) return
-      lastText = reply.text
-      pendingText = reply.text
+      // Copy: the reply keeps mutating its parts as events arrive.
+      lastParts = reply.parts.map((p) => ({ ...p }))
+      pending = lastParts
       if (!flushTimer) flushTimer = setTimeout(flush, 60)
     })
     if (flushTimer) clearTimeout(flushTimer)
-    completeUser()
-    upsertAssistant(result.text, result.isError ? "error" : "complete")
+    upsertUser("complete")
+    upsertAssistant(result.parts, result.isError ? "error" : "complete")
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
     if (controller.signal.aborted) {
-      completeUser()
-      upsertAssistant(lastText.trim() ? `${lastText}\n\n_(stopped)_` : "_(stopped)_", "complete")
+      upsertUser("complete")
+      const stopped = lastParts.map((p) =>
+        p.type === "tool" && p.status === "running" ? { ...p, status: "error" as const, output: "Stopped", endedAt: Date.now() } : p,
+      )
+      upsertAssistant([...stopped, { type: "text", text: "_(stopped)_" }], "complete")
       return
     }
-    log.error("Local engine run failed", error)
+    log.error("Claude Code (Rust) run failed", error)
     const message = isUnauthorizedError(error)
       ? "CodeNomad says this browser is not signed in. Sign in again at /login, then resend."
       : error instanceof Error
         ? error.message
         : String(error)
-    upsertAssistant(message, "error")
+    upsertAssistant(textOnly(message), "error")
     throw error
   } finally {
     localEngineRuns.delete(key)
@@ -278,6 +269,16 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       })
     }
   }
+}
+
+/** Revert for sessions run by Claude Code (Rust): drop the message and everything after it. */
+async function revertLocalEngineSession(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  await serverApi.truncateLocalHistory(sessionId, messageId)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const ids = store.getSessionMessageIds(sessionId)
+  const index = ids.indexOf(messageId)
+  if (index >= 0) for (const id of ids.slice(index)) removeMessageV2(instanceId, id)
+  updateSessionInfo(instanceId, sessionId)
 }
 
 async function sendMessage(
@@ -465,6 +466,11 @@ async function executeCustomCommand(
   args: string,
 ): Promise<void> {
   const instance = instances().get(instanceId)
+  // Claude Code (Rust) runs its skills itself: "/name args" is a normal prompt to it.
+  if (instance && (preferences().useRustPlaygroundEngine || isLocalSessionId(sessionId))) {
+    await sendMessage(instanceId, sessionId, `/${commandName}${args.trim() ? ` ${args.trim()}` : ""}`)
+    return
+  }
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
@@ -862,8 +868,25 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
 async function deleteMessage(instanceId: string, sessionId: string, messageId: string): Promise<void> {
   if (!instanceId || !sessionId || !messageId) return
   const instance = instances().get(instanceId)
+  if (isLocalSessionId(sessionId) || (instance && !instance.client)) {
+    if (hasLocalEngineRun(instanceId, sessionId)) {
+      throw new Error("Can't delete this message while Claude Code (Rust) is running. Stop it first, then try again.")
+    }
+    await serverApi.deleteLocalHistoryMessage(sessionId, messageId)
+    removeMessageV2(instanceId, messageId)
+    updateSessionInfo(instanceId, sessionId)
+    return
+  }
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
+  }
+
+  // An OpenCode session can hold Claude Code (Rust) turns, which CodeNomad keeps.
+  const local = await serverApi.deleteLocalHistoryMessage(sessionId, messageId).catch(() => null)
+  if (local?.deleted) {
+    removeMessageV2(instanceId, messageId)
+    updateSessionInfo(instanceId, sessionId)
+    return
   }
 
   const client = getRootClient(instanceId)
@@ -894,6 +917,7 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
 
 export {
   abortSession,
+  revertLocalEngineSession,
   deleteMessage,
   deleteMessagePart,
   executeCustomCommand,

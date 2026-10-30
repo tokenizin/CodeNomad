@@ -10,7 +10,8 @@ import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, pauseSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
-import { deleteMessage } from "../../stores/session-actions"
+import { deleteMessage, revertLocalEngineSession } from "../../stores/session-actions"
+import { isLocalSessionId } from "../../lib/local-engine"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { requestData } from "../../lib/opencode-api"
@@ -369,9 +370,20 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function handleRevert(messageId: string) {
     const instance = instances().get(props.instanceId)
-    if (!instance || !instance.client) return
+    if (!instance) return
 
     try {
+      // Restore the text before the messages are removed from the store.
+      const textBeforeRevert = getUserMessageText(messageId)
+      if (isLocalSessionId(props.sessionId) || !instance.client) {
+        // Claude Code (Rust) sessions: CodeNomad drops the message and what follows.
+        await revertLocalEngineSession(props.instanceId, props.sessionId, messageId)
+        if (textBeforeRevert) {
+          if (promptInputApi) promptInputApi.setPromptText(textBeforeRevert, { focus: true })
+          else pendingPromptText = textBeforeRevert
+        }
+        return
+      }
       await requestData(
         instance.client.session.revert({
           sessionID: props.sessionId,
