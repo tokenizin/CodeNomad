@@ -12,7 +12,8 @@ import { getMLXModels, transformMLXModels } from "./providers/mlx"
 import { getMLXDeepSeekModels, transformMLXDeepSeekModels } from "./providers/mlx-deepseek"
 import { fetchOllamaModels } from "./providers/ollama"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
 
 export interface SyncedModel {
@@ -112,8 +113,38 @@ function loadSyncCacheFromFile(): void {
   }
 }
 
+// Models the provider said don't exist (404/410). Kept in their own file so
+// a re-sync from a static provider list doesn't bring them back.
+const REMOVED_MODELS_FILE = join(homedir(), ".config", "codenomad", "model-sync-removed.json")
+const removedModels = new Map<string, { reason: string; removedAt: number }>()
+
+function loadRemovedModels(): void {
+  try {
+    if (!existsSync(REMOVED_MODELS_FILE)) return
+    const parsed = JSON.parse(readFileSync(REMOVED_MODELS_FILE, "utf-8")) as Record<string, { reason: string; removedAt: number }>
+    for (const [key, value] of Object.entries(parsed)) removedModels.set(key, value)
+  } catch {
+    // Non-fatal
+  }
+}
+
+function persistRemovedModels(): void {
+  try {
+    const dir = join(homedir(), ".config", "codenomad")
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(REMOVED_MODELS_FILE, JSON.stringify(Object.fromEntries(removedModels), null, 2), "utf-8")
+  } catch {
+    // Non-fatal
+  }
+}
+
+export function getRemovedModels(): Array<{ key: string; reason: string; removedAt: number }> {
+  return Array.from(removedModels.entries()).map(([key, v]) => ({ key, ...v }))
+}
+
 // Load on module init
 loadSyncCacheFromFile()
+loadRemovedModels()
 
 // ─── Config file persistence: write synced models back to opencode.json ───
 
@@ -121,13 +152,16 @@ loadSyncCacheFromFile()
  * Find opencode.json by searching upward from process.cwd() and from the
  * compiled server directory. Returns the first match or null.
  */
-function findOpencodeJson(): string | null {
+// ESM module: __dirname doesn't exist here
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
+
+export function findOpencodeJson(): string | null {
   const searchDirs = [
     process.cwd(),
     join(homedir(), "starworld"),
     // From compiled JS: dist/model-sync/service.js → go up 5 levels to starworld root
-    join(__dirname, "..", "..", "..", "..", ".."),
-    join(__dirname, "..", "..", "..", "..", "..", ".."),
+    join(MODULE_DIR, "..", "..", "..", "..", ".."),
+    join(MODULE_DIR, "..", "..", "..", "..", "..", ".."),
   ]
   for (const dir of searchDirs) {
     const candidate = join(dir, "opencode.json")
@@ -228,24 +262,59 @@ export function persistSyncedModelsToConfig(): { updated: number; added: number;
  * Write model test results into the sync cache so the Model Status table
  * (which polls /api/model-sync/cached) shows the tested status and time.
  * Updates entries even if the provider's cache TTL has expired.
+ *
+ * Models the provider answered 404/410 for are removed and remembered, unless
+ * every tested model from that provider failed that way: that points at a
+ * wrong base URL or endpoint, not dead models, so they are kept and flagged.
+ * Sets `removed: true` on results whose model was removed.
  */
 export function applyModelTestResults(
-  results: Array<{ providerId: string; modelId: string; status: ModelStatus; errorDetails?: string; testedAt: number }>
-): number {
+  results: Array<{ providerId: string; modelId: string; status: ModelStatus; errorDetails?: string; testedAt: number; gone?: boolean; removed?: boolean }>
+): { applied: number; removed: number } {
+  const testedPerProvider = new Map<string, number>()
+  const gonePerProvider = new Map<string, number>()
+  for (const r of results) {
+    testedPerProvider.set(r.providerId, (testedPerProvider.get(r.providerId) ?? 0) + 1)
+    if (r.gone) gonePerProvider.set(r.providerId, (gonePerProvider.get(r.providerId) ?? 0) + 1)
+  }
+  const endpointProblem = (providerId: string) =>
+    (gonePerProvider.get(providerId) ?? 0) === (testedPerProvider.get(providerId) ?? 0)
+
   let applied = 0
+  let removed = 0
+  const touched = new Set<string>()
   for (const result of results) {
     if (result.status === "testing") continue
     const entry = syncCache.get(result.providerId)
     if (!entry) continue
-    const model = entry.data.models.find((m) => m.id === result.modelId)
-    if (!model) continue
+    const index = entry.data.models.findIndex((m) => m.id === result.modelId)
+    if (index < 0) continue
+    touched.add(result.providerId)
+
+    if (result.gone && !endpointProblem(result.providerId)) {
+      entry.data.models.splice(index, 1)
+      removedModels.set(`${result.providerId}/${result.modelId}`, {
+        reason: result.errorDetails || "Not found",
+        removedAt: result.testedAt,
+      })
+      result.removed = true
+      removed++
+      continue
+    }
+
+    const model = entry.data.models[index]
     model.status = result.status
     model.lastTested = result.testedAt
     model.errorDetails = result.status === "available" ? undefined : result.errorDetails
+    if (result.gone) {
+      model.errorDetails = `${result.errorDetails} (every model from this provider failed this way; check its base URL)`
+      result.errorDetails = model.errorDetails
+    }
     applied++
   }
-  if (applied > 0) persistSyncCache()
-  return applied
+  if (touched.size > 0) persistSyncCache()
+  if (removed > 0) persistRemovedModels()
+  return { applied, removed }
 }
 
 // Get all cached sync results (for merging into model selector)
@@ -392,6 +461,7 @@ export async function syncProviderModels(
     // Process live models
     for (const liveModel of liveModels) {
       const key = `${providerId}/${liveModel.id}`
+      if (removedModels.has(key)) continue
       const configured = configuredMap.get(key)
       
       if (configured) {
@@ -430,7 +500,7 @@ export async function syncProviderModels(
     
     // Check for removed models (in config but not in live)
     for (const [key, configured] of configuredMap) {
-      if (!liveMap.has(key)) {
+      if (!liveMap.has(key) && !removedModels.has(key)) {
         // Model was removed from provider
         mergedModels.push({
           ...configured,
@@ -542,6 +612,9 @@ export async function syncAllProviders(
 export function clearSyncCache(): void {
   syncCache.clear()
   persistSyncCache()
+  // Clearing the cache also brings back models removed after a 404/410
+  removedModels.clear()
+  persistRemovedModels()
 }
 
 export function getProviderConfigs(): ProviderConfig[] {

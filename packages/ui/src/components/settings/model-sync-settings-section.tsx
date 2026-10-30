@@ -162,16 +162,21 @@ export const ModelSyncSettingsSection: Component = () => {
       const byKey = new Map<string, any>()
       for (const r of data?.results ?? []) byKey.set(rowKey(r.providerId, r.modelId), r)
 
-      const updated = snapshot.map((m) => {
-        const r = byKey.get(rowKey(m.providerId, m.modelId))
-        if (!r) return m
-        return {
-          ...m,
-          status: r.status,
-          lastTested: r.testedAt ?? Date.now(),
-          errorDetails: r.status === "available" ? undefined : r.errorDetails,
-        }
-      })
+      // Drop models the server removed (provider returned 404/410)
+      const removedCount = snapshot.filter((m) => byKey.get(rowKey(m.providerId, m.modelId))?.removed).length
+      const updated = snapshot
+        .filter((m) => !byKey.get(rowKey(m.providerId, m.modelId))?.removed)
+        .map((m) => {
+          const r = byKey.get(rowKey(m.providerId, m.modelId))
+          if (!r) return m
+          return {
+            ...m,
+            status: r.status,
+            lastTested: r.testedAt ?? Date.now(),
+            errorDetails: r.status === "available" ? undefined : r.errorDetails,
+          }
+        })
+
       setModels(updated)
 
       const counts = { available: 0, insufficient_funds: 0, error: 0 }
@@ -180,8 +185,12 @@ export const ModelSyncSettingsSection: Component = () => {
       }
       console.info(
         `[model-sync] tested ${byKey.size}/${snapshot.length}: ` +
-          `${counts.available} available, ${counts.insufficient_funds} insufficient funds, ${counts.error} errors`,
+          `${counts.available} available, ${counts.insufficient_funds} insufficient funds, ${counts.error} errors, ` +
+          `${removedCount} removed (not found / retired)`,
       )
+      if (removedCount > 0) {
+        setError(`Removed ${removedCount} model(s) the provider no longer serves. Clear cache to bring them back.`)
+      }
     } catch (e: unknown) {
       const err = e as Error
       setModels(snapshot) // restore previous statuses

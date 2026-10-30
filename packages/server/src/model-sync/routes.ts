@@ -107,8 +107,8 @@ export async function handleTestModelsBatch(request: Request): Promise<Response>
       timeoutMs: t.timeoutMs,
     }))
     const results = await testModelsBatch(options, body.concurrency)
-    const applied = applyModelTestResults(results)
-    log.info(`Batch test: ${results.length} results, ${applied} written to sync cache`)
+    const { applied, removed } = applyModelTestResults(results)
+    log.info(`Batch test: ${results.length} results, ${applied} written to sync cache, ${removed} removed (404/410)`)
     return Response.json({ results })
   } catch (error) {
     const err = error as Error | unknown
