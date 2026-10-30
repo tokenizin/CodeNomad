@@ -162,7 +162,7 @@ function deepMergeConfig(target: Record<string, unknown>, source: Record<string,
   }
 }
 
-function stripJsonc(input: string): string {
+export function stripJsonc(input: string): string {
   let output = ""
   let inString = false
   let escape = false

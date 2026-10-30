@@ -19,7 +19,12 @@ import { getLogger } from "../lib/logger"
 import { OpencodeApiError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { serverApi } from "../lib/api-client"
-import { parsePlaygroundRustNdjsonStream } from "../lib/playground-rust"
+import {
+  buildLocalEnginePrompt,
+  isUnauthorizedError,
+  readLocalEngineStream,
+  type LocalEngineAttachment,
+} from "../lib/local-engine"
 
 const log = getLogger("actions")
 
@@ -90,6 +95,162 @@ function createId(prefix: string): string {
   const random = randomBase62(ID_LENGTH - 12)
 
   return `${prefix}_${hex}${random}`
+}
+
+// ---------------------------------------------------------------- local engine (Claude Code CLI / Rust playground)
+
+/** Runs in flight, keyed by instance + session, so Stop can cancel them. */
+const localEngineRuns = new Map<string, AbortController>()
+const localRunKey = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
+
+/** OpenCode's own agents; a local engine uses the configured default agent instead. */
+const OPENCODE_DEFAULT_AGENTS = new Set(["build", "general", "explore"])
+
+function hasLocalEngineRun(instanceId: string, sessionId: string): boolean {
+  return localEngineRuns.has(localRunKey(instanceId, sessionId))
+}
+
+async function abortLocalEngineRun(instanceId: string, sessionId: string): Promise<void> {
+  const controller = localEngineRuns.get(localRunKey(instanceId, sessionId))
+  if (!controller) return
+  controller.abort()
+  // Closing the stream already stops the process; this also covers proxies that keep it open.
+  await serverApi.abortLocalEngine(sessionId).catch((error) => log.warn("local engine abort failed", error))
+}
+
+type LocalEngineSendArgs = {
+  instanceId: string
+  sessionId: string
+  folder: string | undefined
+  session: { agent?: string; model: { providerId: string; modelId: string } }
+  prompt: string
+  extraParts: any[]
+  userMessage: { id: string; parts: any[]; createdAt: number; displayMetadata: any }
+}
+
+async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
+  const { instanceId, sessionId, session, userMessage } = args
+  const ui = preferences()
+  const engine = ui.localEngineKind
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const key = localRunKey(instanceId, sessionId)
+  if (localEngineRuns.has(key)) {
+    throw new Error("A local engine run is already in progress for this session")
+  }
+
+  const assistantId = createId("msg")
+  const assistantPartId = createId("prt")
+  const sessionAgent = session.agent || ""
+  const agent =
+    !sessionAgent || OPENCODE_DEFAULT_AGENTS.has(sessionAgent)
+      ? ui.rustPlaygroundDefaultAgent || undefined
+      : sessionAgent
+  const model =
+    engine === "claude-cli" && session.model.providerId === "anthropic" && session.model.modelId
+      ? session.model.modelId
+      : undefined
+  const attachments: LocalEngineAttachment[] = args.extraParts.map((part) =>
+    part.type === "file"
+      ? { type: "file" as const, url: String(part.url ?? ""), filename: part.filename, mime: part.mime }
+      : { type: "text" as const, text: String(part.text ?? "") },
+  )
+  const prompt = buildLocalEnginePrompt(args.prompt, attachments)
+  const engineLabel = engine === "claude-cli" ? "Claude Code" : "Claude Code (Rust)"
+
+  const upsertAssistant = (text: string, status: "streaming" | "complete" | "error") => {
+    store.upsertMessage({
+      id: assistantId,
+      sessionId,
+      role: "assistant",
+      status,
+      parts: [
+        {
+          id: assistantPartId,
+          sessionID: sessionId,
+          messageID: assistantId,
+          type: "text" as const,
+          text,
+          synthetic: true,
+          renderCache: undefined,
+        },
+      ],
+      createdAt: userMessage.createdAt,
+      updatedAt: Date.now(),
+      isEphemeral: true,
+    })
+  }
+  const completeUser = () => {
+    store.upsertMessage({
+      id: userMessage.id,
+      sessionId,
+      role: "user",
+      status: "complete",
+      parts: userMessage.parts,
+      createdAt: userMessage.createdAt,
+      updatedAt: Date.now(),
+      isEphemeral: true,
+      clientPromptDisplayMetadata: userMessage.displayMetadata,
+    })
+  }
+
+  upsertAssistant(`Running ${engineLabel}…`, "streaming")
+  setSessionStatus(instanceId, sessionId, "working")
+
+  const controller = new AbortController()
+  localEngineRuns.set(key, controller)
+
+  // Re-render at most every 60 ms while text streams in.
+  let pendingText: string | null = null
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  const flush = () => {
+    flushTimer = null
+    if (pendingText !== null) upsertAssistant(pendingText, "streaming")
+    pendingText = null
+  }
+  let lastText = ""
+
+  try {
+    log.info("sendMessage.localEngine", { instanceId, sessionId, engine, agent, cwd: args.folder })
+    const response = await serverApi.runLocalEngine(
+      {
+        engine,
+        prompt,
+        cwd: args.folder || undefined,
+        sessionKey: sessionId,
+        agent,
+        model,
+        persist: engine === "rust-playground" ? ui.rustPlaygroundPersist : undefined,
+      },
+      controller.signal,
+    )
+    const result = await readLocalEngineStream(response, (_ev, reply, changed) => {
+      if (!changed) return
+      lastText = reply.text
+      pendingText = reply.text
+      if (!flushTimer) flushTimer = setTimeout(flush, 60)
+    })
+    if (flushTimer) clearTimeout(flushTimer)
+    completeUser()
+    upsertAssistant(result.text, result.isError ? "error" : "complete")
+  } catch (error) {
+    if (flushTimer) clearTimeout(flushTimer)
+    if (controller.signal.aborted) {
+      completeUser()
+      upsertAssistant(lastText.trim() ? `${lastText}\n\n_(stopped)_` : "_(stopped)_", "complete")
+      return
+    }
+    log.error("Local engine run failed", error)
+    const message = isUnauthorizedError(error)
+      ? "CodeNomad says this browser is not signed in. Sign in again at /login, then resend."
+      : error instanceof Error
+        ? error.message
+        : String(error)
+    upsertAssistant(message, "error")
+    throw error
+  } finally {
+    localEngineRuns.delete(key)
+    setSessionStatus(instanceId, sessionId, "idle")
+  }
 }
 
 async function sendMessage(
@@ -206,129 +367,24 @@ async function sendMessage(
 
   const ui = preferences()
   if (ui.useRustPlaygroundEngine) {
-    const assistantId = createId("msg")
-    const assistantPartId = createId("prt")
-    const agent =
-      session.agent ||
-      ui.rustPlaygroundDefaultAgent ||
-      undefined
-    const cwd = instance.folder || undefined
-
-    store.upsertMessage({
-      id: assistantId,
+    await sendViaLocalEngine({
+      instanceId,
       sessionId,
-      role: "assistant",
-      status: "streaming",
-      parts: [
-        {
-          id: assistantPartId,
-          type: "text" as const,
-          text: "Running Claude Code (Rust)…",
-          synthetic: true,
-          renderCache: undefined,
-          sessionID: sessionId,
-          messageID: assistantId,
-        },
-      ],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      isEphemeral: true,
-    })
-    setSessionStatus(instanceId, sessionId, "working")
-
-    try {
-      log.info("sendMessage.playgroundRust", { instanceId, sessionId, agent, cwd })
-      const response = await serverApi.runPlaygroundRust({
-        prompt: preparedPrompt.promptToSend,
-        cwd,
-        agent: agent || undefined,
-        jsonl: true,
-        persist: ui.rustPlaygroundPersist,
-      })
-      const result = await parsePlaygroundRustNdjsonStream(response, (ev) => {
-        if (ev.type === "stdout" && typeof ev.line === "string") {
-          store.upsertMessage({
-            id: assistantId,
-            sessionId,
-            role: "assistant",
-            status: "streaming",
-            parts: [
-              {
-                id: assistantPartId,
-                type: "text" as const,
-                text: ev.line,
-                synthetic: true,
-                renderCache: undefined,
-                sessionID: sessionId,
-                messageID: assistantId,
-              },
-            ],
-            createdAt,
-            updatedAt: Date.now(),
-            isEphemeral: true,
-          })
-        }
-      })
-      const text =
-        result.finalText.trim() ||
-        (result.exitCode === 0 ? "(empty response)" : `Rust engine failed (exit ${result.exitCode})`)
-      store.upsertMessage({
+    await sendViaLocalEngine({
+      instanceId,
+      sessionId,
+      folder: instance.folder,
+      session,
+      prompt: preparedPrompt.promptToSend,
+      extraParts: requestParts.slice(1),
+      userMessage: {
         id: messageId,
-        sessionId,
-        role: "user",
-        status: "complete",
         parts: optimisticParts,
         createdAt,
-        updatedAt: Date.now(),
-        isEphemeral: true,
-        clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
-      })
-      store.upsertMessage({
-        id: assistantId,
-        sessionId,
-        role: "assistant",
-        status: "complete",
-        parts: [
-          {
-            id: assistantPartId,
-            type: "text" as const,
-            text,
-            synthetic: true,
-            renderCache: undefined,
-            sessionID: sessionId,
-            messageID: assistantId,
-          },
-        ],
-        createdAt,
-        updatedAt: Date.now(),
-        isEphemeral: true,
-      })
-      setSessionStatus(instanceId, sessionId, "idle")
-    } catch (error) {
-      log.error("Failed to run playground rust", error)
-      store.upsertMessage({
-        id: assistantId,
-        sessionId,
-        role: "assistant",
-        status: "error",
-        parts: [
-          {
-            id: assistantPartId,
-            type: "text" as const,
-            text: error instanceof Error ? error.message : String(error),
-            synthetic: true,
-            renderCache: undefined,
-            sessionID: sessionId,
-            messageID: assistantId,
-          },
-        ],
-        createdAt,
-        updatedAt: Date.now(),
-        isEphemeral: true,
-      })
-      setSessionStatus(instanceId, sessionId, "idle")
-      throw error
-    }
+        displayMetadata: preparedPrompt.displayMetadata,
+      },
+    })
+    return
     return
   }
 
@@ -611,6 +667,11 @@ async function abortSessionOnce(instanceId: string, sessionId: string): Promise<
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {
   log.info("abortSession", { instanceId, sessionId })
+
+  if (hasLocalEngineRun(instanceId, sessionId)) {
+    await abortLocalEngineRun(instanceId, sessionId)
+    return
+  }
 
   const targets = await resolveSessionAbortTargets(instanceId, sessionId)
   log.info("abortSession targets", { instanceId, sessionId, targets })

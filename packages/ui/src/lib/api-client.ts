@@ -648,19 +648,24 @@ export const serverApi = {
     return request<Record<string, unknown>>("/api/wiki-lint")
   },
 
-  fetchPlaygroundRustStatus(): Promise<import("./playground-rust").PlaygroundRustStatus> {
-    return request("/api/playground/rust/status")
+  fetchLocalEngineStatus(): Promise<import("./local-engine").LocalEngineStatus> {
+    return request("/api/local-engine/status")
   },
 
-  runPlaygroundRust(
-    body: import("./playground-rust").PlaygroundRustRunRequest,
-    signal?: AbortSignal,
-  ): Promise<Response> {
-    return requestRaw("/api/playground/rust/run", {
+  runLocalEngine(body: import("./local-engine").LocalEngineRunRequest, signal?: AbortSignal): Promise<Response> {
+    return requestRaw("/api/local-engine/run", {
       method: "POST",
       body: JSON.stringify({ jsonl: true, ...body }),
       signal,
     })
+  },
+
+  abortLocalEngine(sessionKey: string): Promise<{ aborted: boolean }> {
+    return request("/api/local-engine/abort", { method: "POST", body: JSON.stringify({ sessionKey }) })
+  },
+
+  resetLocalEngineSession(sessionKey: string): Promise<{ reset: boolean }> {
+    return request("/api/local-engine/reset", { method: "POST", body: JSON.stringify({ sessionKey }) })
   },
 
   connectEvents(
