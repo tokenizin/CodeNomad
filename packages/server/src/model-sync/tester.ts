@@ -28,6 +28,20 @@ export interface TestModelOptions {
 const TEST_PROMPT = "Say 'OK' if you can receive this message."
 const DEFAULT_TIMEOUT = 15_000
 
+/**
+ * True only when the provider says the model itself doesn't exist (410, or a
+ * 404 that says not found / deprecated). OpenRouter also answers 404 for
+ * models that exist but are blocked by account settings (privacy/ZDR, BYOK)
+ * or are batch-only; those must not be removed.
+ */
+export function isGoneResponse(httpStatus: number, message: string): boolean {
+  if (httpStatus === 410) return true
+  if (httpStatus !== 404) return false
+  const lower = message.toLowerCase()
+  if (/guardrail|data policy|zdr|privacy|byok|endpoint/.test(lower)) return false
+  return /not found|does not exist|deprecated|no longer|retired|decommission/.test(lower)
+}
+
 function classifyError(error: unknown): { status: ModelStatus; details: string } {
   const message = error instanceof Error ? error.message : String(error)
   const lower = message.toLowerCase()
@@ -56,6 +70,21 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     return { status: "error", details: `Rate limited: ${message}` }
   }
   
+  // Exists, but only for batch jobs (OpenRouter ":batch" variants)
+  if (lower.includes("cannot be used with the chat/completions endpoint")) {
+    return { status: "error", details: `Batch-only model, not usable for chat: ${message}` }
+  }
+
+  // Exists, but excluded by the account's privacy / data-policy settings
+  if (lower.includes("guardrail") || lower.includes("data policy") || lower.includes("zdr")) {
+    return { status: "error", details: `Blocked by your provider privacy settings: ${message}` }
+  }
+
+  // Exists, but needs the user's own upstream key
+  if (lower.includes("byok")) {
+    return { status: "error", details: `Needs your own provider key (BYOK): ${message}` }
+  }
+
   // Model retired by the provider
   if (lower.includes("410") || lower.includes("gone")) {
     return { status: "error", details: `Model retired: ${message}` }
@@ -156,7 +185,7 @@ async function testModelViaOpenAICompatible(options: TestModelOptions): Promise<
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
-        gone: response.status === 404 || response.status === 410,
+        gone: isGoneResponse(response.status, String(errorMessage)),
       }
     }
     
@@ -221,7 +250,7 @@ async function testModelViaAnthropic(options: TestModelOptions): Promise<ModelTe
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
-        gone: response.status === 404 || response.status === 410,
+        gone: isGoneResponse(response.status, String(errorMessage)),
       }
     }
     
@@ -280,7 +309,7 @@ async function testModelViaGoogle(options: TestModelOptions): Promise<ModelTestR
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
-        gone: response.status === 404 || response.status === 410,
+        gone: isGoneResponse(response.status, String(errorMessage)),
       }
     }
     
@@ -363,7 +392,7 @@ async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestR
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
-        gone: response.status === 404 || response.status === 410,
+        gone: isGoneResponse(response.status, String(errorMessage)),
       }
     }
     
