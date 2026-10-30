@@ -1,19 +1,18 @@
-import { createEffect, createSignal, For, onMount, Show, type Component } from "solid-js"
+import { createEffect, createSignal, onMount, Show, type Component } from "solid-js"
 import { Cpu, RefreshCw } from "lucide-solid"
 import {
   localEngineServerSettings,
   preferences,
-  setLocalEngineKind,
   setRustPlaygroundDefaultAgent,
   setRustPlaygroundPersist,
   toggleUseRustPlaygroundEngine,
   updateLocalEngineServerSettings,
 } from "../../stores/preferences"
+import { getActiveInstance, refreshEngineResources } from "../../stores/instances"
+import { loadRustCatalog } from "../../stores/sessions"
 import { serverApi } from "../../lib/api-client"
-import { isUnauthorizedError, type LocalEngineKind, type LocalEngineStatus } from "../../lib/local-engine"
+import { isUnauthorizedError, type LocalEngineStatus, type RustCatalog } from "../../lib/local-engine"
 import { useI18n } from "../../lib/i18n"
-
-const PERMISSION_MODES = ["", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"] as const
 
 /** Text field that saves on blur/Enter instead of every keystroke. */
 const SettingField: Component<{
@@ -33,6 +32,8 @@ const SettingField: Component<{
       </div>
       <input
         class="selector-input w-full max-w-xs"
+        // Long captions otherwise squeeze the field to nothing.
+        style={{ "min-width": "16rem", "flex-shrink": "0" }}
         type="text"
         spellcheck={false}
         placeholder={props.placeholder}
@@ -46,30 +47,49 @@ const SettingField: Component<{
   )
 }
 
+const InfoRow: Component<{ label: string; value: string }> = (props) => (
+  <div class="settings-info-row">
+    <span class="settings-info-label">{props.label}</span>
+    <span class="settings-info-value">{props.value}</span>
+  </div>
+)
+
 export const PlaygroundRustSettingsSection: Component = () => {
   const { t } = useI18n()
   const [status, setStatus] = createSignal<LocalEngineStatus | null>(null)
+  const [catalog, setCatalog] = createSignal<RustCatalog | null>(null)
   const [statusError, setStatusError] = createSignal<string | null>(null)
+  const [catalogError, setCatalogError] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(false)
   const [saveError, setSaveError] = createSignal<string | null>(null)
 
-  const engine = () => preferences().localEngineKind
   const server = () => localEngineServerSettings()
+  const errorText = (err: unknown) =>
+    isUnauthorizedError(err) ? t("settings.playgroundRust.status.unauthorized") : err instanceof Error ? err.message : String(err)
 
-  const refresh = async () => {
+  /** Engine status, plus what the agent reports for the open workspace. */
+  const refresh = async (fresh = false) => {
     setLoading(true)
     try {
-      setStatus(await serverApi.fetchLocalEngineStatus())
+      const current = await serverApi.fetchLocalEngineStatus()
+      setStatus(current)
       setStatusError(null)
+      const instance = getActiveInstance()
+      if (current.rust?.ok && instance?.id) {
+        try {
+          setCatalog((await loadRustCatalog(instance.id, { fresh })) ?? null)
+          setCatalogError(null)
+        } catch (err) {
+          setCatalog(null)
+          setCatalogError(errorText(err))
+        }
+      } else {
+        setCatalog(null)
+        setCatalogError(instance ? null : t("settings.playgroundRust.catalog.noWorkspace"))
+      }
     } catch (err) {
       setStatus(null)
-      setStatusError(
-        isUnauthorizedError(err)
-          ? t("settings.playgroundRust.status.unauthorized")
-          : err instanceof Error
-            ? err.message
-            : String(err),
-      )
+      setStatusError(errorText(err))
     } finally {
       setLoading(false)
     }
@@ -80,12 +100,18 @@ export const PlaygroundRustSettingsSection: Component = () => {
   const saveServer = (patch: Parameters<typeof updateLocalEngineServerSettings>[0]) => {
     setSaveError(null)
     void updateLocalEngineServerSettings(patch)
-      .then(() => refresh())
+      .then(() => refresh(true))
       .catch((err: unknown) => setSaveError(err instanceof Error ? err.message : String(err)))
   }
 
-  const activeEngine = () => (engine() === "claude-cli" ? status()?.claude : status()?.rustPlayground)
-  const engineReady = () => Boolean(activeEngine()?.ok)
+  const toggleEngine = () => {
+    toggleUseRustPlaygroundEngine()
+    // Pickers and slash commands switch between OpenCode and Claude Code (Rust).
+    setTimeout(() => void refreshEngineResources(), 300)
+  }
+
+  const listNames = (items: Array<{ name?: string; id?: string }> | undefined) =>
+    (items ?? []).map((item) => item.name ?? item.id ?? "").filter(Boolean).join(", ") || "—"
 
   return (
     <div class="settings-section-stack">
@@ -103,57 +129,36 @@ export const PlaygroundRustSettingsSection: Component = () => {
 
         <div class="settings-card-body settings-section-stack">
           <label class="settings-checkbox-toggle">
-            <input
-              type="checkbox"
-              checked={preferences().useRustPlaygroundEngine}
-              onChange={() => toggleUseRustPlaygroundEngine()}
-            />
+            <input type="checkbox" checked={preferences().useRustPlaygroundEngine} onChange={toggleEngine} />
             <div>
               <div class="settings-toggle-title">{t("settings.playgroundRust.engine.title")}</div>
               <div class="settings-toggle-caption">{t("settings.playgroundRust.engine.subtitle")}</div>
             </div>
           </label>
 
-          <Show when={preferences().useRustPlaygroundEngine && status() && !engineReady()}>
+          <Show when={preferences().useRustPlaygroundEngine && status() && !status()?.rust?.ok}>
             <p class="settings-error-message">{t("settings.playgroundRust.engine.notReady")}</p>
           </Show>
-
-          <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
-              <div class="settings-toggle-title">{t("settings.playgroundRust.kind.title")}</div>
-              <div class="settings-toggle-caption">{t("settings.playgroundRust.kind.subtitle")}</div>
-            </div>
-            <select
-              class="selector-input w-full max-w-xs"
-              value={engine()}
-              onChange={(e) => setLocalEngineKind(e.currentTarget.value as LocalEngineKind)}
-            >
-              <option value="claude-cli">{t("settings.playgroundRust.kind.claude")}</option>
-              <option value="rust-playground">{t("settings.playgroundRust.kind.rust")}</option>
-            </select>
-          </div>
 
           <SettingField
             title={t("settings.playgroundRust.defaultAgent.label")}
             caption={t("settings.playgroundRust.defaultAgent.hint")}
-            placeholder="product_manager"
+            placeholder="claude-code"
             value={preferences().rustPlaygroundDefaultAgent}
             onSave={(value) => setRustPlaygroundDefaultAgent(value)}
           />
 
-          <Show when={engine() === "rust-playground"}>
-            <label class="settings-checkbox-toggle">
-              <input
-                type="checkbox"
-                checked={preferences().rustPlaygroundPersist}
-                onChange={(e) => setRustPlaygroundPersist(e.currentTarget.checked)}
-              />
-              <div>
-                <div class="settings-toggle-title">{t("settings.playgroundRust.persist.title")}</div>
-                <div class="settings-toggle-caption">{t("settings.playgroundRust.persist.subtitle")}</div>
-              </div>
-            </label>
-          </Show>
+          <label class="settings-checkbox-toggle">
+            <input
+              type="checkbox"
+              checked={preferences().rustPlaygroundPersist}
+              onChange={(e) => setRustPlaygroundPersist(e.currentTarget.checked)}
+            />
+            <div>
+              <div class="settings-toggle-title">{t("settings.playgroundRust.persist.title")}</div>
+              <div class="settings-toggle-caption">{t("settings.playgroundRust.persist.subtitle")}</div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -166,43 +171,13 @@ export const PlaygroundRustSettingsSection: Component = () => {
           <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
         </div>
         <div class="settings-card-body settings-section-stack">
-          <Show when={engine() === "claude-cli"}>
-            <SettingField
-              title={t("settings.playgroundRust.claudeBinary.title")}
-              caption={t("settings.playgroundRust.claudeBinary.subtitle")}
-              placeholder="claude"
-              value={server().claudeBinary ?? ""}
-              onSave={(value) => saveServer({ claudeBinary: value })}
-            />
-            <div class="settings-toggle-row settings-toggle-row-compact">
-              <div>
-                <div class="settings-toggle-title">{t("settings.playgroundRust.permissionMode.title")}</div>
-                <div class="settings-toggle-caption">{t("settings.playgroundRust.permissionMode.subtitle")}</div>
-              </div>
-              <select
-                class="selector-input w-full max-w-xs"
-                value={server().permissionMode ?? ""}
-                onChange={(e) => saveServer({ permissionMode: e.currentTarget.value })}
-              >
-                <For each={PERMISSION_MODES}>
-                  {(mode) => (
-                    <option value={mode}>{mode ? mode : t("settings.playgroundRust.permissionMode.inherit")}</option>
-                  )}
-                </For>
-              </select>
-            </div>
-          </Show>
-
-          <Show when={engine() === "rust-playground"}>
-            <SettingField
-              title={t("settings.playgroundRust.playgroundRoot.title")}
-              caption={t("settings.playgroundRust.playgroundRoot.subtitle")}
-              placeholder="~/0-claudecode/build-your-own-claude-code"
-              value={server().playgroundRoot ?? ""}
-              onSave={(value) => saveServer({ playgroundRoot: value })}
-            />
-          </Show>
-
+          <SettingField
+            title={t("settings.playgroundRust.playgroundRoot.title")}
+            caption={t("settings.playgroundRust.playgroundRoot.subtitle")}
+            placeholder="~/0-claudecode/build-your-own-claude-code"
+            value={server().playgroundRoot ?? ""}
+            onSave={(value) => saveServer({ playgroundRoot: value })}
+          />
           <SettingField
             title={t("settings.playgroundRust.opencodeConfig.title")}
             caption={t("settings.playgroundRust.opencodeConfig.subtitle")}
@@ -210,7 +185,6 @@ export const PlaygroundRustSettingsSection: Component = () => {
             value={server().opencodeConfig ?? ""}
             onSave={(value) => saveServer({ opencodeConfig: value })}
           />
-
           <SettingField
             title={t("settings.playgroundRust.extraRoots.title")}
             caption={t("settings.playgroundRust.extraRoots.subtitle")}
@@ -218,7 +192,6 @@ export const PlaygroundRustSettingsSection: Component = () => {
             value={(server().extraRoots ?? []).join(", ")}
             onSave={(value) => saveServer({ extraRoots: value.split(",") })}
           />
-
           <Show when={saveError()}>
             <p class="settings-error-message">{saveError()}</p>
           </Show>
@@ -235,7 +208,7 @@ export const PlaygroundRustSettingsSection: Component = () => {
             type="button"
             class="selector-button selector-button-secondary"
             disabled={loading()}
-            onClick={() => void refresh()}
+            onClick={() => void refresh(true)}
           >
             <RefreshCw class="w-4 h-4" />
             <span>{t("settings.playgroundRust.status.refresh")}</span>
@@ -251,34 +224,35 @@ export const PlaygroundRustSettingsSection: Component = () => {
           <Show when={status()}>
             {(current) => (
               <>
-                <div class="settings-info-row">
-                  <span class="settings-info-label">{t("settings.playgroundRust.status.claude")}</span>
-                  <span class="settings-info-value">
-                    {current().claude?.ok
-                      ? `${current().claude?.version ?? ""} — ${current().claude?.binary ?? ""}`
-                      : current().claude?.error ?? t("settings.playgroundRust.status.missing")}
-                  </span>
-                </div>
-                <div class="settings-info-row">
-                  <span class="settings-info-label">{t("settings.playgroundRust.status.rust")}</span>
-                  <span class="settings-info-value">
-                    {current().rustPlayground?.ok
-                      ? current().rustPlayground?.runner ?? ""
-                      : current().rustPlayground?.error ?? t("settings.playgroundRust.status.missing")}
-                  </span>
-                </div>
-                <div class="settings-info-row">
-                  <span class="settings-info-label">{t("settings.playgroundRust.status.agents")}</span>
-                  <span class="settings-info-value">
-                    {current().opencodeConfig ?? t("settings.playgroundRust.status.missing")}
-                  </span>
-                </div>
-                <div class="settings-info-row">
-                  <span class="settings-info-label">{t("settings.playgroundRust.status.folders")}</span>
-                  <span class="settings-info-value">
-                    {(current().workspaceRoots ?? []).join(", ") || t("settings.playgroundRust.status.noFolders")}
-                  </span>
-                </div>
+                <InfoRow
+                  label={t("settings.playgroundRust.status.rust")}
+                  value={current().rust?.ok ? current().rust?.runner ?? "" : current().rust?.error ?? t("settings.playgroundRust.status.missing")}
+                />
+                <InfoRow
+                  label={t("settings.playgroundRust.status.agents")}
+                  value={current().opencodeConfig ?? t("settings.playgroundRust.status.missing")}
+                />
+                <InfoRow
+                  label={t("settings.playgroundRust.status.folders")}
+                  value={(current().workspaceRoots ?? []).join(", ") || t("settings.playgroundRust.status.noFolders")}
+                />
+              </>
+            )}
+          </Show>
+          <Show when={catalogError()}>
+            <p class="settings-error-message">{catalogError()}</p>
+          </Show>
+          <Show when={catalog()}>
+            {(cat) => (
+              <>
+                <InfoRow label={t("settings.playgroundRust.catalog.endpoint")} value={cat().baseUrl ?? "—"} />
+                <InfoRow label={t("settings.playgroundRust.catalog.defaultModel")} value={cat().model} />
+                <InfoRow
+                  label={t("settings.playgroundRust.catalog.models")}
+                  value={cat().modelsError ? `${listNames(cat().models)} (${cat().modelsError})` : listNames(cat().models)}
+                />
+                <InfoRow label={t("settings.playgroundRust.catalog.agents")} value={listNames(cat().agents)} />
+                <InfoRow label={t("settings.playgroundRust.catalog.commands")} value={listNames(cat().commands)} />
               </>
             )}
           </Show>

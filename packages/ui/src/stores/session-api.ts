@@ -65,12 +65,19 @@ import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options"
 import { serverApi } from "../lib/api-client"
 import {
+  catalogAgents,
+  catalogCommands,
+  catalogProvider,
   historyToApiMessages,
   isLocalSessionId,
   localEngineRuns,
   localRunKey,
+  RUST_DEFAULT_AGENT,
+  RUST_PROVIDER_ID,
   type LocalSessionRecord,
+  type RustCatalog,
 } from "../lib/local-engine"
+import { setCommands } from "./commands"
 
 const log = getLogger("api")
 
@@ -249,6 +256,67 @@ function upsertLocalSessions(instanceId: string, records: LocalSessionRecord[]) 
   syncInstanceSessionIndicator(instanceId)
 }
 
+// ---------------------------------------------------------------- Claude Code (Rust) catalog
+// With the engine on, the agent picker, model picker and slash commands come
+// from the Rust agent itself (`--catalog`), the way OpenCode fills them.
+
+const rustCatalogs = new Map<string, RustCatalog>()
+
+function localEngineEnabled(): boolean {
+  return preferences().useRustPlaygroundEngine
+}
+
+/** The last catalog loaded for this workspace, if any. */
+function getRustCatalog(instanceId: string): RustCatalog | undefined {
+  return rustCatalogs.get(instanceId)
+}
+
+/** Fills agents, models and slash commands from Claude Code (Rust). */
+async function loadRustCatalog(instanceId: string, options?: { fresh?: boolean }): Promise<RustCatalog | undefined> {
+  const instance = instances().get(instanceId)
+  if (!instance?.folder) return undefined
+  try {
+    const catalog = await serverApi.fetchLocalEngineCatalog(instance.folder, options)
+    rustCatalogs.set(instanceId, catalog)
+    setAgents((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, catalogAgents(catalog))
+      return next
+    })
+    setProviders((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, [catalogProvider(catalog)] as any)
+      return next
+    })
+    setCommands(instanceId, catalogCommands(catalog) as any)
+    return catalog
+  } catch (error) {
+    log.warn("Failed to load the Claude Code (Rust) catalog", { instanceId, error })
+    // Still mark agents as fetched so pickers show "none" rather than spinning.
+    setAgents((prev) => (prev.has(instanceId) ? prev : new Map(prev).set(instanceId, [])))
+    throw error
+  }
+}
+
+/** Sessions plus catalog, for a workspace whose OpenCode isn't running. */
+async function hydrateLocalEngine(instanceId: string): Promise<void> {
+  const results = await Promise.allSettled([
+    fetchLocalSessions(instanceId),
+    localEngineEnabled() ? loadRustCatalog(instanceId) : Promise.resolve(undefined),
+  ])
+  for (const result of results) {
+    if (result.status === "rejected") log.warn("Local engine hydrate step failed", { instanceId, error: result.reason })
+  }
+}
+
+/** Default model for a new local session: the agent's own, else the endpoint's default. */
+function defaultRustModel(instanceId: string, agent?: string): { providerId: string; modelId: string } {
+  const catalog = rustCatalogs.get(instanceId)
+  const agentModel = agent ? catalog?.agents.find((a) => a.name === agent)?.model : undefined
+  const modelId = agentModel || catalog?.model || ""
+  return modelId ? { providerId: RUST_PROVIDER_ID, modelId } : { providerId: "", modelId: "" }
+}
+
 /** Loads this workspace's local-engine sessions into the session list. */
 async function fetchLocalSessions(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
@@ -262,9 +330,13 @@ async function createLocalSessionForInstance(instanceId: string, agent?: string)
   if (!instance?.folder) {
     throw new Error("Instance not ready")
   }
+  if (!rustCatalogs.has(instanceId)) await loadRustCatalog(instanceId).catch(() => undefined)
+  const chosenAgent = agent || preferences().rustPlaygroundDefaultAgent || RUST_DEFAULT_AGENT
+  const model = defaultRustModel(instanceId, chosenAgent)
   const record = await serverApi.createLocalSession({
     folder: instance.folder,
-    agent: agent || preferences().rustPlaygroundDefaultAgent || "",
+    agent: chosenAgent,
+    ...(model.modelId ? { model } : {}),
   })
   upsertLocalSessions(instanceId, [record])
   return sessions().get(instanceId)?.get(record.id) ?? localRecordToSession(instanceId, record)
@@ -647,10 +719,16 @@ async function forkSession(
   sourceSessionId: string,
   options?: { messageId?: string },
 ): Promise<Session> {
-  if (isLocalSessionId(sourceSessionId)) {
-    throw new Error("Forking isn't available for local engine sessions yet")
-  }
   const instance = instances().get(instanceId)
+  // Local sessions fork in CodeNomad; so does any session when OpenCode isn't running.
+  if (isLocalSessionId(sourceSessionId) || (instance && !instance.client)) {
+    const record = await serverApi.forkLocalSession(sourceSessionId, {
+      messageId: options?.messageId,
+      folder: instance?.folder,
+    })
+    upsertLocalSessions(instanceId, [record])
+    return sessions().get(instanceId)?.get(record.id) ?? localRecordToSession(instanceId, record)
+  }
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
@@ -668,6 +746,8 @@ async function forkSession(
     client.session.fork(request),
     "session.fork",
   )
+  // Turns sent through Claude Code (Rust) live in CodeNomad; bring them along.
+  await serverApi.copyLocalHistory(sourceSessionId, info.id, options?.messageId).catch(() => undefined)
   const forkedSession = {
     id: info.id,
     instanceId,
@@ -824,6 +904,10 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 async function fetchAgents(instanceId: string): Promise<void> {
+  if (localEngineEnabled()) {
+    await loadRustCatalog(instanceId)
+    return
+  }
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -871,6 +955,11 @@ async function fetchAgents(instanceId: string): Promise<void> {
 }
 
 async function fetchProviders(instanceId: string): Promise<void> {
+  if (localEngineEnabled()) {
+    // fetchAgents loads the same catalog; reuse it when it's already here.
+    if (!rustCatalogs.has(instanceId)) await loadRustCatalog(instanceId)
+    return
+  }
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1183,6 +1272,9 @@ export {
 
   fetchSessions,
   fetchLocalSessions,
+  getRustCatalog,
+  hydrateLocalEngine,
+  loadRustCatalog,
   loadMoreSessions,
   searchSessions,
   forkSession,

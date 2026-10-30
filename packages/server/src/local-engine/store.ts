@@ -12,6 +12,7 @@
 import { randomBytes } from "crypto"
 import fs from "fs"
 import path from "path"
+import type { ReplyPart } from "./reply-parts.js"
 
 export const LOCAL_SESSION_PREFIX = "ses_lcl_"
 
@@ -30,12 +31,16 @@ export type HistoryAttachment = { filename: string; mime?: string; path?: string
 export type HistoryMessage = {
   id: string
   role: "user" | "assistant"
+  /** Plain text (what the agent gets as context in later turns). */
   text: string
   createdAt: number
   engine?: string
   agent?: string
+  model?: string
   isError?: boolean
   attachments?: HistoryAttachment[]
+  /** Assistant replies: text and tool-call parts in order, for display. */
+  parts?: ReplyPart[]
 }
 
 const KEY = /^[A-Za-z0-9_.:-]{1,200}$/
@@ -180,6 +185,49 @@ export class LocalEngineStore {
           : undefined
       this.updateSession(safe, title ? { title } : {})
     }
+  }
+
+  /** Replaces a session's history (atomic write). */
+  writeHistory(key: string, messages: HistoryMessage[]) {
+    const safe = safeKey(key)
+    if (!safe) return
+    const file = this.historyFile(safe)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, messages.map((m) => JSON.stringify(m)).join("\n") + (messages.length ? "\n" : ""))
+    fs.renameSync(tmp, file)
+  }
+
+  /** Messages before `messageId` (all of them when it's not given or not found). */
+  historyBefore(key: string, messageId?: string): HistoryMessage[] {
+    const messages = this.readHistory(key)
+    if (!messageId) return messages
+    const index = messages.findIndex((m) => m.id === messageId)
+    return index < 0 ? messages : messages.slice(0, index)
+  }
+
+  /** Revert: drops `messageId` and everything after it. Returns how many were removed. */
+  truncateHistory(key: string, messageId: string): number {
+    const messages = this.readHistory(key)
+    const index = messages.findIndex((m) => m.id === messageId)
+    if (index < 0) return 0
+    this.writeHistory(key, messages.slice(0, index))
+    return messages.length - index
+  }
+
+  deleteHistoryMessage(key: string, messageId: string): boolean {
+    const messages = this.readHistory(key)
+    const next = messages.filter((m) => m.id !== messageId)
+    if (next.length === messages.length) return false
+    this.writeHistory(key, next)
+    return true
+  }
+
+  /** Fork: copies history before `messageId` from one session key to another. */
+  copyHistory(from: string, to: string, beforeMessageId?: string): number {
+    const messages = this.historyBefore(from, beforeMessageId)
+    if (messages.length) this.writeHistory(to, messages)
+    return messages.length
   }
 
   deleteHistory(key: string) {

@@ -20,6 +20,7 @@ import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
   fetchLocalSessions,
+  hydrateLocalEngine,
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
@@ -186,6 +187,18 @@ function isUsableInstance(instance: { status: string }): boolean {
   return instance.status === "ready" || (localEngineEnabled() && instance.status === "error")
 }
 
+/** Re-fills agents, models and slash commands after the engine is switched on or off. */
+async function refreshEngineResources(): Promise<void> {
+  for (const [id, instance] of instances().entries()) {
+    await Promise.allSettled([
+      fetchAgents(id),
+      fetchProviders(id),
+      !localEngineEnabled() && instance.client ? fetchCommands(id, instance.client) : Promise.resolve(),
+      fetchLocalSessions(id),
+    ])
+  }
+}
+
 function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => isUsableInstance(instance))
   setHasInstances(readyExists)
@@ -253,7 +266,7 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
     ensureActiveInstanceSelected()
   } else if (descriptor.status !== "starting") {
     // OpenCode isn't running here, but local-engine sessions don't need it.
-    void fetchLocalSessions(descriptor.id).catch((error: unknown) => log.warn("Failed to load local engine sessions", error))
+    void hydrateLocalEngine(descriptor.id).catch((error: unknown) => log.warn("Failed to load Claude Code (Rust) data", error))
   }
 }
 
@@ -442,7 +455,8 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
     if (!instance?.client) return
 
     const secondaryResults = await Promise.allSettled([
-      fetchCommands(instanceId, instance.client),
+      // With Claude Code (Rust) on, slash commands come from its catalog instead.
+      localEngineEnabled() ? Promise.resolve() : fetchCommands(instanceId, instance.client),
       syncPendingPermissions(instanceId),
       syncPendingQuestions(instanceId),
     ])
@@ -1485,6 +1499,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
 }
 
 export {
+  refreshEngineResources,
   instances,
   activeInstanceId,
   setActiveInstanceId,

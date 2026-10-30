@@ -660,12 +660,39 @@ export const serverApi = {
     })
   },
 
-  abortLocalEngine(sessionKey: string): Promise<{ aborted: boolean }> {
-    return request("/api/local-engine/abort", { method: "POST", body: JSON.stringify({ sessionKey }) })
+  fetchLocalEngineCatalog(folder: string, options?: { fresh?: boolean }): Promise<import("./local-engine").RustCatalog> {
+    return request(`/api/local-engine/catalog?folder=${encodeURIComponent(folder)}${options?.fresh ? "&fresh=1" : ""}`)
   },
 
-  resetLocalEngineSession(sessionKey: string): Promise<{ reset: boolean }> {
-    return request("/api/local-engine/reset", { method: "POST", body: JSON.stringify({ sessionKey }) })
+  forkLocalSession(
+    id: string,
+    body: { messageId?: string; folder?: string },
+  ): Promise<import("./local-engine").LocalSessionRecord> {
+    return request(`/api/local-engine/sessions/${encodeURIComponent(id)}/fork`, { method: "POST", body: JSON.stringify(body) })
+  },
+
+  truncateLocalHistory(sessionKey: string, messageId: string): Promise<{ removed: number }> {
+    return request(`/api/local-engine/history/${encodeURIComponent(sessionKey)}/truncate`, {
+      method: "POST",
+      body: JSON.stringify({ messageId }),
+    })
+  },
+
+  deleteLocalHistoryMessage(sessionKey: string, messageId: string): Promise<{ deleted: boolean }> {
+    return request(`/api/local-engine/history/${encodeURIComponent(sessionKey)}/messages/${encodeURIComponent(messageId)}`, {
+      method: "DELETE",
+    })
+  },
+
+  copyLocalHistory(sessionKey: string, to: string, beforeMessageId?: string): Promise<{ copied: number }> {
+    return request(`/api/local-engine/history/${encodeURIComponent(sessionKey)}/copy`, {
+      method: "POST",
+      body: JSON.stringify({ to, beforeMessageId }),
+    })
+  },
+
+  abortLocalEngine(sessionKey: string): Promise<{ aborted: boolean }> {
+    return request("/api/local-engine/abort", { method: "POST", body: JSON.stringify({ sessionKey }) })
   },
 
   fetchLocalEngineHistory(

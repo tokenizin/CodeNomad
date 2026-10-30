@@ -20,6 +20,15 @@ export async function fetchCommands(instanceId: string, client: OpencodeClient):
   })
 }
 
+/** Sets an instance's slash commands from another source (Claude Code (Rust)'s skills). */
+export function setCommands(instanceId: string, commands: SDKCommand[]): void {
+  setCommandMap((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, commands)
+    return next
+  })
+}
+
 export function getCommands(instanceId: string): SDKCommand[] {
   return commandMap().get(instanceId) ?? []
 }

@@ -12,7 +12,7 @@ import {
   updateInstanceConfig as updateInstanceData,
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
-import type { LocalEngineKind, LocalEngineServerSettings } from "../lib/local-engine"
+import type { LocalEngineServerSettings } from "../lib/local-engine"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 
 const log = getLogger("actions")
@@ -88,13 +88,11 @@ export interface UiSettings {
   notifyOnNeedsInput: boolean
   notifyOnIdle: boolean
 
-  /** Route chat sends through a local engine (see localEngineKind) instead of OpenCode. */
+  /** Route chat through Claude Code (Rust) — build-your-own-claude-code's agent — instead of OpenCode. */
   useRustPlaygroundEngine: boolean
-  /** Which local engine: the local Claude Code CLI, or the Rust playground bridge. */
-  localEngineKind: LocalEngineKind
-  /** Persist Rust bridge transcripts to Neon + MinIO (Rust playground only). */
+  /** Persist Claude Code (Rust) transcripts to Neon + MinIO (playground/persistence). */
   rustPlaygroundPersist: boolean
-  /** Agent for local-engine runs when the session uses an OpenCode built-in agent (e.g. product_manager). */
+  /** Agent for Claude Code (Rust) runs when a session uses an OpenCode built-in agent (e.g. product_manager). */
   rustPlaygroundDefaultAgent: string
 }
 
@@ -187,7 +185,6 @@ const defaultUiSettings: UiSettings = {
   notifyOnIdle: true,
 
   useRustPlaygroundEngine: false,
-  localEngineKind: "claude-cli",
   rustPlaygroundPersist: false,
   rustPlaygroundDefaultAgent: "",
 }
@@ -273,13 +270,6 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
     notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
     useRustPlaygroundEngine: sanitized.useRustPlaygroundEngine ?? defaultUiSettings.useRustPlaygroundEngine,
-    // Before the engine choice existed the toggle always meant the Rust playground.
-    localEngineKind:
-      sanitized.localEngineKind === "claude-cli" || sanitized.localEngineKind === "rust-playground"
-        ? sanitized.localEngineKind
-        : sanitized.useRustPlaygroundEngine
-          ? "rust-playground"
-          : defaultUiSettings.localEngineKind,
     rustPlaygroundPersist: sanitized.rustPlaygroundPersist ?? defaultUiSettings.rustPlaygroundPersist,
     rustPlaygroundDefaultAgent:
       typeof sanitized.rustPlaygroundDefaultAgent === "string"
@@ -597,10 +587,6 @@ function setRustPlaygroundPersist(enabled: boolean) {
 
 function setRustPlaygroundDefaultAgent(agent: string) {
   updateUiSettings({ rustPlaygroundDefaultAgent: agent.trim() })
-}
-
-function setLocalEngineKind(kind: LocalEngineKind) {
-  updateUiSettings({ localEngineKind: kind })
 }
 
 const localEngineServerSettings = createMemo<LocalEngineServerSettings>(() => {
@@ -1161,7 +1147,6 @@ export {
   toggleUseRustPlaygroundEngine,
   setRustPlaygroundPersist,
   setRustPlaygroundDefaultAgent,
-  setLocalEngineKind,
   localEngineServerSettings,
   updateLocalEngineServerSettings,
   setDiffViewMode,
