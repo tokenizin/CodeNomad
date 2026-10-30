@@ -11,7 +11,7 @@ import {
   toOpencodeTool,
 } from "../rust-runner"
 import { ReplyParts } from "../reply-parts"
-import { checkCwd, historyForAgent } from "../../server/routes/local-engine"
+import { checkCwd, historyForAgent, withToolPaths } from "../../server/routes/local-engine"
 
 const line = (value: unknown) => JSON.stringify(value)
 
@@ -116,5 +116,17 @@ describe("workspace guard", () => {
     expect(checkCwd(os.tmpdir(), [real])).toBeNull()
     expect(checkCwd(path.join(root, "sub", "..", ".."), [real])).toBeNull()
     expect(checkCwd(path.join(root, "missing"), [real])).toBeNull()
+  })
+})
+
+describe("agent PATH", () => {
+  test("adds existing tool folders (cargo) to a minimal launchd PATH, once", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "home-"))
+    fs.mkdirSync(path.join(home, ".cargo", "bin"), { recursive: true })
+    const result = withToolPaths("/usr/bin:/bin", home).split(":")
+    expect(result.slice(0, 2)).toEqual(["/usr/bin", "/bin"])
+    expect(result).toContain(path.join(home, ".cargo", "bin"))
+    expect(result).not.toContain(path.join(home, ".bun", "bin"))
+    expect(withToolPaths(result.join(":"), home).split(":").filter((p) => p.endsWith(".cargo/bin")).length).toBe(1)
   })
 })

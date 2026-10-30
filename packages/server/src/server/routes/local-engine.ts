@@ -242,10 +242,27 @@ function stopChild(child: ChildProcess) {
  */
 const INHERITED_SESSION_VARS = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT"]
 
+/**
+ * launchd and desktop launches give CodeNomad a minimal PATH (/usr/bin:/bin:…),
+ * so your_program.sh can't find cargo. Add the usual tool folders that exist.
+ */
+export function withToolPaths(currentPath: string | undefined, home = os.homedir()): string {
+  const parts = (currentPath ?? "").split(path.delimiter).filter(Boolean)
+  const extra = [
+    path.join(home, ".cargo", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+  ].filter((dir) => !parts.includes(dir) && fs.existsSync(dir))
+  return [...parts, ...extra].join(path.delimiter)
+}
+
 function agentEnv(root: string, opencodeConfig: string | null): NodeJS.ProcessEnv {
   const starworld = str(process.env.STARWORLD) ?? str(process.env.CLI_WORKSPACE_ROOT)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    PATH: withToolPaths(process.env.PATH),
     ...(starworld ? { STARWORLD: starworld } : {}),
     CLAUDE_CODE_PLAYGROUND: root,
     ...(opencodeConfig ? { OPENCODE_CONFIG: opencodeConfig } : {}),
