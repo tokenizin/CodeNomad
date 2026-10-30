@@ -68,7 +68,7 @@ import { ModelThrottle } from "../model-throttle.js"
 import { validateNomadWorksPMAConfig } from "../plugins/tokidapp/concierge/nomadworks-pma-realtime.js"
 import { AgentSessionDispatcher, OpenCodeAgentAdapter } from "../lib/agent-session-dispatch.js"
 import { registerAgentSessionRoutes } from "./routes/agent-sessions.js"
-import { registerPlaygroundRustRoutes } from "./routes/playground-rust.js"
+import { registerLocalEngineRoutes } from "./routes/local-engine.js"
 
 // reply-from treats timeout 0 as unset and defaults to 10s — too short for LLM routes (summarize, command).
 const INSTANCE_PROXY_HTTP_TIMEOUT_MS = 600_000
@@ -474,7 +474,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerUnderstandAnythingRoutes(app)
   registerModelSyncRoutes(app)
   registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
-  registerPlaygroundRustRoutes(app)
+  registerLocalEngineRoutes(app, { settings: deps.settings, workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, modelThrottle })
   app.get("/api/model-throttle/metrics", async (_request, reply) => {
     reply.send({ config: modelThrottle.getConfig(), metrics: modelThrottle.getMetrics() })

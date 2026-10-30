@@ -12,6 +12,7 @@ import {
   updateInstanceConfig as updateInstanceData,
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
+import type { LocalEngineKind, LocalEngineServerSettings } from "../lib/local-engine"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 
 const log = getLogger("actions")
@@ -87,11 +88,13 @@ export interface UiSettings {
   notifyOnNeedsInput: boolean
   notifyOnIdle: boolean
 
-  /** Route chat sends through playground/rust instead of OpenCode. */
+  /** Route chat sends through a local engine (see localEngineKind) instead of OpenCode. */
   useRustPlaygroundEngine: boolean
-  /** Persist Rust bridge transcripts to Neon + MinIO. */
+  /** Which local engine: the local Claude Code CLI, or the Rust playground bridge. */
+  localEngineKind: LocalEngineKind
+  /** Persist Rust bridge transcripts to Neon + MinIO (Rust playground only). */
   rustPlaygroundPersist: boolean
-  /** Optional default agent for Rust runs when session has none (e.g. product_manager). */
+  /** Agent for local-engine runs when the session uses an OpenCode built-in agent (e.g. product_manager). */
   rustPlaygroundDefaultAgent: string
 }
 
@@ -125,6 +128,7 @@ interface ServerConfigBucket {
   secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
+  localEngine?: LocalEngineServerSettings
 }
 
 interface UiStateBucket {
@@ -183,6 +187,7 @@ const defaultUiSettings: UiSettings = {
   notifyOnIdle: true,
 
   useRustPlaygroundEngine: false,
+  localEngineKind: "claude-cli",
   rustPlaygroundPersist: false,
   rustPlaygroundDefaultAgent: "",
 }
@@ -268,6 +273,13 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
     notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
     useRustPlaygroundEngine: sanitized.useRustPlaygroundEngine ?? defaultUiSettings.useRustPlaygroundEngine,
+    // Before the engine choice existed the toggle always meant the Rust playground.
+    localEngineKind:
+      sanitized.localEngineKind === "claude-cli" || sanitized.localEngineKind === "rust-playground"
+        ? sanitized.localEngineKind
+        : sanitized.useRustPlaygroundEngine
+          ? "rust-playground"
+          : defaultUiSettings.localEngineKind,
     rustPlaygroundPersist: sanitized.rustPlaygroundPersist ?? defaultUiSettings.rustPlaygroundPersist,
     rustPlaygroundDefaultAgent:
       typeof sanitized.rustPlaygroundDefaultAgent === "string"
@@ -585,6 +597,29 @@ function setRustPlaygroundPersist(enabled: boolean) {
 
 function setRustPlaygroundDefaultAgent(agent: string) {
   updateUiSettings({ rustPlaygroundDefaultAgent: agent.trim() })
+}
+
+function setLocalEngineKind(kind: LocalEngineKind) {
+  updateUiSettings({ localEngineKind: kind })
+}
+
+const localEngineServerSettings = createMemo<LocalEngineServerSettings>(() => {
+  const value = serverConfigBucket().localEngine
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {}
+})
+
+/** Saves local-engine server settings. Empty strings clear a field. */
+async function updateLocalEngineServerSettings(patch: Partial<Record<keyof LocalEngineServerSettings, string | string[]>>) {
+  const next: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (Array.isArray(value)) {
+      const cleaned = value.map((v) => v.trim()).filter(Boolean)
+      next[key] = cleaned.length ? cleaned : null
+    } else {
+      next[key] = typeof value === "string" && value.trim() ? value.trim() : null
+    }
+  }
+  await patchConfigOwner("server", { localEngine: next })
 }
 
 function updateUiSettings(updates: Partial<UiSettings>) {
@@ -1120,6 +1155,9 @@ export {
   toggleUseRustPlaygroundEngine,
   setRustPlaygroundPersist,
   setRustPlaygroundDefaultAgent,
+  setLocalEngineKind,
+  localEngineServerSettings,
+  updateLocalEngineServerSettings,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
