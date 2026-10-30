@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
+import { createLogger } from "../logger"
 
 export interface SyncedModel {
   id: string
@@ -63,6 +64,8 @@ const PROVIDER_CONFIGS: ProviderConfig[] = [
   { id: "ollama", name: "Ollama Local", enabled: true },
 ]
 
+const log = createLogger({ component: "model-sync" })
+
 // Cache for model sync results
 let syncCache: Map<string, { data: ModelSyncResult; timestamp: number }> = new Map()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
@@ -94,8 +97,9 @@ function persistSyncCache(): void {
       serialized[key] = value
     }
     writeFileSync(SYNC_CACHE_FILE, JSON.stringify(serialized, null, 2), "utf-8")
-  } catch {
+  } catch (error) {
     // Non-fatal — in-memory cache still works
+    log.warn(`Could not save model sync cache to ${SYNC_CACHE_FILE}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -123,8 +127,8 @@ function loadRemovedModels(): void {
     if (!existsSync(REMOVED_MODELS_FILE)) return
     const parsed = JSON.parse(readFileSync(REMOVED_MODELS_FILE, "utf-8")) as Record<string, { reason: string; removedAt: number }>
     for (const [key, value] of Object.entries(parsed)) removedModels.set(key, value)
-  } catch {
-    // Non-fatal
+  } catch (error) {
+    log.warn(`Could not read ${REMOVED_MODELS_FILE}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -133,9 +137,15 @@ function persistRemovedModels(): void {
     const dir = join(homedir(), ".config", "codenomad")
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     writeFileSync(REMOVED_MODELS_FILE, JSON.stringify(Object.fromEntries(removedModels), null, 2), "utf-8")
-  } catch {
-    // Non-fatal
+    log.info(`Saved ${removedModels.size} removed model(s) to ${REMOVED_MODELS_FILE}`)
+  } catch (error) {
+    log.warn(`Could not save removed models to ${REMOVED_MODELS_FILE}: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
+
+/** Where this server process reads and writes model-sync state */
+export function getModelSyncPaths() {
+  return { home: homedir(), cacheFile: SYNC_CACHE_FILE, removedFile: REMOVED_MODELS_FILE, pid: process.pid }
 }
 
 export function getRemovedModels(): Array<{ key: string; reason: string; removedAt: number }> {
