@@ -182,5 +182,9 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "Akses mikrofon ditolak oleh macOS.",
   "promptInput.voiceInput.error.unsupported": "Input suara tidak didukung di browser ini.",
   "promptInput.voiceInput.error.transcribe": "Tidak dapat mentranskripsi audio yang direkam.",
+  "promptInput.dictation.start": "Dikte ke prompt (terkirim setelah 4 detik hening)",
+  "promptInput.dictation.listening": "Mendengarkan… jeda 4 detik untuk kirim, klik untuk berhenti",
+  "promptInput.dictation.transcribing": "Mentranskripsi…",
+  "promptInput.dictation.error": "Dikte gagal",
   "promptInput.resizeHandle.title": "Seret untuk mengubah tinggi input",
 } as const

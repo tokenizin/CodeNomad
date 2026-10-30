@@ -209,4 +209,8 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS によりマイクへのアクセスが拒否されました。",
   "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
   "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
+  "promptInput.dictation.start": "プロンプトに音声入力（4秒の無音で送信）",
+  "promptInput.dictation.listening": "聞き取り中… 4秒止まると送信、クリックで停止",
+  "promptInput.dictation.transcribing": "文字起こし中…",
+  "promptInput.dictation.error": "音声入力に失敗しました",
 } as const

@@ -209,4 +209,8 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS запретила доступ к микрофону.",
   "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",
   "promptInput.voiceInput.error.transcribe": "Не удалось расшифровать записанное аудио.",
+  "promptInput.dictation.start": "Диктовать в поле ввода (отправка после 4 с тишины)",
+  "promptInput.dictation.listening": "Слушаю… пауза 4 с — отправка, щелчок — стоп",
+  "promptInput.dictation.transcribing": "Расшифровка…",
+  "promptInput.dictation.error": "Ошибка диктовки",
 } as const

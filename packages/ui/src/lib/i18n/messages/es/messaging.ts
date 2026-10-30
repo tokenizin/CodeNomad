@@ -209,4 +209,8 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS denegó el acceso al micrófono.",
   "promptInput.voiceInput.error.unsupported": "La entrada de voz no es compatible con este navegador.",
   "promptInput.voiceInput.error.transcribe": "No se pudo transcribir el audio grabado.",
+  "promptInput.dictation.start": "Dictar en el mensaje (se envía tras 4 s de silencio)",
+  "promptInput.dictation.listening": "Escuchando… pausa 4 s para enviar, clic para parar",
+  "promptInput.dictation.transcribing": "Transcribiendo…",
+  "promptInput.dictation.error": "Error de dictado",
 } as const

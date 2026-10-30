@@ -223,6 +223,10 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "Microphone access was denied by macOS.",
   "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
   "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
+  "promptInput.dictation.start": "Dictate into the prompt (sends after 4 s of silence)",
+  "promptInput.dictation.listening": "Listening… pause 4 s to send, click to stop",
+  "promptInput.dictation.transcribing": "Transcribing…",
+  "promptInput.dictation.error": "Dictation failed",
   "promptInput.resizeHandle.title": "Drag to resize input height",
 
   // Prompt Recommendations

@@ -76,6 +76,8 @@ export interface LocalSTTConnection {
   flush(): void
   /** Send a reset command — clears all buffered audio. */
   reset(): void
+  /** Transcribe one whole clip (base64 PCM16 24 kHz mono), independent of the streaming buffer. */
+  transcribeOnce(pcmBase64: string, language?: string): Promise<{ text: string; language?: string }>
   /** Gracefully shut down the Python process. */
   close(): void
   /** Whether the Python process is ready to accept audio. */
@@ -171,6 +173,14 @@ export function createLocalSTTConnection(
 
   // EventEmitter for internal event coordination
   const emitter = new EventEmitter()
+  // One-shot transcriptions waiting for their "result" line, by request id.
+  const pendingResults = new Map<string, { resolve: (r: { text: string; language?: string }) => void; reject: (e: Error) => void }>()
+  let nextRequestId = 0
+  let stdoutRemainder = ""
+  const failPending = (error: Error) => {
+    for (const p of pendingResults.values()) p.reject(error)
+    pendingResults.clear()
+  }
 
   function log(msg: string): void {
     console.log(`${label} ${msg}`)
@@ -189,10 +199,13 @@ export function createLocalSTTConnection(
     process = child
 
     // Handle stdout (JSON-line IPC)
+    stdoutRemainder = ""
     child.stdout?.on("data", (data: Buffer) => {
-      const lines = data.toString().split("\n").filter(Boolean)
+      // A JSON line can arrive split across chunks; keep the unfinished tail.
+      const lines = (stdoutRemainder + data.toString()).split("\n")
+      stdoutRemainder = lines.pop() ?? ""
       for (const line of lines) {
-        handleStdoutLine(line)
+        if (line) handleStdoutLine(line)
       }
     })
 
@@ -211,6 +224,7 @@ export function createLocalSTTConnection(
     child.on("exit", (code, signal) => {
       log(`Process exited (code=${code}, signal=${signal})`)
       ready = false
+      failPending(new Error(`Local STT process exited (code=${code}, signal=${signal})`))
       stopHealthCheck()
 
       if (!closed) {
@@ -268,6 +282,17 @@ export function createLocalSTTConnection(
         case "utterance_end":
           onUtteranceEnd?.()
           break
+
+        case "result": {
+          const id = String(msg.id)
+          const pending = pendingResults.get(id)
+          if (pending) {
+            pendingResults.delete(id)
+            if (msg.error && !msg.text) pending.reject(new Error(`Local STT: ${msg.error}`))
+            else pending.resolve({ text: String(msg.text ?? ""), language: msg.language ?? undefined })
+          }
+          break
+        }
 
         case "heartbeat":
           lastHeartbeatMs = Date.now()
@@ -366,9 +391,21 @@ export function createLocalSTTConnection(
       process.stdin.write(JSON.stringify({ type: "reset" }) + "\n")
     },
 
+    transcribeOnce(pcmBase64: string, language?: string): Promise<{ text: string; language?: string }> {
+      if (closed || !process?.stdin?.writable) {
+        return Promise.reject(new Error("Local STT process is not running"))
+      }
+      const id = String(++nextRequestId)
+      return new Promise((resolve, reject) => {
+        pendingResults.set(id, { resolve, reject })
+        process!.stdin!.write(JSON.stringify({ type: "transcribe", id, data: pcmBase64, ...(language ? { language } : {}) }) + "\n")
+      })
+    },
+
     close(): void {
       if (closed) return
       closed = true
+      failPending(new Error("Local STT connection closed"))
       stopHealthCheck()
       log("Closing connection")
 

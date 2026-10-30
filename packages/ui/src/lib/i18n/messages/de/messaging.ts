@@ -206,5 +206,9 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "Mikrofonzugriff wurde von macOS verweigert.",
   "promptInput.voiceInput.error.unsupported": "Spracheingabe wird in diesem Browser nicht unterstützt.",
   "promptInput.voiceInput.error.transcribe": "Das aufgenommene Audio konnte nicht transkribiert werden.",
+  "promptInput.dictation.start": "In die Eingabe diktieren (sendet nach 4 s Stille)",
+  "promptInput.dictation.listening": "Hört zu… 4 s Pause sendet, Klick beendet",
+  "promptInput.dictation.transcribing": "Transkribiere…",
+  "promptInput.dictation.error": "Diktat fehlgeschlagen",
   "promptInput.resizeHandle.title": "Ziehen, um die Eingabehöhe zu ändern",
 } as const

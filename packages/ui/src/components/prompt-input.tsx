@@ -1,6 +1,6 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show, For } from "solid-js"
 import { getQuickActionPrompt, clearQuickActionPrompt } from "../stores/quick-actions"
-import { ArrowBigUp, ArrowBigDown, Loader2, MessageSquare, Mic, Paperclip, Terminal, Volume2, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, MessageSquare, Mic, MicOff, Paperclip, Terminal, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
@@ -29,6 +29,7 @@ import {
   clearConversationPlaybackForInstance,
   isConversationModeEnabled,
 } from "../stores/conversation-speech"
+import { usePromptDictation } from "./prompt-input/usePromptDictation"
 import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
 import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
 import { voiceConversationStore } from "./voice-conversation/store"
@@ -975,6 +976,13 @@ export default function PromptInput(props: PromptInputProps) {
       }
     },
   })
+  const dictation = usePromptDictation({
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    send: () => handleSend(),
+    disabled: () => Boolean(props.disabled),
+  })
   const showVoiceConversation = () =>
     preferences().showPromptVoiceInput
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
@@ -1288,6 +1296,25 @@ export default function PromptInput(props: PromptInputProps) {
             <div class="prompt-nav-column prompt-nav-column-left">
               <Show when={!showToolbarModeToggle()}>
                 <ModeToggle />
+              </Show>
+              <Show when={(preferences().showPromptVoiceInput ?? true) && dictation.canDictate()}>
+                <button
+                  type="button"
+                  class={`prompt-attach-button prompt-dictation-button ${dictation.isActive() ? "is-active" : ""} ${dictation.error() ? "has-error" : ""}`}
+                  onClick={() => dictation.toggle()}
+                  disabled={Boolean(props.disabled) && !dictation.isActive()}
+                  aria-pressed={dictation.isActive()}
+                  aria-label={dictation.title()}
+                  title={dictation.title()}
+                  data-testid="prompt-dictation-button"
+                >
+                  <Show
+                    when={dictation.state() === "transcribing"}
+                    fallback={dictation.isActive() ? <MicOff class="h-4 w-4" aria-hidden="true" /> : <Mic class="h-4 w-4" aria-hidden="true" />}
+                  >
+                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                  </Show>
+                </button>
               </Show>
               <Show when={showVoiceConversation()}>
                 <VoiceConversationButton

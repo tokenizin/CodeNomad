@@ -37,6 +37,7 @@ const NOISE_GATE_THRESHOLD = 0.015
 
 export async function startPCM16Capture(
   onChunk: (base64: string) => void,
+  options: { noiseGate?: boolean } = {},
 ): Promise<AudioCapture> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   const context = new AudioContext()
@@ -62,7 +63,8 @@ export async function startPCM16Capture(
       rms += input[i] * input[i]
     }
     rms = Math.sqrt(rms / input.length)
-    if (rms < NOISE_GATE_THRESHOLD) return
+    // Dictation keeps quiet frames: it needs them to time the pauses.
+    if (options.noiseGate !== false && rms < NOISE_GATE_THRESHOLD) return
 
     const resampled = resampleTo24k(input, context.sampleRate)
     const pcm16 = float32ToPCM16(resampled)

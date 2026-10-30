@@ -206,5 +206,9 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS द्वारा माइक्रोफोन पहुँच अस्वीकार गरियो।",
   "promptInput.voiceInput.error.unsupported": "यस ब्राउजरमा ध्वनि इनपुट समर्थित छैन।",
   "promptInput.voiceInput.error.transcribe": "रेकर्ड गरिएको अडियो ट्रान्सक्राइब गर्न असमर्थ।",
+  "promptInput.dictation.start": "प्रम्प्टमा बोलेर लेख्नुहोस् (४ सेकेन्ड मौनपछि पठाइन्छ)",
+  "promptInput.dictation.listening": "सुन्दै… पठाउन ४ सेकेन्ड रोक्नुहोस्, रोक्न क्लिक गर्नुहोस्",
+  "promptInput.dictation.transcribing": "ट्रान्सक्राइब गर्दै…",
+  "promptInput.dictation.error": "डिक्टेसन असफल",
   "promptInput.resizeHandle.title": "इनपुट उचाइ परिवर्तन गर्न तान्नुहोस्",
 } as const

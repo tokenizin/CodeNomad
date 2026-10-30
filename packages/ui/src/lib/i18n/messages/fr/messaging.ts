@@ -209,4 +209,8 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS a refusé l'accès au microphone.",
   "promptInput.voiceInput.error.unsupported": "La saisie vocale n'est pas prise en charge dans ce navigateur.",
   "promptInput.voiceInput.error.transcribe": "Impossible de transcrire l'audio enregistré.",
+  "promptInput.dictation.start": "Dicter dans le message (envoi après 4 s de silence)",
+  "promptInput.dictation.listening": "Écoute… 4 s de pause pour envoyer, clic pour arrêter",
+  "promptInput.dictation.transcribing": "Transcription…",
+  "promptInput.dictation.error": "Échec de la dictée",
 } as const

@@ -253,6 +253,37 @@ class LocalSTTServer:
                 if keep_from > 0 and keep_from < len(self.audio_buffer):
                     self.audio_buffer = self.audio_buffer[keep_from:]
 
+    def _transcribe_once(self, msg: dict):
+        req_id = msg.get("id")
+        try:
+            audio = self.decode_audio_chunk(msg.get("data", ""))
+            if audio is None or len(audio) < int(0.2 * SAMPLE_RATE) or self.model is None:
+                send_json({"type": "result", "id": req_id, "text": ""})
+                return
+            language = msg.get("language") or LANGUAGE or None
+            segments, info = self.model.transcribe(
+                audio,
+                language=language,
+                beam_size=BEAM_SIZE,
+                vad_filter=True,
+                vad_parameters=dict(
+                    threshold=VAD_THRESHOLD,
+                    min_speech_duration_ms=VAD_MIN_SPEECH_MS,
+                    min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                    speech_pad_ms=VAD_SPEECH_PAD_MS,
+                ),
+            )
+            text = " ".join(seg.text.strip() for seg in segments if seg.text.strip())
+            send_json({
+                "type": "result",
+                "id": req_id,
+                "text": text,
+                "language": getattr(info, "language", language),
+            })
+        except Exception as e:
+            log(f"One-shot transcription error: {e}")
+            send_json({"type": "result", "id": req_id, "text": "", "error": str(e)})
+
     def send_heartbeat(self):
         """Send periodic heartbeat to keep IPC alive."""
         now_ms = int(time.time() * 1000)
@@ -323,6 +354,11 @@ class LocalSTTServer:
 
                 elif msg_type == "ping":
                     send_json({"type": "pong", "ts": int(time.time() * 1000)})
+
+                elif msg_type == "transcribe":
+                    # One-shot batch transcription of a whole clip (dictation, /api/speech/transcribe).
+                    # Independent of the streaming buffer; always answers with "result" for the same id.
+                    self._transcribe_once(msg)
 
             except json.JSONDecodeError as e:
                 log(f"Invalid JSON line: {e}")

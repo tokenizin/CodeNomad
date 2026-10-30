@@ -248,6 +248,16 @@
   cursor: not-allowed;
 }
 
+/* Dictation: lit while listening, red when the last transcription failed. */
+.prompt-dictation-button.is-active {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+}
+
+.prompt-dictation-button.has-error {
+  color: var(--status-error, #dc2626);
+}
+
 .prompt-clear-button-inline {
   position: absolute;
   top: var(--prompt-input-clear-control-top);
