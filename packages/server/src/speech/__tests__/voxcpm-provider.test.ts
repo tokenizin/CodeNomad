@@ -87,3 +87,23 @@ test("VoxCPM2 secrets never reach the browser", () => {
   const out = sanitizeConfigOwner("server", { speech: { provider: "voxcpm", voxcpm: { apiKey: "a", sttApiKey: "", style: "calm" } } }) as any
   expect(out.speech.voxcpm).toEqual({ style: "calm", hasApiKey: true, hasSttApiKey: false })
 })
+
+test("mp3 without ffmpeg on the sidecar falls back to WAV instead of failing", async () => {
+  const formats: string[] = []
+  const original = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body)
+    formats.push(body.response_format)
+    if (body.response_format === "mp3") {
+      return Response.json({ detail: "response_format must be one of ['wav', 'pcm', 'flac']" }, { status: 400 })
+    }
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+  }) as any
+  try {
+    const out = await serviceWith({ provider: "voxcpm", ttsFormat: "mp3" }).synthesize({ text: "Hello" })
+    expect(formats).toEqual(["mp3", "wav"])
+    expect(out.mimeType).toBe("audio/wav")
+  } finally {
+    globalThis.fetch = original
+  }
+})

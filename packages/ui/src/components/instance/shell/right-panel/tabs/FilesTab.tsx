@@ -309,7 +309,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   )
 
   const handleMarkdownPreviewKeyDown = (event: KeyboardEvent) => {
-    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return
+    if (!(event.ctrlKey || event.metaKey) || (event.key ?? "").toLowerCase() !== "s") return
     if (props.browserSelectedSaving() || !props.browserSelectedDirty()) return
     event.preventDefault()
     handleSave()

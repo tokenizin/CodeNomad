@@ -89,7 +89,19 @@ export class VoxCpmSynthesizer {
     const format = input.format ?? this.options.defaultFormat
     this.options.logger.info({ textLength: text.length, voice: this.voice, format }, "voxcpm.synthesize")
 
-    const res = await this.request({ ...this.deliveryBody(), input: text, voice: this.voice, stream: false, response_format: format })
+    const body = { ...this.deliveryBody(), input: text, voice: this.voice, stream: false }
+    let res: Response
+    try {
+      res = await this.request({ ...body, response_format: format })
+    } catch (err) {
+      // mp3/opus/aac need ffmpeg on the sidecar host. When it isn't there, send WAV
+      // (every browser plays it in buffered mode) instead of failing the request.
+      if (format === "wav" || !(err instanceof SidecarFormatError)) throw err
+      this.options.logger.warn({ format, detail: err.message }, "voxcpm.synthesize.wav-fallback")
+      res = await this.request({ ...body, response_format: "wav" })
+      const audio = Buffer.from(await res.arrayBuffer())
+      return { audioBase64: audio.toString("base64"), mimeType: BATCH_MIME.wav }
+    }
     const audio = Buffer.from(await res.arrayBuffer())
     return { audioBase64: audio.toString("base64"), mimeType: BATCH_MIME[format] }
   }
@@ -159,6 +171,10 @@ export class VoxCpmSynthesizer {
     }
     // 503 = model still loading or queue full. "not configured" is what the speech route maps to HTTP 503.
     if (res.status === 503) throw new Error(`VoxCPM2 is not configured or not ready: ${detail}`)
+    if (res.status === 400 && /response_format|ffmpeg/i.test(detail)) throw new SidecarFormatError(`VoxCPM2 sidecar: ${detail}`)
     throw new Error(`VoxCPM2 sidecar ${res.status}: ${detail}`)
   }
 }
+
+/** The sidecar can't produce the requested container (usually: no ffmpeg on its host). */
+export class SidecarFormatError extends Error {}
