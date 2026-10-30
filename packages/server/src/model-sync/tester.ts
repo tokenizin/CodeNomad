@@ -1,4 +1,8 @@
 import type { ModelStatus } from "../../../ui/src/types/session"
+import { readFileSync, existsSync, statSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
+import { findOpencodeJson } from "./service"
 
 export interface ModelTestResult {
   providerId: string
@@ -7,6 +11,10 @@ export interface ModelTestResult {
   latencyMs: number
   errorDetails?: string
   testedAt: number
+  /** Provider answered 404/410 for this model (not found / retired) */
+  gone?: boolean
+  /** Set by the server when a gone model was removed from the list */
+  removed?: boolean
 }
 
 export interface TestModelOptions {
@@ -48,6 +56,11 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     return { status: "error", details: `Rate limited: ${message}` }
   }
   
+  // Model retired by the provider
+  if (lower.includes("410") || lower.includes("gone")) {
+    return { status: "error", details: `Model retired: ${message}` }
+  }
+
   // Model not found
   if (
     lower.includes("not found") ||
@@ -143,6 +156,7 @@ async function testModelViaOpenAICompatible(options: TestModelOptions): Promise<
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
+        gone: response.status === 404 || response.status === 410,
       }
     }
     
@@ -169,18 +183,20 @@ async function testModelViaOpenAICompatible(options: TestModelOptions): Promise<
 }
 
 async function testModelViaAnthropic(options: TestModelOptions): Promise<ModelTestResult> {
-  const { providerId, modelId, apiKey, timeoutMs = DEFAULT_TIMEOUT } = options
+  const { providerId, modelId, apiKey, baseUrl = "https://api.anthropic.com/v1", timeoutMs = DEFAULT_TIMEOUT } = options
   const startTime = Date.now()
   
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch(`${baseUrl}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey || "",
+        // OpenCode Go accepts bearer auth on /messages; Anthropic ignores it
+        ...(apiKey && providerId !== "anthropic" ? { Authorization: `Bearer ${apiKey}` } : {}),
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -205,6 +221,7 @@ async function testModelViaAnthropic(options: TestModelOptions): Promise<ModelTe
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
+        gone: response.status === 404 || response.status === 410,
       }
     }
     
@@ -263,6 +280,7 @@ async function testModelViaGoogle(options: TestModelOptions): Promise<ModelTestR
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
+        gone: response.status === 404 || response.status === 410,
       }
     }
     
@@ -287,8 +305,26 @@ async function testModelViaGoogle(options: TestModelOptions): Promise<ModelTestR
   }
 }
 
+// Local models can take a long time to load from disk on first use
+const OLLAMA_MIN_TIMEOUT = Number(process.env.OLLAMA_TEST_TIMEOUT_MS) || 60_000
+
+async function testOllamaEmbedding(baseUrl: string, modelId: string, timeoutMs: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl}/api/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelId, input: "test" }),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestResult> {
-  const { providerId, modelId, baseUrl = "http://localhost:11434", timeoutMs = DEFAULT_TIMEOUT } = options
+  const { providerId, modelId, baseUrl = "http://localhost:11434" } = options
+  const timeoutMs = Math.max(options.timeoutMs ?? DEFAULT_TIMEOUT, OLLAMA_MIN_TIMEOUT)
   const startTime = Date.now()
   
   try {
@@ -313,6 +349,12 @@ async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestR
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       const errorMessage = errorData.error || `HTTP ${response.status}: ${response.statusText}`
+      // Embedding models can't generate text; check them with /api/embed instead
+      if (String(errorMessage).includes("does not support generate")) {
+        if (await testOllamaEmbedding(baseUrl, modelId, timeoutMs)) {
+          return { providerId, modelId, status: "available", latencyMs: Date.now() - startTime, testedAt: Date.now() }
+        }
+      }
       const { status, details } = classifyError(new Error(errorMessage))
       return {
         providerId,
@@ -321,6 +363,7 @@ async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestR
         latencyMs,
         errorDetails: details,
         testedAt: Date.now(),
+        gone: response.status === 404 || response.status === 410,
       }
     }
     
@@ -345,8 +388,7 @@ async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestR
   }
 }
 
-// Env vars checked (in order) when the caller doesn't pass an API key.
-// The UI never sends keys, so without this every cloud provider fails auth.
+// Env vars checked (in order) after auth.json and opencode.json
 const PROVIDER_KEY_ENV: Record<string, string[]> = {
   openrouter: ["OPENROUTER_API_KEY"],
   anthropic: ["ANTHROPIC_API_KEY"],
@@ -357,13 +399,88 @@ const PROVIDER_KEY_ENV: Record<string, string[]> = {
   "opencode-go": ["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"],
 }
 
+type ProviderSettings = { apiKey?: string; baseURL?: string }
+
+let settingsCache: { stamp: string; byProvider: Map<string, ProviderSettings> } | null = null
+
+function fileStamp(path: string | null): string {
+  if (!path || !existsSync(path)) return "-"
+  try {
+    return `${path}:${statSync(path).mtimeMs}`
+  } catch {
+    return "-"
+  }
+}
+
+function readJson(path: string | null): any {
+  if (!path || !existsSync(path)) return null
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"))
+  } catch {
+    return null
+  }
+}
+
+/** "{env:NAME}" → process.env.NAME; plain strings returned as-is */
+function expandEnvRef(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined
+  const m = value.match(/^\{env:([A-Za-z0-9_]+)\}$/)
+  return m ? process.env[m[1]] || undefined : value
+}
+
+/**
+ * Per-provider API key and base URL from OpenCode's own files:
+ *  - auth.json (where `opencode auth login` stores keys)
+ *  - opencode.json provider.<id>.options.{apiKey, baseURL}
+ * Re-read only when either file changes.
+ */
+function loadProviderSettings(): Map<string, ProviderSettings> {
+  const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
+  const authPath = process.env.OPENCODE_AUTH_FILE || join(dataHome, "opencode", "auth.json")
+  const configPath = findOpencodeJson()
+  const stamp = `${fileStamp(authPath)}|${fileStamp(configPath)}`
+  if (settingsCache && settingsCache.stamp === stamp) return settingsCache.byProvider
+
+  const byProvider = new Map<string, ProviderSettings>()
+  const auth = readJson(authPath) ?? {}
+  for (const [id, entry] of Object.entries<any>(auth)) {
+    // Only API-key logins; OAuth tokens need a different auth flow
+    if (entry && typeof entry.key === "string") byProvider.set(id, { apiKey: entry.key })
+  }
+  const config = readJson(configPath) ?? {}
+  for (const [id, provider] of Object.entries<any>(config.provider ?? {})) {
+    const opts = provider?.options ?? {}
+    const current = byProvider.get(id) ?? {}
+    byProvider.set(id, {
+      apiKey: current.apiKey ?? expandEnvRef(opts.apiKey),
+      baseURL: typeof opts.baseURL === "string" ? opts.baseURL : undefined,
+    })
+  }
+  settingsCache = { stamp, byProvider }
+  return byProvider
+}
+
 function resolveApiKey(providerId: string, apiKey?: string): string | undefined {
   if (apiKey) return apiKey
+  const fromFiles = loadProviderSettings().get(providerId)?.apiKey
+  if (fromFiles) return fromFiles
   for (const name of PROVIDER_KEY_ENV[providerId] ?? []) {
     const value = process.env[name]
     if (value) return value
   }
   return undefined
+}
+
+function resolveBaseUrl(providerId: string, baseUrl?: string): string {
+  let url = (baseUrl || loadProviderSettings().get(providerId)?.baseURL || getBaseUrlForProvider(providerId)).replace(/\/+$/, "")
+  // OpenCode Go's API lives under /v1 (https://opencode.ai/zen/go/v1)
+  if (providerId === "opencode-go" && !url.endsWith("/v1")) url += "/v1"
+  return url
+}
+
+// OpenCode Go serves Qwen and MiniMax models only in Anthropic /messages format
+function usesAnthropicFormat(providerId: string, modelId: string): boolean {
+  return providerId === "opencode-go" && /^(qwen|minimax)/i.test(modelId)
 }
 
 export async function testModel(rawOptions: TestModelOptions): Promise<ModelTestResult> {
@@ -394,13 +511,13 @@ export async function testModel(rawOptions: TestModelOptions): Promise<ModelTest
       case "openrouter-fallback":
       case "ornith":
       case "mlx":
-      case "mlx-deepseek":
-        // All OpenAI-compatible APIs
-        result = await testModelViaOpenAICompatible({
-          ...options,
-          baseUrl: options.baseUrl || getBaseUrlForProvider(providerId),
-        })
+      case "mlx-deepseek": {
+        const baseUrl = resolveBaseUrl(providerId, options.baseUrl)
+        result = usesAnthropicFormat(providerId, options.modelId)
+          ? await testModelViaAnthropic({ ...options, baseUrl })
+          : await testModelViaOpenAICompatible({ ...options, baseUrl })
         break
+      }
       case "anthropic":
         result = await testModelViaAnthropic(options)
         break
@@ -438,7 +555,7 @@ function getBaseUrlForProvider(providerId: string): string {
     case "nous":
       return "https://inference-api.nousresearch.com/v1"
     case "opencode-go":
-      return "https://opencode.ai/zen/go"
+      return "https://opencode.ai/zen/go/v1"
     case "openrouter-fallback":
       return "http://127.0.0.1:11436/v1"
     case "ornith":
@@ -452,25 +569,30 @@ function getBaseUrlForProvider(providerId: string): string {
   }
 }
 
-// Batch test multiple models with concurrency control
+// Batch test multiple models with concurrency control.
+// Ollama models run one at a time in their own lane: loading several local
+// models at once makes them all time out.
 export async function testModelsBatch(
   options: TestModelOptions[],
   concurrency = 3
 ): Promise<ModelTestResult[]> {
   const results: ModelTestResult[] = []
-  const queue = [...options]
-  
-  async function worker(): Promise<void> {
+  const localQueue = options.filter((o) => o.providerId === "ollama")
+  const remoteQueue = options.filter((o) => o.providerId !== "ollama")
+
+  async function worker(queue: TestModelOptions[]): Promise<void> {
     while (queue.length > 0) {
       const option = queue.shift()
       if (!option) break
-      const result = await testModel(option)
-      results.push(result)
+      results.push(await testModel(option))
     }
   }
-  
-  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker())
+
+  const workers = [
+    ...Array.from({ length: Math.min(Math.max(1, concurrency), remoteQueue.length) }, () => worker(remoteQueue)),
+    ...(localQueue.length > 0 ? [worker(localQueue)] : []),
+  ]
   await Promise.all(workers)
-  
+
   return results
 }
