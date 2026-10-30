@@ -433,3 +433,42 @@
 .selector-capability-toggle:disabled {
   @apply opacity-50 cursor-not-allowed;
 }
+
+/* Model picker: fill the available height below (or above) the trigger,
+   width set inline and adjustable with the right-edge handle */
+.model-selector-popover {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: var(--kb-popper-content-available-height, 80vh);
+  min-height: min(240px, var(--kb-popper-content-available-height, 240px));
+  max-width: var(--kb-popper-content-available-width, 95vw);
+  min-width: 300px;
+}
+
+.model-selector-popover .selector-listbox {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.model-selector-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 1;
+  touch-action: none;
+}
+
+.model-selector-resize-handle:hover,
+.model-selector-resize-handle:focus-visible {
+  background: color-mix(in oklab, var(--accent-primary) 35%, transparent);
+  outline: none;
+}
+
+.model-selector-popover > :not(.selector-listbox):not(.model-selector-resize-handle) {
+  flex-shrink: 0;
+}

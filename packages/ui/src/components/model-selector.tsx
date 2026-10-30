@@ -148,6 +148,20 @@ function toggleShowUnavailable(): void {
   writeStored(SHOW_UNAVAILABLE_STORAGE_KEY, String(next))
 }
 
+// Popup width, adjustable with the drag handle on its right edge
+const WIDTH_STORAGE_KEY = "codenomad.modelSelector.width"
+const DEFAULT_POPUP_WIDTH = 560
+const MIN_POPUP_WIDTH = 300
+const storedWidth = Number(readStored(WIDTH_STORAGE_KEY))
+const [popupWidth, setPopupWidth] = createSignal(
+  Number.isFinite(storedWidth) && storedWidth >= MIN_POPUP_WIDTH ? storedWidth : DEFAULT_POPUP_WIDTH,
+)
+
+function savePopupWidth(width: number): void {
+  setPopupWidth(width)
+  writeStored(WIDTH_STORAGE_KEY, String(Math.round(width)))
+}
+
 // Lower rank sorts first: tested-and-working, then being tested, then never
 // tested, then out of credits, then errors
 function statusRank(status?: ModelStatus): number {
@@ -190,6 +204,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   let triggerRef!: HTMLButtonElement
   let searchInputRef!: HTMLInputElement
   let listboxRef!: HTMLUListElement
+  let popoverRef: HTMLDivElement | undefined
   let suppressNextClose = false
   let wasFavoritesOnlyEnabled = false
   let wasCurrentModelFavorite = false
@@ -469,6 +484,48 @@ export default function ModelSelector(props: ModelSelectorProps) {
     setTimeout(() => searchInputRef?.focus(), 0)
   }
 
+  // Widest the popup can get without running off the right edge of the window
+  const maxPopupWidth = () => {
+    const left = popoverRef?.getBoundingClientRect().left ?? 0
+    return Math.max(MIN_POPUP_WIDTH, window.innerWidth - left - 8)
+  }
+  const clampWidth = (width: number) => Math.min(Math.max(width, MIN_POPUP_WIDTH), maxPopupWidth())
+
+  const startResize = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
+    event.preventDefault()
+    event.stopPropagation()
+    suppressNextClose = true
+    const handle = event.currentTarget
+    const startX = event.clientX
+    const startWidth = popoverRef?.getBoundingClientRect().width ?? popupWidth()
+    handle.setPointerCapture(event.pointerId)
+    document.body.style.cursor = "ew-resize"
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setPopupWidth(clampWidth(startWidth + (moveEvent.clientX - startX)))
+    }
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove)
+      handle.removeEventListener("pointerup", onUp)
+      handle.removeEventListener("pointercancel", onUp)
+      document.body.style.cursor = ""
+      savePopupWidth(popupWidth())
+      setTimeout(() => { suppressNextClose = false }, 0)
+    }
+    handle.addEventListener("pointermove", onMove)
+    handle.addEventListener("pointerup", onUp)
+    handle.addEventListener("pointercancel", onUp)
+  }
+
+  const handleResizeKey = (event: KeyboardEvent) => {
+    const step = event.shiftKey ? 80 : 20
+    if (event.key === "ArrowRight") savePopupWidth(clampWidth(popupWidth() + step))
+    else if (event.key === "ArrowLeft") savePopupWidth(clampWidth(popupWidth() - step))
+    else return
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
   const isOptionDisabled = (option: PickerOption): boolean => {
     if (isProviderHeaderOption(option)) return true
     // For model options, the option itself is the FlatModel
@@ -493,6 +550,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
         placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
         allowsEmptyCollection
+        sameWidth={false}
+        placement="bottom-start"
         itemComponent={(itemProps) => {
           if (isProviderHeaderOption(itemProps.item.rawValue)) {
             const header = itemProps.item.rawValue
@@ -602,7 +661,27 @@ export default function ModelSelector(props: ModelSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content
+            ref={popoverRef}
+            class="selector-popover model-selector-popover"
+            style={{ width: `${popupWidth()}px` }}
+          >
+            <div
+              class="model-selector-resize-handle"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t("modelSelector.resize.ariaLabel")}
+              title={t("modelSelector.resize.title")}
+              tabIndex={0}
+              onPointerDown={startResize}
+              onMouseDown={preventListboxPress}
+              onKeyDown={handleResizeKey}
+              onDblClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                savePopupWidth(clampWidth(DEFAULT_POPUP_WIDTH))
+              }}
+            />
             <div class="selector-search-container">
               <div class="selector-input-group">
                 <Combobox.Input

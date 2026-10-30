@@ -42,6 +42,8 @@ export const settingsMessages = {
   "modelSelector.sort.short.context": "Context",
   "modelSelector.sort.short.verified": "Verified",
   "modelSelector.showUnavailable.label": "Unavailable",
+  "modelSelector.resize.ariaLabel": "Resize model list width",
+  "modelSelector.resize.title": "Drag to resize (double-click to reset)",
   "modelSelector.showUnavailable.title": "Show greyed-out models (errors, no credits)",
 
   "thinkingSelector.variant.default": "Default",
