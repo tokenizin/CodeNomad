@@ -3,7 +3,6 @@ import {
   createSignal,
   onMount,
   onCleanup,
-  createEffect,
   type Component,
   createMemo,
 } from "solid-js"
@@ -12,15 +11,6 @@ import { useI18n } from "../../lib/i18n"
 import type React from "react"
 
 type ModelSyncStatus = "idle" | "syncing" | "testing" | "syncComplete" | "syncError"
-
-/** One row produced by the /api/model-sync/test/batch handler below. */
-interface ModelTestSummary {
-  model: string
-  provider: string
-  status: string
-  latencyMs?: number
-  errorDetails?: string
-}
 
 interface SyncedModelRow {
   providerId: string
@@ -42,6 +32,34 @@ type ProviderGroup = {
   models: SyncedModelRow[]
 }
 
+function formatContext(ctx: number): string {
+  return ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
+}
+
+function rowsFromSyncResults(results: any[]): SyncedModelRow[] {
+  const rows: SyncedModelRow[] = []
+  for (const r of results) {
+    if (!r.models) continue
+    for (const m of r.models) {
+      rows.push({
+        providerId: r.providerId,
+        providerName: r.providerName,
+        modelId: m.id,
+        modelName: m.name,
+        contextWindow: formatContext(m.limit?.context ?? 0) || "N/A",
+        capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
+        status: m.status || "unknown",
+        type: m.source || "unknown",
+        lastTested: m.lastTested ?? null,
+        errorDetails: m.errorDetails ?? undefined,
+      })
+    }
+  }
+  return rows
+}
+
+const rowKey = (providerId: string, modelId: string) => `${providerId}/${modelId}`
+
 export const ModelSyncSettingsSection: Component = () => {
   const { t } = useI18n()
   const [status, setStatus] = createSignal<ModelSyncStatus>("idle")
@@ -49,84 +67,27 @@ export const ModelSyncSettingsSection: Component = () => {
   const [error, setError] = createSignal<string | null>(null)
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
 
-  // Load persisted sync results on mount so the table shows cached data immediately
-  onMount(async () => {
+  const loadCached = async () => {
     try {
       const resp = await fetch("/api/model-sync/cached")
-      if (resp.ok) {
-        const data = await resp.json()
-        if (data?.results && Array.isArray(data.results)) {
-          const cachedRows: SyncedModelRow[] = []
-          for (const r of data.results) {
-            if (r.models) {
-              for (const m of r.models) {
-                const ctx = m.limit?.context ?? 0
-                const ctxStr = ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
-                cachedRows.push({
-                  providerId: r.providerId,
-                  providerName: r.providerName,
-                  modelId: m.id,
-                  modelName: m.name,
-                  contextWindow: ctxStr || "N/A",
-                  capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
-                  status: m.status || "unknown",
-                  type: m.source || "unknown",
-                  lastTested: m.lastTested ?? null,
-                  errorDetails: m.errorDetails ?? null,
-                })
-              }
-            }
-          }
-          if (cachedRows.length > 0) {
-            setModels(cachedRows)
-          }
-        }
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data?.results && Array.isArray(data.results)) {
+        const cachedRows = rowsFromSyncResults(data.results)
+        if (cachedRows.length > 0) setModels(cachedRows)
       }
     } catch {
-      // Non-fatal — table starts empty
+      // Non-fatal — keep current table
     }
-  })
+  }
 
-  // Poll for live status updates every 5 seconds
-  createEffect(() => {
-    const poll = async () => {
-      try {
-        const resp = await fetch("/api/model-sync/cached")
-        if (resp.ok) {
-          const data = await resp.json()
-          if (data?.results && Array.isArray(data.results)) {
-            const cachedRows: SyncedModelRow[] = []
-            for (const r of data.results) {
-              if (r.models) {
-                for (const m of r.models) {
-                  const ctx = m.limit?.context ?? 0
-                  const ctxStr = ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
-                  cachedRows.push({
-                    providerId: r.providerId,
-                    providerName: r.providerName,
-                    modelId: m.id,
-                    modelName: m.name,
-                    contextWindow: ctxStr || "N/A",
-                    capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
-                    status: m.status || "unknown",
-                    type: m.source || "unknown",
-                    lastTested: m.lastTested ?? null,
-                    errorDetails: m.errorDetails ?? null,
-                  })
-                }
-              }
-            }
-            if (cachedRows.length > 0) {
-              setModels(cachedRows)
-            }
-          }
-        }
-      } catch {
-        // Non-fatal — continue polling
-      }
-    }
-    poll()
-    const interval = setInterval(poll, 5_000)
+  // Load cached results on mount, then poll every 5 seconds.
+  // Polling pauses during sync/test so it doesn't overwrite in-flight rows.
+  onMount(() => {
+    void loadCached()
+    const interval = setInterval(() => {
+      if (status() === "idle") void loadCached()
+    }, 5_000)
     onCleanup(() => clearInterval(interval))
   })
 
@@ -142,28 +103,7 @@ export const ModelSyncSettingsSection: Component = () => {
       })
       const data = await result.json()
       if (data && data.results) {
-        const renderedModels: SyncedModelRow[] = []
-        for (const r of data.results) {
-          if (r.models) {
-            for (const m of r.models) {
-              const ctx = m.limit?.context ?? 0
-              const ctxStr = ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1)}M` : ctx >= 1000 ? `${(ctx / 1000).toFixed(0)}K` : String(ctx)
-              renderedModels.push({
-                providerId: r.providerId,
-                providerName: r.providerName,
-                modelId: m.id,
-                modelName: m.name,
-                contextWindow: ctxStr || "N/A",
-                capabilities: m.capabilities || { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
-                status: m.status || "unknown",
-                type: m.source || "unknown",
-                lastTested: m.lastTested ?? null,
-                errorDetails: m.errorDetails ?? null,
-              })
-            }
-          }
-        }
-        setModels(renderedModels)
+        setModels(rowsFromSyncResults(data.results))
       }
       setStatus("syncComplete")
       setLastSync(Date.now())
@@ -200,54 +140,53 @@ export const ModelSyncSettingsSection: Component = () => {
   const handleTestModels = async () => {
     setStatus("testing")
     setError(null)
+    const snapshot = models()
+    // Show every row as "testing" while the batch runs
+    setModels(snapshot.map((m) => ({ ...m, status: "testing" })))
     try {
-      // Build test options from cached models
-      const tests = models().map((m) => ({
+      // API keys are resolved server-side from env; none are sent from here
+      const tests = snapshot.map((m) => ({
         providerId: m.providerId,
         modelId: m.modelId,
-        // Note: apiKey and baseUrl are not stored in cache; testing may fail
-        // for models that require authentication not configured in the server
-        apiKey: undefined,
-        baseUrl: undefined,
         timeoutMs: 15000,
       }))
-      const body = {
-        tests,
-        concurrency: Math.min(3, tests.length),
-      }
       const result = await fetch("/api/model-sync/test/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ tests, concurrency: Math.min(3, tests.length) }),
       })
       const data = await result.json()
-      if (data && data.results && Array.isArray(data.results)) {
-        const statusPromises: ModelTestSummary[] = data.results.map((r: any, i: number) => {
-          const m = models()[i] || {}
-          const statusText =
-            r.status === "available" ? "✓ Available" :
-            r.status === "insufficient_funds" ? "⚠ Insufficient Funds" :
-            r.status === "error" ? "✗ Error" :
-            r.status === "testing" ? "🔄 Testing..." : r.status
-          return {
-            model: m.modelName || `Model ${i}`,
-            provider: m.providerId || `Provider ${i}`,
-            status: statusText,
-            latencyMs: r.latencyMs,
-            errorDetails: r.errorDetails,
-          }
-        })
-        setError(
-          statusPromises
-            .filter((s) => s.status.includes("Error") || s.status.includes("Insufficient"))
-            .map((s) => `${s.provider}: ${s.model} - ${s.status}`)
-            .join("\n")
-        )
+      if (!result.ok) throw new Error(data?.error || `HTTP ${result.status}`)
+
+      // Results come back in completion order, so match by provider/model, not index
+      const byKey = new Map<string, any>()
+      for (const r of data?.results ?? []) byKey.set(rowKey(r.providerId, r.modelId), r)
+
+      const updated = snapshot.map((m) => {
+        const r = byKey.get(rowKey(m.providerId, m.modelId))
+        if (!r) return m
+        return {
+          ...m,
+          status: r.status,
+          lastTested: r.testedAt ?? Date.now(),
+          errorDetails: r.status === "available" ? undefined : r.errorDetails,
+        }
+      })
+      setModels(updated)
+
+      const counts = { available: 0, insufficient_funds: 0, error: 0 }
+      for (const m of updated) {
+        if (m.status in counts) counts[m.status as keyof typeof counts]++
       }
-      setStatus("idle")
+      console.info(
+        `[model-sync] tested ${byKey.size}/${snapshot.length}: ` +
+          `${counts.available} available, ${counts.insufficient_funds} insufficient funds, ${counts.error} errors`,
+      )
     } catch (e: unknown) {
       const err = e as Error
+      setModels(snapshot) // restore previous statuses
       setError("Test failed: " + (err.message || "Unknown error"))
+    } finally {
       setStatus("idle")
     }
   }
@@ -296,26 +235,31 @@ export const ModelSyncSettingsSection: Component = () => {
         icon: CheckCircle,
         color: "text-green-400 bg-green-400/10",
         title: "Model is available for use",
+        label: "Available",
       },
       insufficient_funds: {
         icon: AlertTriangle,
         color: "text-yellow-400 bg-yellow-400/10",
         title: errorDetails || "Insufficient credits or quota exceeded",
+        label: "No credits",
       },
       error: {
         icon: AlertCircle,
         color: "text-red-400 bg-red-400/10",
         title: errorDetails || "Model unavailable",
+        label: "Error",
       },
       testing: {
         icon: Cpu,
         color: "text-blue-400 bg-blue-400/10 animate-pulse",
         title: "Model is being tested",
+        label: "Testing",
       },
       unknown: {
         icon: Info,
         color: "text-gray-400 bg-gray-400/10",
         title: errorDetails || "Model status not yet tested",
+        label: "Untested",
       },
     }
 
@@ -329,6 +273,7 @@ export const ModelSyncSettingsSection: Component = () => {
         title={config.title}
       >
         <Icon class="w-3 h-3" />
+        {config.label}
       </span>
     )
   }
@@ -427,6 +372,12 @@ export const ModelSyncSettingsSection: Component = () => {
               {t("settings.section.modelSync.clearCacheButton")}
             </Button>
           </div>
+
+          {status() === "idle" && error() && (
+            <div class="settings-sync-status">
+              <span class="text-error">{error()}</span>
+            </div>
+          )}
 
           {status() !== "idle" && (
             <div class="settings-sync-status">

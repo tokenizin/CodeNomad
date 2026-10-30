@@ -345,7 +345,32 @@ async function testModelViaOllama(options: TestModelOptions): Promise<ModelTestR
   }
 }
 
-export async function testModel(options: TestModelOptions): Promise<ModelTestResult> {
+// Env vars checked (in order) when the caller doesn't pass an API key.
+// The UI never sends keys, so without this every cloud provider fails auth.
+const PROVIDER_KEY_ENV: Record<string, string[]> = {
+  openrouter: ["OPENROUTER_API_KEY"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+  google: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  nvidia: ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"],
+  nous: ["NOUS_API_KEY"],
+  "opencode-go": ["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"],
+}
+
+function resolveApiKey(providerId: string, apiKey?: string): string | undefined {
+  if (apiKey) return apiKey
+  for (const name of PROVIDER_KEY_ENV[providerId] ?? []) {
+    const value = process.env[name]
+    if (value) return value
+  }
+  return undefined
+}
+
+export async function testModel(rawOptions: TestModelOptions): Promise<ModelTestResult> {
+  const options: TestModelOptions = {
+    ...rawOptions,
+    apiKey: resolveApiKey(rawOptions.providerId, rawOptions.apiKey),
+  }
   const { providerId } = options
   
   // Set testing status immediately

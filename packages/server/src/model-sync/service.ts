@@ -224,6 +224,30 @@ export function persistSyncedModelsToConfig(): { updated: number; added: number;
   return { updated, added, path: configPath }
 }
 
+/**
+ * Write model test results into the sync cache so the Model Status table
+ * (which polls /api/model-sync/cached) shows the tested status and time.
+ * Updates entries even if the provider's cache TTL has expired.
+ */
+export function applyModelTestResults(
+  results: Array<{ providerId: string; modelId: string; status: ModelStatus; errorDetails?: string; testedAt: number }>
+): number {
+  let applied = 0
+  for (const result of results) {
+    if (result.status === "testing") continue
+    const entry = syncCache.get(result.providerId)
+    if (!entry) continue
+    const model = entry.data.models.find((m) => m.id === result.modelId)
+    if (!model) continue
+    model.status = result.status
+    model.lastTested = result.testedAt
+    model.errorDetails = result.status === "available" ? undefined : result.errorDetails
+    applied++
+  }
+  if (applied > 0) persistSyncCache()
+  return applied
+}
+
 // Get all cached sync results (for merging into model selector)
 export function getCachedSyncResults(): ModelSyncResult[] {
   return Array.from(syncCache.values()).map((v) => v.data)
@@ -357,6 +381,10 @@ export async function syncProviderModels(
     // Create a map of configured models for comparison
     const configuredMap = new Map(configuredModels.map((m) => [`${providerId}/${m.id}`, m]))
     const liveMap = new Map(liveModels.map((m) => [`${providerId}/${m.id}`, m]))
+    // Previous results (even if the TTL expired) so a re-sync keeps test status
+    const previousMap = new Map(
+      (syncCache.get(providerId)?.data.models ?? []).map((m) => [`${providerId}/${m.id}`, m])
+    )
     
     // Merge: keep configured models, add new live models, mark removed
     const mergedModels: SyncedModel[] = []
@@ -377,14 +405,26 @@ export async function syncProviderModels(
         })
         updated++
       } else {
-        // New model from live
-        mergedModels.push({
-          ...liveModel,
-          status: "unknown",
-          lastTested: 0,
-          source: "live",
-        })
-        added++
+        const previous = previousMap.get(key)
+        if (previous) {
+          // Known from an earlier sync - keep its last test result
+          mergedModels.push({
+            ...liveModel,
+            status: previous.status || "unknown",
+            lastTested: previous.lastTested || 0,
+            errorDetails: previous.errorDetails,
+          })
+          updated++
+        } else {
+          // New model from live
+          mergedModels.push({
+            ...liveModel,
+            status: "unknown",
+            lastTested: 0,
+            source: "live",
+          })
+          added++
+        }
       }
     }
     
@@ -501,6 +541,7 @@ export async function syncAllProviders(
 
 export function clearSyncCache(): void {
   syncCache.clear()
+  persistSyncCache()
 }
 
 export function getProviderConfigs(): ProviderConfig[] {

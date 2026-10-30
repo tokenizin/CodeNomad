@@ -1,5 +1,5 @@
 import { createLogger } from "../logger"
-import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig } from "./service"
+import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig, applyModelTestResults } from "./service"
 import { testModel, testModelsBatch, type TestModelOptions, type ModelTestResult } from "./tester"
 import type { ModelSyncResult } from "./service"
 
@@ -85,6 +85,7 @@ export async function handleTestModel(request: Request): Promise<Response> {
   try {
     const body = (await request.json()) as TestModelRequest
     const result = await testModel(body)
+    applyModelTestResults([result])
     return Response.json({ result })
   } catch (error) {
     const err = error as Error | unknown
@@ -106,6 +107,8 @@ export async function handleTestModelsBatch(request: Request): Promise<Response>
       timeoutMs: t.timeoutMs,
     }))
     const results = await testModelsBatch(options, body.concurrency)
+    const applied = applyModelTestResults(results)
+    log.info(`Batch test: ${results.length} results, ${applied} written to sync cache`)
     return Response.json({ results })
   } catch (error) {
     const err = error as Error | unknown
