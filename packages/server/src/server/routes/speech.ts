@@ -33,6 +33,9 @@ function getSpeechErrorStatus(error: unknown): number {
   if (error instanceof Error && /not configured/i.test(error.message)) {
     return 503
   }
+  if (error instanceof Error && /too long to speak/i.test(error.message)) {
+    return 413
+  }
   return 502
 }
 

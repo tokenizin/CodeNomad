@@ -125,3 +125,58 @@ test("a voice the sidecar doesn't have falls back to the default voice", async (
     globalThis.fetch = original
   }
 })
+
+test("long text is split into chunks and joined into one WAV", async () => {
+  const { splitForSpeech } = await import("../providers/voxcpm-synth")
+  const sentence = "This is a sentence that is spoken by the assistant. "
+  const text = sentence.repeat(120) // ~6200 chars
+  const chunks = splitForSpeech(text.trim(), 1500)
+  expect(chunks.length).toBeGreaterThan(3)
+  expect(chunks.every((c) => c.length <= 1500)).toBe(true)
+  expect(chunks.join(" ").replace(/\s+/g, " ")).toBe(text.trim().replace(/\s+/g, " "))
+
+  const bodies: any[] = []
+  const original = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init: any) => {
+    bodies.push(JSON.parse(init.body))
+    return new Response(new Uint8Array([0, 0, 1, 0]), { status: 200, headers: { "x-sample-rate": "24000" } })
+  }) as any
+  try {
+    const out = await serviceWith({ provider: "voxcpm", ttsFormat: "mp3" }).synthesize({ text })
+    expect(bodies.length).toBe(chunks.length)
+    expect(bodies.every((b) => b.response_format === "pcm")).toBe(true)
+    expect(out.mimeType).toBe("audio/wav")
+    const wav = Buffer.from(out.audioBase64, "base64")
+    expect(wav.subarray(0, 4).toString()).toBe("RIFF")
+    expect(wav.readUInt32LE(24)).toBe(24000)
+    expect(wav.readUInt32LE(40)).toBe(4 * chunks.length)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test("long text streams every chunk in order", async () => {
+  const inputs: string[] = []
+  const original = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body)
+    inputs.push(body.input)
+    return new Response(new Uint8Array([inputs.length]), { status: 200, headers: { "x-sample-rate": "48000" } })
+  }) as any
+  try {
+    const service = serviceWith({ provider: "voxcpm", ttsFormat: "wav" })
+    const out = await service.synthesizeStream({ text: "Hello there. ".repeat(300), format: "wav" })
+    const parts: Buffer[] = []
+    for await (const piece of out.stream as any) parts.push(Buffer.from(piece))
+    const all = Buffer.concat(parts)
+    expect(all.subarray(0, 4).toString()).toBe("RIFF")
+    expect([...all.subarray(44)]).toEqual(inputs.map((_, i) => i + 1))
+    expect(inputs.length).toBeGreaterThan(1)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test("text beyond the limit is refused clearly", async () => {
+  await expect(serviceWith({ provider: "voxcpm" }).synthesize({ text: "a ".repeat(15_000) })).rejects.toThrow(/too long to speak/)
+})
