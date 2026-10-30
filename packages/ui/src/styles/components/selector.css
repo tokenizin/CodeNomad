@@ -207,6 +207,15 @@
   @apply opacity-50 cursor-not-allowed;
 }
 
+/* Sort toggle: icon plus a short label when a non-default sort is active */
+.selector-sort-toggle {
+  @apply gap-1;
+}
+
+.selector-sort-label {
+  @apply text-xs font-medium whitespace-nowrap;
+}
+
 .selector-footer {
   @apply border-t;
   border-color: var(--border-base);
@@ -419,4 +428,8 @@
 
 .selector-capability-toggle-label {
   white-space: nowrap;
+}
+
+.selector-capability-toggle:disabled {
+  @apply opacity-50 cursor-not-allowed;
 }

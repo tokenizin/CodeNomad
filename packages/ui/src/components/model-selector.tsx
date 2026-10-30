@@ -1,7 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { ChevronDown, PlugZap, Star, Cpu, Image, Video, Brain, Music, Cloud, Gift, AlertCircle, AlertTriangle, CheckCircle, Info, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
+import { ChevronDown, PlugZap, Star, ArrowUpDown, EyeOff, Cpu, Image, Video, Brain, Music, Cloud, Gift, AlertCircle, AlertTriangle, CheckCircle, Info, Lock, Zap, Eye, Mic, Globe } from "lucide-solid"
 import type { Model, ModelCapabilities, ModelStatus } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -106,6 +106,67 @@ function formatContextWindow(limit?: { context?: number; input?: number; output?
   return String(ctx)
 }
 
+// ─── Sorting / unavailable-model visibility ───
+// Kept at module level so the choice survives closing and reopening the popup,
+// and in localStorage so it survives a reload.
+type ModelSortMode = "provider" | "context" | "verified"
+const SORT_MODES: ModelSortMode[] = ["provider", "context", "verified"]
+const SORT_STORAGE_KEY = "codenomad.modelSelector.sortMode"
+const SHOW_UNAVAILABLE_STORAGE_KEY = "codenomad.modelSelector.showUnavailable"
+
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Storage unavailable (private mode etc.) — keep the in-memory value
+  }
+}
+
+const storedSort = readStored(SORT_STORAGE_KEY) as ModelSortMode | null
+const [sortMode, setSortModeSignal] = createSignal<ModelSortMode>(
+  storedSort && SORT_MODES.includes(storedSort) ? storedSort : "provider",
+)
+const [showUnavailable, setShowUnavailableSignal] = createSignal(readStored(SHOW_UNAVAILABLE_STORAGE_KEY) === "true")
+
+function cycleSortMode(): void {
+  const next = SORT_MODES[(SORT_MODES.indexOf(sortMode()) + 1) % SORT_MODES.length]
+  setSortModeSignal(next)
+  writeStored(SORT_STORAGE_KEY, next)
+}
+
+function toggleShowUnavailable(): void {
+  const next = !showUnavailable()
+  setShowUnavailableSignal(next)
+  writeStored(SHOW_UNAVAILABLE_STORAGE_KEY, String(next))
+}
+
+// Lower rank sorts first: tested-and-working, then being tested, then never
+// tested, then out of credits, then errors
+function statusRank(status?: ModelStatus): number {
+  switch (status) {
+    case "available":
+      return 0
+    case "testing":
+      return 1
+    case "insufficient_funds":
+      return 3
+    case "error":
+      return 4
+    default:
+      return 2
+  }
+}
+
+const contextSize = (model: FlatModel) => model.limit?.context ?? 0
+
 export default function ModelSelector(props: ModelSelectorProps) {
   const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
@@ -159,15 +220,33 @@ export default function ModelSelector(props: ModelSelectorProps) {
     ),
   )
 
-  const sortedModels = createMemo<FlatModel[]>(() =>
-    [...allModels()].sort((left, right) => {
+  const sortedModels = createMemo<FlatModel[]>(() => {
+    const byProviderThenName = (left: FlatModel, right: FlatModel) => {
       const providerComparison = compareIds(left.providerId, right.providerId)
       if (providerComparison !== 0) return providerComparison
       const nameComparison = compareIds(left.name, right.name)
       if (nameComparison !== 0) return nameComparison
       return compareIds(left.id, right.id)
-    }),
-  )
+    }
+    const mode = sortMode()
+    return [...allModels()].sort((left, right) => {
+      if (mode === "context") {
+        const diff = contextSize(right) - contextSize(left)
+        if (diff !== 0) return diff
+      } else if (mode === "verified") {
+        const diff = statusRank(left.status) - statusRank(right.status)
+        if (diff !== 0) return diff
+        // Within the same status, larger context first
+        const ctx = contextSize(right) - contextSize(left)
+        if (ctx !== 0) return ctx
+      }
+      return byProviderThenName(left, right)
+    })
+  })
+
+  // Greyed-out (not selectable) models, hidden unless the user asks to see them.
+  // The current model always stays visible so the selection never vanishes.
+  const unavailableCount = createMemo(() => allModels().filter((m) => !isModelSelectable(m)).length)
 
   const favoriteKeySet = createMemo(() => {
     const result = new Set<string>()
@@ -217,6 +296,11 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const visibleOptions = createMemo<FlatModel[]>(() => {
     let models = sortedModels()
 
+    if (!showUnavailable()) {
+      const currentKey = currentModelKey()
+      models = models.filter((m) => isModelSelectable(m) || m.key === currentKey)
+    }
+
     // Apply capability filters (AND logic — model must have ALL toggled capabilities)
     if (capFilterTools() || capFilterImage() || capFilterVideo() || capFilterReasoning() || capFilterAudio() || capFilterCloud()) {
       models = models.filter((m) => {
@@ -259,8 +343,17 @@ export default function ModelSelector(props: ModelSelectorProps) {
     return Array.from(groups.values())
   })
 
-  const pickerOptions = createMemo<PickerOption[]>(() =>
-    groupedVisibleOptions().flatMap((group) => [
+  const sortedIndex = createMemo(() => new Map(sortedModels().map((m, index) => [m.key, index])))
+
+  const pickerOptions = createMemo<PickerOption[]>(() => {
+    // Sorted by context or status: one flat list across providers (each row
+    // already shows its provider), so the order isn't broken up by headers
+    if (sortMode() !== "provider") {
+      return groupedVisibleOptions()
+        .flatMap((group) => group.models)
+        .sort((left, right) => sortedIndex().get(left.key)! - sortedIndex().get(right.key)!)
+    }
+    return groupedVisibleOptions().flatMap((group) => [
       {
         type: "header" as const,
         key: `provider:${group.providerId}`,
@@ -269,8 +362,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
         searchText: `${group.providerName} ${group.providerId}`,
       },
       ...group.models,
-    ]),
-  )
+    ])
+  })
+
 
   const handleChange = async (value: PickerOption | null) => {
     if (!value || isProviderHeaderOption(value)) return
@@ -532,6 +626,27 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 >
                   <Star class="w-4 h-4" fill={favoritesOnlyEnabled() ? "currentColor" : "none"} />
                 </button>
+                <button
+                  type="button"
+                  class="selector-favorites-toggle selector-sort-toggle"
+                  aria-label={t("modelSelector.sort.ariaLabel")}
+                  title={t(`modelSelector.sort.${sortMode()}`)}
+                  data-active={sortMode() !== "provider"}
+                  onMouseDown={preventListboxPress}
+                  onPointerDown={preventListboxPress}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    cycleSortMode()
+                    suppressNextClose = true
+                    setTimeout(() => { suppressNextClose = false }, 0)
+                  }}
+                >
+                  <ArrowUpDown class="w-4 h-4" />
+                  {sortMode() !== "provider" && (
+                    <span class="selector-sort-label">{t(`modelSelector.sort.short.${sortMode()}`)}</span>
+                  )}
+                </button>
               </div>
             </div>
             {/* Capability filter toggle bar */}
@@ -605,6 +720,36 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   style={{ color: capFilterFree() ? "var(--status-success, #22c55e)" : "var(--text-muted)" }}
                 >
                   {t("modelSelector.freeToggle.label")}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="selector-capability-toggle"
+                data-active={showUnavailable()}
+                aria-pressed={showUnavailable()}
+                aria-label={t("modelSelector.showUnavailable.label")}
+                title={t("modelSelector.showUnavailable.title")}
+                disabled={unavailableCount() === 0}
+                onMouseDown={preventListboxPress}
+                onPointerDown={preventListboxPress}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  toggleShowUnavailable()
+                  suppressNextClose = true
+                  setTimeout(() => { suppressNextClose = false }, 0)
+                }}
+              >
+                {showUnavailable() ? (
+                  <Eye class="w-3.5 h-3.5" style={{ color: "var(--text-primary)" }} />
+                ) : (
+                  <EyeOff class="w-3.5 h-3.5" style={{ color: "var(--text-muted)", opacity: 0.4 }} />
+                )}
+                <span
+                  class="selector-capability-toggle-label"
+                  style={{ color: showUnavailable() ? "var(--text-primary)" : "var(--text-muted)" }}
+                >
+                  {t("modelSelector.showUnavailable.label")} ({unavailableCount()})
                 </span>
               </button>
             </div>
