@@ -458,6 +458,9 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     }
 
     const env = agentEnv(playgroundRoot, opencodeConfig)
+    // Subagents the agent delegates to (Task tool) keep their conversations per
+    // session, so "resume task_id …" works on later messages.
+    if (sessionKey) env.CODENOMAD_TASK_STORE = store.tasksDir(sessionKey)
     const startedAt = Date.now()
     let code = 1
     let isError = true

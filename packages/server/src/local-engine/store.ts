@@ -227,6 +227,9 @@ export class LocalEngineStore {
   copyHistory(from: string, to: string, beforeMessageId?: string): number {
     const messages = this.historyBefore(from, beforeMessageId)
     if (messages.length) this.writeHistory(to, messages)
+    // Subagents named in the copied turns can be resumed from the fork too.
+    const tasks = this.tasksDir(from)
+    if (messages.length && fs.existsSync(tasks)) fs.cpSync(tasks, this.tasksDir(to), { recursive: true })
     return messages.length
   }
 
@@ -235,6 +238,12 @@ export class LocalEngineStore {
     if (!safe) return
     fs.rmSync(this.historyFile(safe), { force: true })
     fs.rmSync(path.join(this.root, "attachments", safe), { recursive: true, force: true })
+    fs.rmSync(this.tasksDir(safe), { recursive: true, force: true })
+  }
+
+  /** Where the Rust agent keeps this session's subagent (Task) conversations. */
+  tasksDir(key: string): string {
+    return path.join(this.root, "tasks", safeKey(key) ?? "_unsorted")
   }
 
   // ------------------------------------------------------------ attachments

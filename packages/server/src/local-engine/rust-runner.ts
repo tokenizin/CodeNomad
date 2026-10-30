@@ -60,13 +60,18 @@ export function toOpencodeTool(name: string, input: Record<string, unknown>): { 
       return { tool: "bash", input }
     case "Skill":
       return { tool: "skill", input }
+    // Subagent delegation: same card as OpenCode's task tool ([subagent] description).
+    case "Task":
+      return { tool: "task", input }
     default:
       return { tool: name, input }
   }
 }
 
 function summarize(input: Record<string, unknown>): string | undefined {
-  const pick = input.command ?? input.filePath ?? input.file_path ?? input.name ?? input.path ?? input.task_path
+  const pick =
+    input.command ?? input.filePath ?? input.file_path ?? input.name ?? input.path ?? input.task_path ??
+    (typeof input.subagent_type === "string" ? `${input.subagent_type}: ${input.description ?? ""}` : undefined)
   if (typeof pick !== "string" || !pick.trim()) return undefined
   const line = pick.replace(/\s+/g, " ").trim()
   return line.length > 120 ? `${line.slice(0, 117)}…` : line
