@@ -416,14 +416,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
           const isFavorite = () => favoriteKeySet().has(model.key)
           const selectable = isModelSelectable(model)
           const contextWindow = formatContextWindow(model.limit)
-          const currentlyFavorite = isFavorite()
-          
-          // Auto-remove favorite if model becomes unavailable
-          createEffect(() => {
-            if (currentlyFavorite && !selectable) {
-              toggleFavoriteModelPreference({ providerId: model.providerId, modelId: model.id })
-            }
-          })
+          // Favorites of unavailable models are kept (shown greyed out, not
+          // selectable). Removing them here looped: the toggle re-ran on every
+          // state save and flipped the favorite on and off with endless PATCHes.
 
           return (
             <Combobox.Item
