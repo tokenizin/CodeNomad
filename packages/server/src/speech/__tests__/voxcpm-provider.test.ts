@@ -180,3 +180,44 @@ test("long text streams every chunk in order", async () => {
 test("text beyond the limit is refused clearly", async () => {
   await expect(serviceWith({ provider: "voxcpm" }).synthesize({ text: "a ".repeat(15_000) })).rejects.toThrow(/too long to speak/)
 })
+
+test("the sidecar's key is found the way its launcher picks it (.env.local first)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "starworld-"))
+  fs.mkdirSync(path.join(root, "scripts", "voxcpm-server", "engine-data"), { recursive: true })
+  fs.writeFileSync(path.join(root, "scripts", "voxcpm-server", "engine-data", ".api-key"), "file-key\n")
+  expect(discoverVoxCpmApiKey({ STARWORLD: root } as any, "/")).toBe("file-key")
+  fs.writeFileSync(path.join(root, ".env.local"), 'OTHER=1\nVOXCPM_API_KEY="env-key"\n')
+  expect(discoverVoxCpmApiKey({ STARWORLD: root } as any, "/")).toBe("env-key")
+})
+
+test("a wrong saved key falls back to the sidecar's own key", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "starworld-"))
+  fs.mkdirSync(path.join(root, "scripts", "voxcpm-server", "engine-data"), { recursive: true })
+  fs.writeFileSync(path.join(root, "scripts", "voxcpm-server", "engine-data", ".api-key"), "right")
+  const auths: string[] = []
+  const original = globalThis.fetch
+  const prev = process.env.STARWORLD
+  process.env.STARWORLD = root
+  globalThis.fetch = (async (_url: string, init: any) => {
+    auths.push(init.headers.authorization)
+    if (init.headers.authorization !== "Bearer right") return Response.json({ detail: "bad key" }, { status: 401 })
+    return new Response(new Uint8Array([1]), { status: 200 })
+  }) as any
+  try {
+    const service = serviceWith({ provider: "voxcpm", ttsFormat: "wav", voxcpm: { apiKey: "wrong" } })
+    await service.synthesize({ text: "Hi" })
+    expect(auths).toEqual(["Bearer wrong", "Bearer right"])
+
+    const status = await service.voxcpmStatus((async (url: string, init: any) => {
+      if (url.endsWith("/health")) return Response.json({ ready: true })
+      if (init?.headers?.authorization !== "Bearer right") return new Response("", { status: 401 })
+      return Response.json({ voices: [{ id: "concierge", name: "Concierge", builtin: true }] })
+    }) as any)
+    expect(status.voices.length).toBe(1)
+    expect(status.error).toMatch(/saved Sidecar API key is wrong/)
+  } finally {
+    globalThis.fetch = original
+    if (prev === undefined) delete process.env.STARWORLD
+    else process.env.STARWORLD = prev
+  }
+})

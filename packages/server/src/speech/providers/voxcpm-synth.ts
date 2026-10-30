@@ -13,7 +13,7 @@ import { PassThrough, Readable } from "node:stream"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse } from "../../api-types"
 import type { Logger } from "../../logger"
 import type { SpeechSynthesisStreamResponse, SynthesizeSpeechInput } from "../service"
-import { postSpeech, resolveVoxCpmConfig, sidecarErrorDetail, type VoxCpmConfig } from "../../plugins/tokidapp/concierge/voxcpm-client"
+import { VOXCPM_KEY_HINT, postSpeech, resolveVoxCpmConfig, sidecarErrorDetail, type VoxCpmConfig } from "../../plugins/tokidapp/concierge/voxcpm-client"
 import { DEFAULT_VOXCPM_VOICE, resolveSpeechVoice } from "../../plugins/tokidapp/concierge/voxcpm-tts"
 import { TRANSCODE_MIME, ffmpegAvailable, transcodePcmStream, type TranscodeFormat } from "../pcm-transcode"
 
@@ -63,7 +63,7 @@ export interface VoxCpmSynthOptions {
 }
 
 export class VoxCpmSynthesizer {
-  private readonly config: VoxCpmConfig
+  private config: VoxCpmConfig
   private voice: string
 
   constructor(private readonly options: VoxCpmSynthOptions) {
@@ -231,9 +231,15 @@ export class VoxCpmSynthesizer {
     }
     if (res.ok) return res
 
+    if ((res.status === 401 || res.status === 403) && this.config.fallbackApiKey) {
+      // The key saved in Speech settings is wrong; the sidecar's own key (found on this host) is right.
+      this.options.logger.warn({ baseUrl: this.config.baseUrl }, "voxcpm.synthesize.saved-key-refused")
+      this.config = { ...this.config, apiKey: this.config.fallbackApiKey, fallbackApiKey: undefined }
+      return this.send(body, signal)
+    }
     const detail = await sidecarErrorDetail(res)
     if (res.status === 401 || res.status === 403) {
-      throw new Error("VoxCPM2 sidecar rejected the request — VOXCPM_SIDECAR_API_KEY must match the sidecar's key")
+      throw new Error(`VoxCPM2 sidecar refused the API key. ${VOXCPM_KEY_HINT}; put that value in Speech settings → Sidecar API key.`)
     }
     // 503 = model still loading or queue full. "not configured" is what the speech route maps to HTTP 503.
     if (res.status === 503) throw new Error(`VoxCPM2 is not configured or not ready: ${detail}`)

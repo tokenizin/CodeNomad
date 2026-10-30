@@ -9,7 +9,7 @@ import { LocalSpeechProvider } from "./providers/local"
 import { WhisperSpeechProvider } from "./providers/whisper"
 import { DeepgramSpeechProvider } from "./providers/deepgram"
 import { VoxCpmSpeechProvider, type NormalizedVoxCpmSettings } from "./providers/voxcpm"
-import { resolveVoxCpmConfig } from "../plugins/tokidapp/concierge/voxcpm-client"
+import { VOXCPM_KEY_HINT, resolveVoxCpmConfig } from "../plugins/tokidapp/concierge/voxcpm-client"
 
 export interface VoxCpmStatus {
   baseUrl: string
@@ -146,7 +146,7 @@ export class SpeechService {
       styles: [],
       qualities: [],
     }
-    const headers = config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : undefined
+    const headers = (key?: string) => (key ? { authorization: `Bearer ${key}` } : undefined)
     try {
       const health = await fetchImpl(`${config.baseUrl}/health`, { signal: AbortSignal.timeout(5000) })
       const body = (await health.json().catch(() => ({}))) as Record<string, any>
@@ -161,9 +161,18 @@ export class SpeechService {
       return status
     }
     try {
-      const res = await fetchImpl(`${config.baseUrl}/v1/voices`, { headers, signal: AbortSignal.timeout(5000) })
-      if (res.status === 401 || res.status === 403) {
-        status.error = "The sidecar refused the API key. It's in scripts/voxcpm-server/engine-data/.api-key on the Mac Studio."
+      const list = (key?: string) => fetchImpl(`${config.baseUrl}/v1/voices`, { headers: headers(key), signal: AbortSignal.timeout(5000) })
+      let res = await list(config.apiKey)
+      const refused = (r: Response) => r.status === 401 || r.status === 403
+      if (refused(res) && config.fallbackApiKey) {
+        res = await list(config.fallbackApiKey)
+        if (!refused(res)) {
+          status.error =
+            "The saved Sidecar API key is wrong, so CodeNomad uses the sidecar's own key from this Mac instead. Replace the saved key with the right one to remove this warning."
+        }
+      }
+      if (refused(res)) {
+        status.error = `The sidecar refused the API key. ${VOXCPM_KEY_HINT}.`
       } else if (res.ok) {
         const body = (await res.json()) as Record<string, any>
         status.voices = (Array.isArray(body.voices) ? body.voices : [])

@@ -15,12 +15,29 @@ const DEFAULT_TIMEOUT_MS = 120_000
 export interface VoxCpmConfig {
   baseUrl: string
   apiKey?: string
+  /** The sidecar's own key, when the key above came from settings and differs: tried if that one is refused. */
+  fallbackApiKey?: string
   timeoutMs: number
 }
 
+/** Where the sidecar's key lives, for error messages. */
+export const VOXCPM_KEY_HINT =
+  "The sidecar's key is VOXCPM_API_KEY in ~/starworld/.env.local (or .env) if set, otherwise scripts/voxcpm-server/engine-data/.api-key"
+
+function readEnvFileValue(file: string, name: string): string | undefined {
+  try {
+    const line = fs.readFileSync(file, "utf8").split(/\r?\n/).find((l) => l.startsWith(`${name}=`))
+    const value = line?.slice(name.length + 1).trim().replace(/^(["'])(.*)\1$/, "$2")
+    return value || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * The sidecar writes its key to scripts/voxcpm-server/engine-data/.api-key in the
- * starworld repo (docs/VOXCPM_SETUP.md). Look there so a local setup needs no key copied.
+ * The sidecar's own key, found the way its launcher (scripts/voxcpm-sidecar-launchd-wrapper.sh) picks it:
+ * VOXCPM_API_KEY in the starworld repo's .env.local, then .env, then scripts/voxcpm-server/engine-data/.api-key.
+ * A local setup then needs no key copied.
  */
 export function discoverVoxCpmApiKey(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string | undefined {
   const relative = path.join("scripts", "voxcpm-server", "engine-data", ".api-key")
@@ -34,8 +51,12 @@ export function discoverVoxCpmApiKey(env: NodeJS.ProcessEnv = process.env, cwd =
   }
   for (const root of roots) {
     if (!root?.trim()) continue
+    const base = root.trim()
+    if (!fs.existsSync(path.join(base, "scripts", "voxcpm-server"))) continue
+    const fromEnv = readEnvFileValue(path.join(base, ".env.local"), "VOXCPM_API_KEY") ?? readEnvFileValue(path.join(base, ".env"), "VOXCPM_API_KEY")
+    if (fromEnv) return fromEnv
     try {
-      const key = fs.readFileSync(path.join(root.trim(), relative), "utf8").trim()
+      const key = fs.readFileSync(path.join(base, relative), "utf8").trim()
       if (key) return key
     } catch {
       /* not here */
@@ -49,9 +70,12 @@ export function resolveVoxCpmConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): VoxCpmConfig {
   const baseUrl = (overrides.baseUrl ?? env.VOXCPM_SIDECAR_URL?.trim() ?? "").replace(/\/$/, "") || DEFAULT_URL
+  const ownKey = env.VOXCPM_SIDECAR_API_KEY?.trim() || discoverVoxCpmApiKey(env)
+  const apiKey = overrides.apiKey?.trim() || ownKey
   return {
     baseUrl,
-    apiKey: overrides.apiKey ?? (env.VOXCPM_SIDECAR_API_KEY?.trim() || discoverVoxCpmApiKey(env)),
+    apiKey,
+    ...(ownKey && apiKey !== ownKey ? { fallbackApiKey: ownKey } : {}),
     timeoutMs: overrides.timeoutMs ?? (Number(env.VOXCPM_TTS_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS),
   }
 }
