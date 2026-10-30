@@ -43,6 +43,7 @@ describe("RustStreamTranslator", () => {
     expect(toOpencodeTool("Bash", { command: "ls" })).toEqual({ tool: "bash", input: { command: "ls" } })
     expect(toOpencodeTool("Write", { file_path: "a", content: "x" }).input.filePath).toBe("a")
     expect(toOpencodeTool("nomad_validate", { x: 1 }).tool).toBe("nomad_validate")
+    expect(toOpencodeTool("Task", { subagent_type: "ba", description: "spec" })).toEqual({ tool: "task", input: { subagent_type: "ba", description: "spec" } })
   })
 })
 

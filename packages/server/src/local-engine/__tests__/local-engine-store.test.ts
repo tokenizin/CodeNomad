@@ -18,11 +18,16 @@ describe("LocalEngineStore", () => {
     ])
     expect(store.copyHistory(s.id, "ses_lcl_fork", "u2")).toBe(2)
     expect(store.readHistory("ses_lcl_fork").map((m) => m.id)).toEqual(["u1", "a1"])
+    fs.mkdirSync(store.tasksDir(s.id), { recursive: true })
+    fs.writeFileSync(path.join(store.tasksDir(s.id), "task_1.json"), "{}")
     expect(store.copyHistory(s.id, "ses_lcl_all")).toBe(4)
+    expect(fs.existsSync(path.join(store.tasksDir("ses_lcl_all"), "task_1.json"))).toBe(true)
     expect(store.deleteHistoryMessage(s.id, "a1")).toBe(true)
     expect(store.truncateHistory(s.id, "u2")).toBe(2)
     expect(store.readHistory(s.id).map((m) => m.id)).toEqual(["u1"])
     expect(store.truncateHistory(s.id, "missing")).toBe(0)
+    store.deleteSession(s.id)
+    expect(fs.existsSync(store.tasksDir(s.id))).toBe(false)
   })
 
   test("creates, lists, renames and deletes sessions", () => {
