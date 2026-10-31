@@ -315,8 +315,12 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
 
   return {
     provider,
-    apiKey: *** sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
-    hasApiKey: saniti...iKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
+    apiKey:
+      typeof sanitized.apiKey === "string" && sanitized.apiKey.trim()
+        ? sanitized.apiKey.trim()
+        : undefined,
+    hasApiKey:
+      sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
     baseUrl:
       typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim()
         ? sanitized.baseUrl.trim()
