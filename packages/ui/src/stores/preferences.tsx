@@ -37,7 +37,7 @@ export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
-export type SpeechProviderPreference = "openai-compatible" | "deepgram"
+export type SpeechProviderPreference = "openai-compatible" | "deepgram" | "voxcpm"
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 
@@ -303,26 +303,36 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
         }
       : null
 
+  const voxcpmDefaults =
+    provider === "voxcpm"
+      ? {
+          sttModel: "sherpa-onnx",
+          ttsModel: "voxcpm-2",
+          ttsVoice: "",
+          baseUrl: process.env.VOXCPM_SIDECAR_URL ?? "http://127.0.0.1:9972",
+        }
+      : null
+
   return {
     provider,
-    apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
-    hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
+    apiKey: *** sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
+    hasApiKey: saniti...iKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
     baseUrl:
       typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim()
         ? sanitized.baseUrl.trim()
-        : deepgramDefaults?.baseUrl ?? defaultSpeechSettings.baseUrl,
+        : voxcpmDefaults?.baseUrl ?? deepgramDefaults?.baseUrl ?? defaultSpeechSettings.baseUrl,
     sttModel:
       typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
         ? sanitized.sttModel.trim()
-        : deepgramDefaults?.sttModel ?? defaultSpeechSettings.sttModel,
+        : voxcpmDefaults?.sttModel ?? deepgramDefaults?.sttModel ?? defaultSpeechSettings.sttModel,
     ttsModel:
       typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
         ? sanitized.ttsModel.trim()
-        : deepgramDefaults?.ttsModel ?? defaultSpeechSettings.ttsModel,
+        : voxcpmDefaults?.ttsModel ?? deepgramDefaults?.ttsModel ?? defaultSpeechSettings.ttsModel,
     ttsVoice:
       typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
         ? sanitized.ttsVoice.trim()
-        : deepgramDefaults?.ttsVoice ?? defaultSpeechSettings.ttsVoice,
+        : (voxcpmDefaults?.ttsVoice !== undefined ? voxcpmDefaults.ttsVoice : undefined) ?? deepgramDefaults?.ttsVoice ?? defaultSpeechSettings.ttsVoice,
     playbackMode:
       sanitized.playbackMode === "buffered" || sanitized.playbackMode === "streaming"
         ? sanitized.playbackMode

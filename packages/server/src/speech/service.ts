@@ -8,6 +8,7 @@ import { NvidiaSpeechProvider } from "./providers/nvidia"
 import { LocalSpeechProvider } from "./providers/local"
 import { WhisperSpeechProvider } from "./providers/whisper"
 import { DeepgramSpeechProvider } from "./providers/deepgram"
+import { VoxCpmSpeechProvider } from "./providers/voxcpm"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -68,6 +69,7 @@ const DEEPGRAM_BASE_URL = "https://api.deepgram.com/v1"
 const DEEPGRAM_STT_MODEL = "nova-3"
 const DEEPGRAM_TTS_MODEL = "aura-2"
 const DEEPGRAM_TTS_VOICE = "aura-asteria-en"
+const VOXCPM_DEFAULT_BASE_URL = "http://127.0.0.1:9972"
 
 export class SpeechService {
   constructor(
@@ -112,6 +114,10 @@ export class SpeechService {
       return new DeepgramSpeechProvider({ settings, logger })
     }
 
+    if (settings.provider === "voxcpm") {
+      return new VoxCpmSpeechProvider({ settings, logger })
+    }
+
     // Default to OpenAI-compatible provider
     return new OpenAICompatibleSpeechProvider({ settings, logger })
   }
@@ -121,24 +127,32 @@ export class SpeechService {
     const speech = parsed.speech ?? {}
     const provider = speech.provider?.trim() || DEFAULT_PROVIDER
     const isDeepgram = provider === "deepgram"
+    const isVoxCpm = provider === "voxcpm"
 
     return {
       provider,
       apiKey:
         speech.apiKey?.trim() ||
-        (isDeepgram ? process.env.DEEPGRAM_API_KEY : process.env.OPENAI_API_KEY),
+        (isDeepgram ? process.env.DEEPGRAM_API_KEY : undefined) ||
+        (isVoxCpm ? process.env.VOXCPM_SIDECAR_API_KEY : undefined) ||
+        process.env.OPENAI_API_KEY,
       baseUrl:
         speech.baseUrl?.trim() ||
-        (isDeepgram ? DEEPGRAM_BASE_URL : DEFAULT_BASE_URL),
+        (isDeepgram ? DEEPGRAM_BASE_URL : undefined) ||
+        (isVoxCpm ? process.env.VOXCPM_SIDECAR_URL?.trim() || VOXCPM_DEFAULT_BASE_URL : undefined) ||
+        DEFAULT_BASE_URL,
       sttModel:
         speech.sttModel?.trim() ||
-        (isDeepgram ? DEEPGRAM_STT_MODEL : DEFAULT_STT_MODEL),
+        (isDeepgram ? DEEPGRAM_STT_MODEL : DEFAULT_STT_MODEL) ||
+        (isVoxCpm ? "" : DEFAULT_STT_MODEL),
       ttsModel:
         speech.ttsModel?.trim() ||
-        (isDeepgram ? DEEPGRAM_TTS_MODEL : DEFAULT_TTS_MODEL),
+        (isDeepgram ? DEEPGRAM_TTS_MODEL : DEFAULT_TTS_MODEL) ||
+        (isVoxCpm ? "voxcpm" : DEFAULT_TTS_MODEL),
       ttsVoice:
         speech.ttsVoice?.trim() ||
-        (isDeepgram ? DEEPGRAM_TTS_VOICE : DEFAULT_TTS_VOICE),
+        (isDeepgram ? DEEPGRAM_TTS_VOICE : DEFAULT_TTS_VOICE) ||
+        (isVoxCpm ? "concierge" : DEFAULT_TTS_VOICE),
       ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
     }
   }
