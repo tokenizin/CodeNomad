@@ -7,6 +7,7 @@ mod desktop_event_transport;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod managed_node;
+mod claude_code_rust;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use desktop_event_transport::{DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartResult};
