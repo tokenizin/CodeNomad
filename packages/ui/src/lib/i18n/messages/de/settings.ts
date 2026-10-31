@@ -266,6 +266,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "Anbieter",
   "settings.speech.provider.subtitle": "Sprachanfragen verwenden den serverseitigen Sprach-Adapter.",
   "settings.speech.provider.openaiCompatible": "OpenAI-kompatibel",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "Konfiguration wird geprüft...",
   "settings.speech.status.configured": "Konfiguriert",
   "settings.speech.status.missing": "API-Schlüssel fehlt",

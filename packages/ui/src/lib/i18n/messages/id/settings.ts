@@ -244,6 +244,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "Provider",
   "settings.speech.provider.subtitle": "Permintaan suara menggunakan adaptor suara sisi server.",
   "settings.speech.provider.openaiCompatible": "Kompatibel OpenAI",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "Memeriksa konfigurasi...",
   "settings.speech.status.configured": "Terkonfigurasi",
   "settings.speech.status.missing": "Kunci API tidak ada",

@@ -266,6 +266,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "提供商",
   "settings.speech.provider.subtitle": "语音请求使用服务器端语音适配器。",
   "settings.speech.provider.openaiCompatible": "兼容 OpenAI",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "正在检查配置...",
   "settings.speech.status.configured": "已配置",
   "settings.speech.status.missing": "缺少 API 密钥",

@@ -223,6 +223,7 @@ export const SpeechSettingsCard: Component = () => {
           options={[
             { value: "openai-compatible", label: t("settings.speech.provider.openaiCompatible") },
             { value: "deepgram", label: t("settings.speech.provider.deepgram") },
+            { value: "voxcpm", label: t("settings.speech.provider.voxcpm") },
           ]}
         />
         <div class="settings-toggle-row settings-toggle-row-compact">

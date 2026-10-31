@@ -266,6 +266,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "Провайдер",
   "settings.speech.provider.subtitle": "Речевые запросы используют серверный речевой адаптер.",
   "settings.speech.provider.openaiCompatible": "Совместимый с OpenAI",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "Проверка конфигурации...",
   "settings.speech.status.configured": "Настроено",
   "settings.speech.status.missing": "Отсутствует API-ключ",

@@ -266,6 +266,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "ספק",
   "settings.speech.provider.subtitle": "בקשות קול משתמשות במתאם הקול שבצד השרת.",
   "settings.speech.provider.openaiCompatible": "תואם OpenAI",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "בודק את ההגדרות...",
   "settings.speech.status.configured": "מוגדר",
   "settings.speech.status.missing": "חסר מפתח API",

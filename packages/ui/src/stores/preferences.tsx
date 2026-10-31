@@ -290,7 +290,7 @@ function normalizeRecord(value: unknown): Record<string, string> {
 function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
   const sanitized = input ?? {}
   const provider: SpeechProviderPreference =
-    sanitized.provider === "deepgram" || sanitized.provider === "openai-compatible"
+    sanitized.provider === "deepgram" || sanitized.provider === "openai-compatible" || sanitized.provider === "voxcpm"
       ? sanitized.provider
       : defaultSpeechSettings.provider
   const deepgramDefaults =

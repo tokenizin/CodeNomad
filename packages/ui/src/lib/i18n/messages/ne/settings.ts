@@ -264,6 +264,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "प्रदायक",
   "settings.speech.provider.subtitle": "वाचन अनुरोधहरूले सर्भर-साइड वाचन एडाप्टर प्रयोग गर्दछ।",
   "settings.speech.provider.openaiCompatible": "OpenAI-संगत",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "कन्फिगरेसन जाँच गर्दै...",
   "settings.speech.status.configured": "कन्फिगर गरियो",
   "settings.speech.status.missing": "API कुञ्जी हराइरहेको छ",

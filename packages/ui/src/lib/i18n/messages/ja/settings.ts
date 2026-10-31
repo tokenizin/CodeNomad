@@ -266,6 +266,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "プロバイダー",
   "settings.speech.provider.subtitle": "音声リクエストはサーバー側の音声アダプターを使用します。",
   "settings.speech.provider.openaiCompatible": "OpenAI 互換",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "設定を確認しています...",
   "settings.speech.status.configured": "設定済み",
   "settings.speech.status.missing": "APIキーがありません",

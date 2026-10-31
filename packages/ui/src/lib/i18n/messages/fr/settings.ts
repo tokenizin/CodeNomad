@@ -265,6 +265,8 @@ export const settingsMessages = {
   "settings.speech.provider.title": "Fournisseur",
   "settings.speech.provider.subtitle": "Les requêtes vocales utilisent l'adaptateur vocal côté serveur.",
   "settings.speech.provider.openaiCompatible": "Compatible OpenAI",
+  "settings.speech.provider.deepgram": "Deepgram",
+  "settings.speech.provider.voxcpm": "VoxCPM",
   "settings.speech.status.loading": "Vérification de la configuration...",
   "settings.speech.status.configured": "Configuré",
   "settings.speech.status.missing": "Clé API manquante",
