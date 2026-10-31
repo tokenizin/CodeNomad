@@ -1026,7 +1026,7 @@ export default function PromptInput(props: PromptInputProps) {
   createEffect(() => {
     const busy = props.isSessionBusy
     const wasJustBusy = prevBusy && !busy
-    prevBusy = busy
+    prevBusy = Boolean(busy)
 
     if (!wasJustBusy) return
 
@@ -1059,7 +1059,7 @@ export default function PromptInput(props: PromptInputProps) {
           }
         }
       } catch (err) {
-        log.debug("Failed to generate prompt recommendations:", err)
+        log.log("Failed to generate prompt recommendations:", err)
       }
     }, 500)
 

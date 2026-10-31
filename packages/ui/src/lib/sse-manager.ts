@@ -28,6 +28,8 @@ import type {
   BackgroundProcess,
   InstanceStreamEvent,
   InstanceStreamStatus,
+  ServerMeta,
+  WorktreeGitStatusEntry,
   WorkspaceEventPayload,
 } from '@codenomad/api-types'
 import { getLogger } from "./logger"

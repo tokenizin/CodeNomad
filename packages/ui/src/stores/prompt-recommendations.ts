@@ -379,5 +379,5 @@ export function dismissAllRecommendations() {
 export function resetRecommendations() {
   setRecommendations([])
   setVisible(false)
-  setDismissedIds(new Set())
+  setDismissedIds(new Set<string>())
 }

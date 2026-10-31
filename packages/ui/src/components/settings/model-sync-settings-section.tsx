@@ -11,7 +11,7 @@ import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircl
 import { useI18n } from "../../lib/i18n"
 import type React from "react"
 
-type ModelSyncStatus = "idle" | "syncing" | "syncComplete" | "syncError"
+type ModelSyncStatus = "idle" | "syncing" | "syncComplete" | "syncError" | "testing"
 
 interface SyncedModelRow {
   providerId: string
@@ -213,7 +213,7 @@ export const ModelSyncSettingsSection: Component = () => {
       })
       const data = await result.json()
       if (data && data.results && Array.isArray(data.results)) {
-        const statusPromises = data.results.map((r: any, i: number) => {
+        const statusPromises = data.results.map((r: any, i: number): { model: string; provider: string; status: string; latencyMs?: number; errorDetails?: string } => {
           const m = models()[i] || {}
           const statusText =
             r.status === "available" ? "✓ Available" :
@@ -230,8 +230,8 @@ export const ModelSyncSettingsSection: Component = () => {
         })
         setError(
           statusPromises
-            .filter((s) => s.status.includes("Error") || s.status.includes("Insufficient"))
-            .map((s) => `${s.provider}: ${s.model} - ${s.status}`)
+            .filter((s: { status: string }) => s.status.includes("Error") || s.status.includes("Insufficient"))
+            .map((s: { provider: string; model: string; status: string }) => `${s.provider}: ${s.model} - ${s.status}`)
             .join("\n")
         )
       }

@@ -17,13 +17,10 @@ import {
 
 // ── Test Helpers ─────────────────────────────────────────
 
-function makeEvent(overrides: Partial<NotifyEvent> & { id: string; title: string; message: string }): NotifyEvent {
+function makeEvent(overrides: Partial<NotifyEvent> & { id: string; title: string; message?: string }): NotifyEvent {
   return {
-    id: overrides.id,
     instanceId: overrides.instanceId ?? "test-instance",
     sessionId: overrides.sessionId,
-    title: overrides.title,
-    message: overrides.message,
     source: overrides.source ?? "system",
     category: overrides.category ?? "system",
     priority: overrides.priority ?? "normal",
@@ -32,6 +29,7 @@ function makeEvent(overrides: Partial<NotifyEvent> & { id: string; title: string
     createdAt: overrides.createdAt ?? Date.now(),
     read: overrides.read ?? false,
     schemaVersion: 1,
+    message: overrides.message ?? overrides.title,
     ...overrides,
   }
 }
