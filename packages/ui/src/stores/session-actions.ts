@@ -398,9 +398,6 @@ async function sendMessage(
     await sendViaLocalEngine({
       instanceId,
       sessionId,
-    await sendViaLocalEngine({
-      instanceId,
-      sessionId,
       folder: instance.folder,
       session,
       prompt: preparedPrompt.promptToSend,
@@ -412,7 +409,6 @@ async function sendMessage(
         displayMetadata: preparedPrompt.displayMetadata,
       },
     })
-    return
     return
   }
 
