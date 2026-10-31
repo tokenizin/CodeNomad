@@ -24,7 +24,7 @@ interface ConversationQueueEntry {
   text: string
 }
 
-interface PlaybackHandle {
+export interface PlaybackHandle {
   stop: () => void
   done: Promise<void>
 }
@@ -285,6 +285,11 @@ async function runConversationQueue(): Promise<void> {
       playbackErrorShown = false
     }
   }
+}
+
+/** Read text aloud with the Speech settings (voice, playback mode, format). Used by the local voice conversation. */
+export function speakText(text: string): Promise<PlaybackHandle> {
+  return createPlaybackHandle(text)
 }
 
 async function createPlaybackHandle(text: string): Promise<PlaybackHandle> {

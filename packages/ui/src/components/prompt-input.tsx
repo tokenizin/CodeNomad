@@ -30,6 +30,9 @@ import {
   isConversationModeEnabled,
 } from "../stores/conversation-speech"
 import { usePromptDictation } from "./prompt-input/usePromptDictation"
+import { canUseServerSpeechInput } from "../lib/dictation-prompt"
+import { speechCapabilities } from "../stores/speech"
+import { bindVoiceChatComposer, pauseVoiceChat, resumeVoiceChat, startVoiceChat, stopVoiceChat } from "../stores/voice-chat"
 import { useVoiceConversation } from "./voice-conversation/useVoiceConversation"
 import { VoiceConversationButton } from "./voice-conversation/VoiceConversationButton"
 import { voiceConversationStore } from "./voice-conversation/store"
@@ -983,6 +986,17 @@ export default function PromptInput(props: PromptInputProps) {
     send: () => handleSend(),
     disabled: () => Boolean(props.disabled),
   })
+  // With server STT/TTS (VoxCPM2, local, Deepgram…) the voice conversation runs through the chat: speech is
+  // transcribed into the prompt, sent after 4 s of silence, and the reply is read aloud. OpenAI keeps Realtime.
+  const voiceThroughChat = () => speechCapabilities()?.provider !== "openai" && canUseServerSpeechInput() && Boolean(speechCapabilities()?.supportsTts)
+  onCleanup(
+    bindVoiceChatComposer(props.instanceId, {
+      prompt,
+      setPrompt,
+      getTextarea: () => textareaRef ?? null,
+      send: () => handleSend(),
+    }),
+  )
   const showVoiceConversation = () =>
     preferences().showPromptVoiceInput
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
@@ -1297,7 +1311,7 @@ export default function PromptInput(props: PromptInputProps) {
               <Show when={!showToolbarModeToggle()}>
                 <ModeToggle />
               </Show>
-              <Show when={(preferences().showPromptVoiceInput ?? true) && dictation.canDictate()}>
+              <Show when={(preferences().showPromptVoiceInput ?? true) && dictation.canDictate() && (dictation.isActive() || voiceConversationStore.state() === "idle" || voiceConversationStore.state() === "error")}>
                 <button
                   type="button"
                   class={`prompt-attach-button prompt-dictation-button ${dictation.isActive() ? "is-active" : ""} ${dictation.error() ? "has-error" : ""}`}
@@ -1319,10 +1333,10 @@ export default function PromptInput(props: PromptInputProps) {
               <Show when={showVoiceConversation()}>
                 <VoiceConversationButton
                   instanceId={props.instanceId}
-                  onStart={() => void voiceConversation.startConversation()}
-                  onPause={voiceConversation.pauseConversation}
-                  onResume={voiceConversation.resumeConversation}
-                  onStop={() => void voiceConversation.stopConversation()}
+                  onStart={() => void (voiceThroughChat() ? startVoiceChat(props.instanceId) : voiceConversation.startConversation())}
+                  onPause={() => (voiceThroughChat() ? pauseVoiceChat() : voiceConversation.pauseConversation())}
+                  onResume={() => (voiceThroughChat() ? resumeVoiceChat() : voiceConversation.resumeConversation())}
+                  onStop={() => void (voiceThroughChat() ? stopVoiceChat() : voiceConversation.stopConversation())}
                   disabled={Boolean(props.disabled)}
                 />
               </Show>
