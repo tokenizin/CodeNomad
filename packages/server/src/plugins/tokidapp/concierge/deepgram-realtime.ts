@@ -1023,6 +1023,12 @@ export interface DeepgramSession {
   enrichedInstructions?: string
   /** TokiDAPPAgentSession row opened at connect, closed at teardown. */
   agentSessionId?: string
+  /**
+   * Pending silence-commit timer for the STT utterance buffer.
+   * Lives on the session so `finishDeepgramSession` can cancel it —
+   * otherwise a timer can fire after teardown and commit a dead utterance.
+   */
+  silenceTimer?: ReturnType<typeof setTimeout> | null
 }
 
 const sessions = new Map<string, DeepgramSession>()
@@ -1194,13 +1200,15 @@ export async function createDeepgramSession(
 
   // Create Deepgram STT connection
   let pendingDeepgramUtterance = ""
-  let deepgramSilenceTimer: ReturnType<typeof setTimeout> | null = null
   const DEEPGRAM_SILENCE_TIMEOUT_MS = 4000
 
   function commitDeepgramUtterance() {
     const sanitized = sanitizeAsrText(pendingDeepgramUtterance)
     pendingDeepgramUtterance = ""
-    clearDeepgramSilenceTimer()
+    if (session.silenceTimer != null) {
+      clearTimeout(session.silenceTimer)
+      session.silenceTimer = null
+    }
     if (!sanitized.trim()) return
 
     console.log("[deepgram-realtime] Silence-committed transcript:", sanitized.slice(0, 120))
@@ -1222,17 +1230,13 @@ export async function createDeepgramSession(
     processUserMessage(session, sanitized, onAudioDelta, onTextDelta, onError, onResponseDone)
   }
 
-  function clearDeepgramSilenceTimer() {
-    if (deepgramSilenceTimer !== null) {
-      clearTimeout(deepgramSilenceTimer)
-      deepgramSilenceTimer = null
-    }
-  }
-
   function resetDeepgramSilenceTimer() {
-    clearDeepgramSilenceTimer()
-    deepgramSilenceTimer = setTimeout(() => {
-      deepgramSilenceTimer = null
+    if (session.silenceTimer != null) {
+      clearTimeout(session.silenceTimer)
+      session.silenceTimer = null
+    }
+    session.silenceTimer = setTimeout(() => {
+      session.silenceTimer = null
       if (pendingDeepgramUtterance.trim()) {
         console.log(`[deepgram-realtime] Silence timeout (${DEEPGRAM_SILENCE_TIMEOUT_MS}ms), committing pending utterance`)
         commitDeepgramUtterance()
@@ -1758,7 +1762,10 @@ function finishDeepgramSession(
   })
 
   session.connected = false
-  clearDeepgramSilenceTimer()
+  if (session.silenceTimer != null) {
+    clearTimeout(session.silenceTimer)
+    session.silenceTimer = null
+  }
   try {
     session.stt.close()
   } catch {

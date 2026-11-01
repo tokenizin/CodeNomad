@@ -52,7 +52,8 @@ export interface SpeechProvider {
 export interface NormalizedSpeechSettings {
   provider: string
   apiKey?: string
-  baseUrl?: string
+  /** Always resolved — falls back to provider default or DEFAULT_BASE_URL. */
+  baseUrl: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
@@ -78,19 +79,23 @@ export class SpeechService {
   ) {}
 
   async getCapabilities(): Promise<SpeechCapabilitiesResponse> {
-    return this.createProvider().getCapabilities()
+    const provider = await this.createProvider()
+    return provider.getCapabilities()
   }
 
   async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
-    return this.createProvider().transcribe(input)
+    const provider = await this.createProvider()
+    return provider.transcribe(input)
   }
 
   async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
-    return this.createProvider().synthesize(input)
+    const provider = await this.createProvider()
+    return provider.synthesize(input)
   }
 
   async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
-    return this.createProvider().synthesizeStream(input)
+    const provider = await this.createProvider()
+    return provider.synthesizeStream(input)
   }
 
   private async createProvider(): Promise<SpeechProvider> {
@@ -124,7 +129,12 @@ export class SpeechService {
         { baseUrl: settings.baseUrl },
         "VoxCPM sidecar unreachable — falling back to OpenAI-compatible TTS",
       )
-      return new OpenAICompatibleSpeechProvider({ ...settings, provider: "openai-compatible" }, logger)
+      // Fall back to the OpenAI-compatible provider, but keep the reported
+      // provider id aligned with what is actually serving the request.
+      return new OpenAICompatibleSpeechProvider({
+        settings: { ...settings, provider: "openai-compatible" },
+        logger,
+      })
     }
 
     // Default to OpenAI-compatible provider
@@ -132,21 +142,26 @@ export class SpeechService {
   }
 
   /** Probe the sidecar baseUrl with a short timeout. Returns true if reachable. */
-  private async probeSidecar(baseUrl: string, logger: Axiom): Promise<boolean> {
+  private async probeSidecar(baseUrl: string, logger: Logger): Promise<boolean> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 2000)
     try {
       const res = await fetch(`${baseUrl}/health`, { signal: controller.signal, method: "GET" })
       clearTimeout(timeout)
+      if (!res.ok) {
+        logger.warn({ baseUrl, status: res.status }, "speech.sidecar.health probe returned non-OK")
+      }
       return res.ok
-    } catch {
+    } catch (err) {
       clearTimeout(timeout)
+      logger.warn({ baseUrl, err }, "speech.sidecar.health probe failed — trying root path")
       // Fallback: try root path
       try {
         const res2 = await fetch(baseUrl, { signal: controller.signal, method: "GET" })
         clearTimeout(timeout)
         return res2.ok
-      } catch {
+      } catch (err2) {
+        logger.warn({ baseUrl, err: err2 }, "speech.sidecar.root probe failed")
         return false
       }
     }
