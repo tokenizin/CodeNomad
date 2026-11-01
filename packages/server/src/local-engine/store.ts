@@ -223,6 +223,39 @@ export class LocalEngineStore {
     return true
   }
 
+  /** Compact: replaces older messages with a single summary, keeping the most recent `keepCount`. */
+  compactHistory(key: string, keepCount = 20): { compacted: boolean; total: number; kept: number } {
+    const safe = safeKey(key)
+    if (!safe) return { compacted: false, total: 0, kept: 0 }
+    const history = this.readHistory(key)
+    if (history.length <= keepCount) return { compacted: false, total: history.length, kept: history.length }
+
+    const removed = history.slice(0, history.length - keepCount)
+    const keep = history.slice(history.length - keepCount)
+
+    const parts: string[] = []
+    for (const msg of removed) {
+      const text = msg.text.trim().replace(/\n+/g, " ").slice(0, 160)
+      if (msg.role === "user") {
+        parts.push(`User: ${text}${text.length >= 160 ? "…" : ""}`)
+      } else if (msg.role === "assistant" && !msg.isError) {
+        parts.push(`Assistant: ${text}${text.length >= 160 ? "…" : ""}`)
+      }
+    }
+
+    const summary: HistoryMessage = {
+      id: `msg_summary_${Date.now().toString(36)}`,
+      role: "assistant",
+      text: `[Summarized ${removed.length} earlier messages]\n\n${parts.join("\n")}`,
+      createdAt: Date.now(),
+      engine: "local-engine-compact",
+      isError: false,
+    }
+
+    this.writeHistory(safe, [summary, ...keep])
+    return { compacted: true, total: history.length, kept: keep.length }
+  }
+
   /** Fork: copies history before `messageId` from one session key to another. */
   copyHistory(from: string, to: string, beforeMessageId?: string): number {
     const messages = this.historyBefore(from, beforeMessageId)

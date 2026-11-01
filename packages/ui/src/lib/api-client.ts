@@ -744,6 +744,16 @@ export const serverApi = {
     return request(`/api/local-engine/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
 
+  compactLocalSession(
+    id: string,
+    options?: { keepCount?: number },
+  ): Promise<{ compacted: boolean; total: number; kept: number; sessionId: string }> {
+    return request(`/api/local-engine/sessions/${encodeURIComponent(id)}/compact`, {
+      method: "POST",
+      body: JSON.stringify({ keepCount: options?.keepCount ?? 20 }),
+    })
+  },
+
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,

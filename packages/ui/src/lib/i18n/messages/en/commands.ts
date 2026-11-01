@@ -57,6 +57,7 @@ export const commandMessages = {
   "commands.compactSession.errorFallback": "Failed to compact session",
   "commands.compactSession.alert.title": "Compact failed",
   "commands.compactSession.alert.message": "Compact failed: {message}",
+  "commands.compactSession.alert.localMessage": "Session compaction is not available for local-engine sessions.",
 
   "commands.undoLastMessage.label": "Undo Last Message",
   "commands.undoLastMessage.description": "Revert the last message",

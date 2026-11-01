@@ -645,6 +645,15 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     return { deleted: store.deleteSession(id) }
   })
 
+  app.post("/api/local-engine/sessions/:id/compact", async (request, reply) => {
+    const id = (request.params as { id: string }).id
+    if (!safeKey(id)) return bad(reply, "Invalid id")
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const keepCount = typeof body.keepCount === "number" && body.keepCount > 0 ? Math.min(Math.floor(body.keepCount), 200) : 20
+    const result = store.compactHistory(id, keepCount)
+    return { ...result, sessionId: id }
+  })
+
   // Legacy paths (P4 bridge).
   app.get("/api/playground/rust/status", status)
   app.post("/api/playground/rust/run", { bodyLimit: RUN_BODY_LIMIT }, (request, reply) => run(request, reply))

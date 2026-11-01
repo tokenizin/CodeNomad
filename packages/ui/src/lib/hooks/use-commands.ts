@@ -6,7 +6,9 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
+import { isLocalSessionId } from "../../lib/local-engine"
 import { showAlertDialog } from "../../stores/alerts"
+import { serverApi } from "../api-client"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -18,6 +20,7 @@ import { registerBuiltInCommand } from "../../stores/commands"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
+import { loadMessages } from "../../stores/session-api"
 
 const log = getLogger("actions")
 
@@ -236,21 +239,28 @@ export function useCommands(options: UseCommandsOptions) {
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
-        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+        if (!instance || !sessionId || sessionId === "info") return
 
         const sessions = getSessions(instance.id)
         const session = sessions.find((s) => s.id === sessionId)
         if (!session) return
 
         try {
-          await requestData(
-            instance.client.session.summarize({
-              sessionID: sessionId,
-              providerID: session.model.providerId,
-              modelID: session.model.modelId,
-            }),
-            "session.summarize",
-          )
+          if (isLocalSessionId(sessionId)) {
+            const result = await serverApi.compactLocalSession(sessionId)
+            await loadMessages(instance.id, sessionId, { force: true })
+            log.info("Compacted local session", { sessionId, result })
+          } else {
+            if (!instance.client) return
+            await requestData(
+              instance.client.session.summarize({
+                sessionID: sessionId,
+                providerID: session.model.providerId,
+                modelID: session.model.modelId,
+              }),
+              "session.summarize",
+            )
+          }
         } catch (error) {
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
@@ -270,21 +280,28 @@ export function useCommands(options: UseCommandsOptions) {
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
-        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+        if (!instance || !sessionId || sessionId === "info") return
 
         const sessions = getSessions(instance.id)
         const session = sessions.find((s) => s.id === sessionId)
         if (!session) return
 
         try {
-          await requestData(
-            instance.client.session.summarize({
-              sessionID: sessionId,
-              providerID: session.model.providerId,
-              modelID: session.model.modelId,
-            }),
-            "session.summarize",
-          )
+          if (isLocalSessionId(sessionId)) {
+            const result = await serverApi.compactLocalSession(sessionId)
+            await loadMessages(instance.id, sessionId, { force: true })
+            log.info("Compacted local session (/compress)", { sessionId, result })
+          } else {
+            if (!instance.client) return
+            await requestData(
+              instance.client.session.summarize({
+                sessionID: sessionId,
+                providerID: session.model.providerId,
+                modelID: session.model.modelId,
+              }),
+              "session.summarize",
+            )
+          }
         } catch (error) {
           log.error("Failed to compact session (/compress)", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
@@ -303,21 +320,28 @@ export function useCommands(options: UseCommandsOptions) {
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
-        if (!instance || !instance.client || !sessionId || sessionId === "info") return
+        if (!instance || !sessionId || sessionId === "info") return
 
         const sessions = getSessions(instance.id)
         const session = sessions.find((s) => s.id === sessionId)
         if (!session) return
 
         try {
-          await requestData(
-            instance.client.session.summarize({
-              sessionID: sessionId,
-              providerID: session.model.providerId,
-              modelID: session.model.modelId,
-            }),
-            "session.summarize",
-          )
+          if (isLocalSessionId(sessionId)) {
+            const result = await serverApi.compactLocalSession(sessionId)
+            await loadMessages(instance.id, sessionId, { force: true })
+            log.info("Compacted local session (/compact)", { sessionId, result })
+          } else {
+            if (!instance.client) return
+            await requestData(
+              instance.client.session.summarize({
+                sessionID: sessionId,
+                providerID: session.model.providerId,
+                modelID: session.model.modelId,
+              }),
+              "session.summarize",
+            )
+          }
         } catch (error) {
           log.error("Failed to compact session (/compact)", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
