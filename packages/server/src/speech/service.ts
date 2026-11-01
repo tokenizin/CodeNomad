@@ -77,7 +77,7 @@ export class SpeechService {
     private readonly logger: Logger,
   ) {}
 
-  getCapabilities(): SpeechCapabilitiesResponse {
+  async getCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return this.createProvider().getCapabilities()
   }
 
@@ -93,7 +93,7 @@ export class SpeechService {
     return this.createProvider().synthesizeStream(input)
   }
 
-  private createProvider(): SpeechProvider {
+  private async createProvider(): Promise<SpeechProvider> {
     const settings = this.resolveSettings()
     const logger = this.logger.child({ provider: settings.provider })
 
@@ -115,11 +115,41 @@ export class SpeechService {
     }
 
     if (settings.provider === "voxcpm") {
-      return new VoxCpmSpeechProvider({ settings, logger })
+      const reachable = await this.probeSidecar(settings.baseUrl, logger)
+      if (reachable) {
+        logger.info({ baseUrl: settings.baseUrl }, "VoxCPM sidecar reachable — using VoxCPM provider")
+        return new VoxCpmSpeechProvider({ settings, logger })
+      }
+      logger.warn(
+        { baseUrl: settings.baseUrl },
+        "VoxCPM sidecar unreachable — falling back to OpenAI-compatible TTS",
+      )
+      return new OpenAICompatibleSpeechProvider({ ...settings, provider: "openai-compatible" }, logger)
     }
 
     // Default to OpenAI-compatible provider
     return new OpenAICompatibleSpeechProvider({ settings, logger })
+  }
+
+  /** Probe the sidecar baseUrl with a short timeout. Returns true if reachable. */
+  private async probeSidecar(baseUrl: string, logger: Axiom): Promise<boolean> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    try {
+      const res = await fetch(`${baseUrl}/health`, { signal: controller.signal, method: "GET" })
+      clearTimeout(timeout)
+      return res.ok
+    } catch {
+      clearTimeout(timeout)
+      // Fallback: try root path
+      try {
+        const res2 = await fetch(baseUrl, { signal: controller.signal, method: "GET" })
+        clearTimeout(timeout)
+        return res2.ok
+      } catch {
+        return false
+      }
+    }
   }
 
   private resolveSettings(): NormalizedSpeechSettings {

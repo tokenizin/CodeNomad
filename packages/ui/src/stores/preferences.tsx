@@ -347,7 +347,6 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
         : defaultSpeechSettings.ttsFormat,
   }
 }
-
 function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
   if (!Array.isArray(value)) return []
   const out: T[] = []

@@ -1037,9 +1037,21 @@ const voiceGreetingPlayedForChatSession = new Set<string>()
  * speech-sanitize.ts but adapted for chat/completions format.
  */
 function buildSystemPrompt(enrichedInstructions?: string): string {
+  const voiceBehaviorSection = `
+# Voice Behavior
+- Keep responses concise and goal-oriented. The user speaks — do not ask them to perform or provide details when the agent can resolve autonomously.
+- After each response, add a one-line reasoning summary explaining why you answered that way, then suggest what the user most likely wants next.
+- Format:
+  <response>...your answer...</response>
+  <reasoning>Brief 1-line explanation of why this answer addresses their intent.</reasoning>
+  <followup>One concise suggestion for what they might want to do next.</followup>
+- If you used a tool, the reasoning should reference the tool call; the followup should suggest the next logical step.
+- Never call any tools during the reasoning or followup sections — those are plain text only.
+`
+
   const base = enrichedInstructions
-    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions
-    : VOICE_INSTRUCTIONS
+    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions + "\n\n" + voiceBehaviorSection
+    : VOICE_INSTRUCTIONS + "\n\n" + voiceBehaviorSection
 
   return base + "\n\n# Tool Call Format\n" +
     "When you need to use a tool, respond with a JSON tool_call in your message. " +
@@ -1181,6 +1193,53 @@ export async function createDeepgramSession(
   const greetKey = (chatSessionId || "").trim() || sessionId
 
   // Create Deepgram STT connection
+  let pendingDeepgramUtterance = ""
+  let deepgramSilenceTimer: ReturnType<typeof setTimeout> | null = null
+  const DEEPGRAM_SILENCE_TIMEOUT_MS = 4000
+
+  function commitDeepgramUtterance() {
+    const sanitized = sanitizeAsrText(pendingDeepgramUtterance)
+    pendingDeepgramUtterance = ""
+    clearDeepgramSilenceTimer()
+    if (!sanitized.trim()) return
+
+    console.log("[deepgram-realtime] Silence-committed transcript:", sanitized.slice(0, 120))
+    onUserTranscript?.(sanitized)
+    session.transcript.push(`[user] ${sanitized}`)
+    session.conversation.push({
+      role: "user",
+      content: sanitized,
+      timestamp: Date.now(),
+    })
+
+    if (session.chatSessionId) {
+      const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      createMessage({ id: msgId, sessionId: session.chatSessionId!, role: "user", content: sanitized }).catch((err) => {
+        console.error("[deepgram-realtime] Failed to persist user transcript:", err.message)
+      })
+    }
+
+    processUserMessage(session, sanitized, onAudioDelta, onTextDelta, onError, onResponseDone)
+  }
+
+  function clearDeepgramSilenceTimer() {
+    if (deepgramSilenceTimer !== null) {
+      clearTimeout(deepgramSilenceTimer)
+      deepgramSilenceTimer = null
+    }
+  }
+
+  function resetDeepgramSilenceTimer() {
+    clearDeepgramSilenceTimer()
+    deepgramSilenceTimer = setTimeout(() => {
+      deepgramSilenceTimer = null
+      if (pendingDeepgramUtterance.trim()) {
+        console.log(`[deepgram-realtime] Silence timeout (${DEEPGRAM_SILENCE_TIMEOUT_MS}ms), committing pending utterance`)
+        commitDeepgramUtterance()
+      }
+    }, DEEPGRAM_SILENCE_TIMEOUT_MS)
+  }
+
   const stt = createDeepgramSTTConnection({
     onTranscript: (text, isFinal) => {
       if (!isFinal) return // Only process final transcripts
@@ -1188,9 +1247,12 @@ export async function createDeepgramSession(
       const sanitized = sanitizeAsrText(text)
       if (!sanitized.trim()) return
 
-      console.log("[deepgram-realtime] User transcript:", sanitized.slice(0, 120))
+      // Buffer the latest final transcript and reset silence timer
+      pendingDeepgramUtterance = sanitized
+      resetDeepgramSilenceTimer()
 
-      // Notify callbacks
+      console.log("[deepgram-realtime] User transcript:", sanitized.slice(0, 120))
+      // Notify callbacks with partial/final status
       onUserTranscript?.(sanitized)
       session.transcript.push(`[user] ${sanitized}`)
 
@@ -1209,11 +1271,12 @@ export async function createDeepgramSession(
         })
       }
 
-      // Process through LLM (non-blocking)
-      processUserMessage(session, sanitized, onAudioDelta, onTextDelta, onError, onResponseDone)
+      // Do NOT process through LLM yet — wait for silence timeout
     },
     onUtteranceEnd: () => {
       console.log("[deepgram-realtime] Utterance end for session:", sessionId)
+      // Start/restart silence countdown; commit after 4s of no new speech
+      resetDeepgramSilenceTimer()
     },
     onError: (err) => {
       console.error("[deepgram-realtime] STT error:", err.message)
@@ -1695,6 +1758,7 @@ function finishDeepgramSession(
   })
 
   session.connected = false
+  clearDeepgramSilenceTimer()
   try {
     session.stt.close()
   } catch {

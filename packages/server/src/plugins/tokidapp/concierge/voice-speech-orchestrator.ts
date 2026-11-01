@@ -629,9 +629,24 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
       ? "\n\nThe user speaks Indonesian. Reply in Bahasa Indonesia."
       : ""
   const systemPrompt = enrichedInstructions
-    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions + interpretHint
+    ? VOICE_INSTRUCTIONS + "\n\n" + enrichedInstructions +
+      "\n\n# Voice Behavior\n" +
+      "- Keep responses concise and goal-oriented. The user speaks — do not ask them to perform or provide details when the agent can resolve autonomously.\n" +
+      "- After each response, add a one-line reasoning summary explaining why you answered that way, then suggest what the user most likely wants next.\n" +
+      "- Format:\n" +
+      "  <response>...your answer...</response>\n" +
+      "  <reasoning>Brief 1-line explanation of why this answer addresses their intent.</reasoning>\n" +
+      "  <followup>One concise suggestion for what they might want to do next.</followup>\n" +
+      "- Never call any tools during the reasoning or followup sections — those are plain text only.\n"
     : "You are Star World Assistant. Greet the user briefly and ask what they need." +
-      interpretHint
+      "\n\n# Voice Behavior\n" +
+      "- Keep responses concise and goal-oriented. The user speaks — do not ask them to perform or provide details when the agent can resolve autonomously.\n" +
+      "- After each response, add a one-line reasoning summary explaining why you answered that way, then suggest what the user most likely wants next.\n" +
+      "- Format:\n" +
+      "  <response>...your answer...</response>\n" +
+      "  <reasoning>Brief 1-line explanation of why this answer addresses their intent.</reasoning>\n" +
+      "  <followup>One concise suggestion for what they might want to do next.</followup>\n" +
+      "- Never call any tools during the reasoning or followup sections — those are plain text only.\n"
   conversation.push({
     role: "system",
     content: systemPrompt,
@@ -683,12 +698,15 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
 
   // ── STT (whisper.cpp preferred, Python faster-whisper fallback) ──
 
-  /** Accumulate finals; commit only on utterance_end (avoids re-ASR spam). */
+  /** Accumulate finals; commit only on silence timeout (avoids re-ASR spam). */
   let pendingUtterance = ""
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null
+  const SILENCE_TIMEOUT_MS = 4000
 
   function commitPendingUtterance() {
     const sanitized = sanitizeAsrText(pendingUtterance)
     pendingUtterance = ""
+    clearSilenceTimer()
     if (!sanitized.trim()) return
     if (isFillerTranscript(sanitized)) {
       console.log(`${LOG_PREFIX} Ignoring filler transcript:`, sanitized.slice(0, 40))
@@ -705,6 +723,24 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     }
   }
 
+  function clearSilenceTimer() {
+    if (silenceTimer !== null) {
+      clearTimeout(silenceTimer)
+      silenceTimer = null
+    }
+  }
+
+  function resetSilenceTimer() {
+    clearSilenceTimer()
+    silenceTimer = setTimeout(() => {
+      silenceTimer = null
+      if (pendingUtterance.trim()) {
+        console.log(`${LOG_PREFIX} Silence timeout (${SILENCE_TIMEOUT_MS}ms), committing pending utterance`)
+        commitPendingUtterance()
+      }
+    }, SILENCE_TIMEOUT_MS)
+  }
+
   const sttCallbacks: LocalSTTCallbacks = {
     onTranscript: (text, isFinal) => {
       const sanitized = sanitizeAsrText(text)
@@ -713,13 +749,18 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
         // Keep latest final segment until silence ends the turn
         pendingUtterance = sanitized
         transcriptCb(sanitized, false)
+        // Reset silence timer on every final segment
+        resetSilenceTimer()
       } else {
         transcriptCb(sanitized, false)
+        // Partial results also reset the timer
+        resetSilenceTimer()
       }
     },
     onUtteranceEnd: () => {
       console.log(`${LOG_PREFIX} Utterance end for local session:`, sessionId)
-      commitPendingUtterance()
+      // Start/restart silence countdown; commit after 4s of no new speech
+      resetSilenceTimer()
     },
     onError: (err) => {
       console.error(`${LOG_PREFIX} Local STT error:`, err.message)
