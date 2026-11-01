@@ -19,3 +19,8 @@ bun.lockb
 packages/cloudflare/.wrangler/
 .env
 node_modules/
+
+# Piper voice cache: local-tts.ts falls back to resolve(cwd, "models/piper-voices")
+# when PIPER_VOICE_DIR is unset, which drops a ~114 MB .onnx into the checkout.
+# Unanchored, so it matches at any depth (e.g. packages/server/models/).
+models/
