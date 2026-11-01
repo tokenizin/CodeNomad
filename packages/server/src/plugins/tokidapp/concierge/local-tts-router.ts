@@ -12,10 +12,31 @@
  */
 
 import type { LocalSpeakOverrides, LocalTTSCallbacks, LocalTTSConnection, LocalTTSOptions } from "./local-tts"
+import type { LocalSTTCallbacks, LocalSTTConnection, LocalSTTConnectionOptions } from "./local-stt"
 import type { PiperSynthesisParams } from "./piper-voice-catalog"
+import type { VoiceSessionEndContext } from "./voice-session-end"
 import type { VoxCpmCallbacks, VoxCpmConnection, VoxCpmOptions, VoxCpmSpeakOverrides } from "./voxcpm-tts"
 
 export type LocalTtsBackend = "piper" | "voxcpm"
+
+/**
+ * The local voice engine's process-bound dependencies.
+ *
+ * Production uses the real Piper / VoxCPM2 / STT factories and the real
+ * session-end hook. Tests inject fakes instead of replacing a module with bun's
+ * `mock.module`, which is process-wide and would leak the replacement into every
+ * other test file in the run.
+ */
+export interface LocalEngineDeps {
+  /** Piper (local TTS) connection factory. */
+  createPiper: (options: LocalTTSOptions, callbacks: LocalTTSCallbacks) => LocalTTSConnection
+  /** VoxCPM2 (sidecar TTS) connection factory. */
+  createVox?: (options: VoxCpmOptions, callbacks: VoxCpmCallbacks<LocalSpeakOverrides>) => VoxCpmConnection<LocalSpeakOverrides>
+  /** Local STT (faster-whisper) connection factory. */
+  createStt?: (options: LocalSTTConnectionOptions & LocalSTTCallbacks) => LocalSTTConnection
+  /** Post-session hook (wiki, recording, usage settlement). */
+  onSessionEnd?: (ctx: VoiceSessionEndContext) => void
+}
 
 export interface LocalTtsRouterOptions {
   /** Sidecar voice id (no `voxcpm-` prefix). Omit for Piper only. */

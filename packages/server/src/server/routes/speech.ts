@@ -33,6 +33,9 @@ function getSpeechErrorStatus(error: unknown): number {
   if (error instanceof Error && /not configured/i.test(error.message)) {
     return 503
   }
+  if (error instanceof Error && /too long to speak/i.test(error.message)) {
+    return 413
+  }
   return 502
 }
 
@@ -42,6 +45,9 @@ function getSpeechErrorMessage(error: unknown, fallback: string): string {
 
 export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async () => deps.speechService.getCapabilities())
+
+  // VoxCPM2 sidecar: reachable / model ready / voices, for the Speech settings page.
+  app.get("/api/speech/voxcpm/status", async () => deps.speechService.voxcpmStatus())
 
   app.post("/api/speech/transcribe", async (request, reply) => {
     try {

@@ -1,28 +1,35 @@
 /**
- * Ornith engine ↔ VoxCPM2: drives the real createOrnithSession. STT, Piper and accounting are mocked; `fetch` plays both
- * Ollama (/api/chat token stream) and the sidecar (/v1/audio/speech).
+ * Ornith engine ↔ VoxCPM2: drives the real createOrnithSession. The Piper / local-STT
+ * factories are injected (the real ones spawn processes) and `fetch` plays both Ollama
+ * (/api/chat token stream) and the sidecar (/v1/audio/speech).
+ *
+ * The factories are injected rather than replaced with bun's `mock.module`: that mock is
+ * process-wide, so it would leak into the other test files that exercise the real
+ * `local-tts` / `local-stt` modules. Everything else (accounting, usage metering,
+ * sanitising) runs for real and is fire-and-forget. Sessions are not torn down:
+ * onVoiceSessionEnd would write wiki files.
  */
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test"
 
+import { createOrnithSession, handleOrnithMessage } from "../ornith-realtime"
+
 const piper = { created: [] as Array<{ speak: Array<[string, any]> }> }
 
-// Only the two child-process wrappers are mocked. Everything else (accounting, usage metering, sanitising) runs for real and
-// is fire-and-forget, so this file does not replace modules that other test files exercise directly (bun's mock.module is
-// process-wide). Sessions are not torn down: onVoiceSessionEnd would write wiki files.
-mock.module("../local-stt", () => ({
-  createLocalSTTConnection: mock(() => ({ sendAudio() {}, flush() {}, close() {}, isReady: true })),
-}))
-mock.module("../local-tts", () => ({
-  createLocalTTSConnection: mock(() => {
-    const rec = { speak: [] as Array<[string, any]> }
-    piper.created.push(rec)
-    return { ready: true, voiceModel: "piper", speak: (t: string, o: any) => rec.speak.push([t, o]), flush() {}, close() {} }
-  }),
-  splitSentences: (t: string) => [t],
-}))
+/** Fake Piper connection factory (the real one spawns a python process). */
+const createPiper = mock(() => {
+  const rec = { speak: [] as Array<[string, any]> }
+  piper.created.push(rec)
+  return { ready: true, voiceModel: "piper", speak: (t: string, o: any) => rec.speak.push([t, o]), flush() {}, close() {} }
+})
 
-import { createOrnithSession, handleOrnithMessage } from "../ornith-realtime"
+/** Fake local STT connection (the real one spawns faster-whisper). */
+const createStt = mock(() => ({ sendAudio() {}, flush() {}, close() {}, isReady: true }))
+
+const localEngines = {
+  createPiper: createPiper as any,
+  createStt: createStt as any,
+}
 
 const realFetch = globalThis.fetch
 let sidecarInputs: Array<{ input: string; voice: string; stream: boolean }> = []
@@ -54,7 +61,7 @@ async function converse(voiceId: string, locale: "en" | "id" = "en") {
   const sent: any[] = []
   const ws: any = { send: (m: string) => sent.push(JSON.parse(m)), readyState: 1, close() {} }
   const sessionId = `ornith_vox_${++ids}`
-  const session = createOrnithSession(ws, sessionId, { voiceId, locale, sendToClient: () => {} })
+  const session = createOrnithSession(ws, sessionId, { voiceId, locale, sendToClient: () => {}, localEngines })
   await handleOrnithMessage(
     session,
     JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: "What is the plan" }] } }),

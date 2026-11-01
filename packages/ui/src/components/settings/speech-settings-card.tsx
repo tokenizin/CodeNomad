@@ -6,6 +6,7 @@ import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, sp
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
 import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
+import { VoxCpmSpeechFields, createVoxCpmDraft, voxCpmUpdateFromDraft, type VoxCpmDraft } from "./voxcpm-speech-fields"
 
 const log = getLogger("actions")
 
@@ -18,6 +19,7 @@ type DraftFields = {
   ttsVoice: string
   playbackMode: SpeechSettings["playbackMode"]
   ttsFormat: SpeechSettings["ttsFormat"]
+  voxcpm: VoxCpmDraft
 }
 
 function createDraftFields(speech: SpeechSettings): DraftFields {
@@ -30,6 +32,7 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
     ttsVoice: speech.ttsVoice,
     playbackMode: speech.playbackMode,
     ttsFormat: speech.ttsFormat,
+    voxcpm: createVoxCpmDraft(speech.voxcpm, speech.ttsVoice),
   }
 }
 
@@ -42,7 +45,8 @@ function isDraftEqual(a: DraftFields, b: DraftFields): boolean {
     a.ttsModel === b.ttsModel &&
     a.ttsVoice === b.ttsVoice &&
     a.playbackMode === b.playbackMode &&
-    a.ttsFormat === b.ttsFormat
+    a.ttsFormat === b.ttsFormat &&
+    JSON.stringify(a.voxcpm) === JSON.stringify(b.voxcpm)
   )
 }
 
@@ -91,7 +95,12 @@ export const SpeechSettingsCard: Component = () => {
     return speechCapabilities()?.configured ? t("settings.speech.status.configured") : t("settings.speech.status.missing")
   }
 
-  const updateDraft = (key: keyof DraftFields, value: string) => {
+  const updateVoxDraft = <K extends keyof VoxCpmDraft>(key: K, value: VoxCpmDraft[K]) => {
+    setSaveStatus("idle")
+    setDrafts((current) => ({ ...current, voxcpm: { ...current.voxcpm, [key]: value } }))
+  }
+
+  const updateDraft = (key: Exclude<keyof DraftFields, "voxcpm">, value: string) => {
     setSaveStatus("idle")
     if (key === "apiKey") {
       setApiKeyTouched(true)
@@ -133,7 +142,8 @@ export const SpeechSettingsCard: Component = () => {
       current.ttsModel !== speech.ttsModel ||
       current.ttsVoice !== speech.ttsVoice ||
       current.playbackMode !== speech.playbackMode ||
-      current.ttsFormat !== speech.ttsFormat
+      current.ttsFormat !== speech.ttsFormat ||
+      JSON.stringify(current.voxcpm) !== JSON.stringify(createVoxCpmDraft(speech.voxcpm, speech.ttsVoice))
     )
   })
 
@@ -151,27 +161,21 @@ export const SpeechSettingsCard: Component = () => {
     setSaveStatus("idle")
     try {
       const trimmedApiKey = current.apiKey.trim()
+      const isVoxCpm = current.provider === "voxcpm"
       await updateSpeechSettings({
         provider: current.provider,
         ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
         baseUrl: current.baseUrl.trim() || undefined,
         sttModel: current.sttModel.trim() || undefined,
-        ttsModel: current.ttsModel.trim() || undefined,
-        ttsVoice: current.ttsVoice.trim() || undefined,
+        ttsModel: isVoxCpm ? "voxcpm2" : current.ttsModel.trim() || undefined,
+        // VoxCPM2's voice is picked in its own section.
+        ttsVoice: (isVoxCpm ? current.voxcpm.voice : current.ttsVoice).trim() || undefined,
         playbackMode: current.playbackMode,
         ttsFormat: current.ttsFormat,
+        voxcpm: voxCpmUpdateFromDraft(current.voxcpm),
       })
       await loadSpeechCapabilities(true)
-      setDrafts({
-        provider: current.provider,
-        apiKey: "",
-        baseUrl: current.baseUrl.trim(),
-        sttModel: current.sttModel.trim() || serverSettings().speech.sttModel,
-        ttsModel: current.ttsModel.trim() || serverSettings().speech.ttsModel,
-        ttsVoice: current.ttsVoice.trim() || serverSettings().speech.ttsVoice,
-        playbackMode: current.playbackMode,
-        ttsFormat: current.ttsFormat,
-      })
+      setDrafts(createDraftFields(serverSettings().speech))
       setApiKeyTouched(false)
       setClearStoredApiKey(false)
       setSaveStatus("saved")
@@ -204,6 +208,11 @@ export const SpeechSettingsCard: Component = () => {
           onInput={(value) => {
             const provider = value as SpeechProviderPreference
             updateDraft("provider", provider)
+            if (provider === "voxcpm") {
+              // Deepgram/OpenAI voice names aren't VoxCPM2 voices; start from the sidecar default.
+              const voice = drafts().voxcpm.voice
+              if (!voice || voice.startsWith("aura-") || voice.startsWith("gpt-")) updateVoxDraft("voice", "concierge")
+            }
             if (provider === "deepgram") {
               const current = drafts()
               if (!current.baseUrl || current.baseUrl.includes("openai.com")) {
@@ -221,9 +230,9 @@ export const SpeechSettingsCard: Component = () => {
             }
           }}
           options={[
+            { value: "voxcpm", label: t("settings.speech.provider.voxcpm") },
             { value: "openai-compatible", label: t("settings.speech.provider.openaiCompatible") },
             { value: "deepgram", label: t("settings.speech.provider.deepgram") },
-            { value: "voxcpm", label: t("settings.speech.provider.voxcpm") },
           ]}
         />
         <div class="settings-toggle-row settings-toggle-row-compact">
@@ -270,6 +279,10 @@ export const SpeechSettingsCard: Component = () => {
           </div>
         </div>
 
+        <Show
+          when={drafts().provider !== "voxcpm"}
+          fallback={<VoxCpmSpeechFields draft={drafts().voxcpm} settings={serverSettings().speech.voxcpm} onChange={updateVoxDraft} />}
+        >
         <Field
           label={t("settings.speech.apiKey.title")}
           caption={t("settings.speech.apiKey.subtitle")}
@@ -321,6 +334,7 @@ export const SpeechSettingsCard: Component = () => {
           onInput={(value) => updateDraft("ttsVoice", value)}
           icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
         />
+        </Show>
         <SelectField
           label={t("settings.speech.playbackMode.title")}
           caption={t("settings.speech.playbackMode.subtitle")}

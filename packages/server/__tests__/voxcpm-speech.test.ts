@@ -8,6 +8,7 @@
 
 import { describe, test, expect, mock } from "bun:test"
 import { spawnSync } from "node:child_process"
+import { createRequire } from "node:module"
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -89,7 +90,9 @@ describe("pcm-transcode (real ffmpeg)", () => {
   })
 
   test("a missing ffmpeg binary is reported clearly", async () => {
-    const { spawn } = await import("node:child_process")
+    // The real `spawn`, read from the CJS registry: bun's `mock.module("node:child_process", …)`
+    // replaces the module process-wide, and this test needs the genuine "binary not found" error.
+    const { spawn } = createRequire(import.meta.url)("node:child_process")
     const out = transcodePcmStream(pcmSource(0.1), {
       sampleRate: 48000,
       format: "mp3",
@@ -124,7 +127,7 @@ describe("voice resolution", () => {
 
 type Seen = { url: string; headers: Record<string, string>; body: any; signal: AbortSignal }
 
-function synth(over: Partial<ConstructorParameters<typeof VoxCpmSynthesizer>[0]> & { respond?: () => Response } = {}) {
+function synth(over: Partial<ConstructorParameters<typeof VoxCpmSynthesizer>[0]> & { respond?: (body: any) => Response } = {}) {
   const seen: Seen[] = []
   const s = new VoxCpmSynthesizer({
     voice: "voxcpm-concierge",
@@ -132,8 +135,9 @@ function synth(over: Partial<ConstructorParameters<typeof VoxCpmSynthesizer>[0]>
     logger,
     config: { baseUrl: "http://sidecar.test", apiKey: "k" },
     fetchImpl: (async (url: string, init: RequestInit) => {
-      seen.push({ url, headers: init.headers as any, body: JSON.parse(init.body as string), signal: init.signal! })
-      return (over.respond ?? (() => new Response(Buffer.from("AUDIOBYTES"), { status: 200, headers: { "x-sample-rate": "48000" } })))()
+      const body = JSON.parse(init.body as string)
+      seen.push({ url, headers: init.headers as any, body, signal: init.signal! })
+      return (over.respond ?? (() => new Response(Buffer.from("AUDIOBYTES"), { status: 200, headers: { "x-sample-rate": "48000" } })))(body)
     }) as unknown as typeof fetch,
     ...over,
   })
@@ -164,8 +168,16 @@ describe("VoxCpmSynthesizer", () => {
   test("input validation", async () => {
     const { s, seen } = synth()
     await expect(s.synthesize({ text: "   " })).rejects.toThrow("Text is required")
-    await expect(s.synthesize({ text: "x".repeat(3501) })).rejects.toThrow(/3501 characters.*at most 3500/)
+    // One request is refused: the whole reply is longer than the 20k ceiling.
+    await expect(s.synthesize({ text: "a ".repeat(15_000) })).rejects.toThrow(/too long to speak/)
     expect(seen).toHaveLength(0)
+
+    // Anything under the ceiling is chunked, not refused: one sidecar request per chunk.
+    const chunked = synth()
+    await chunked.s.synthesize({ text: "x".repeat(3501), format: "wav" })
+    expect(chunked.seen.length).toBeGreaterThan(1)
+    expect(chunked.seen.every((r) => r.body.input.length <= 1500)).toBe(true)
+    expect(chunked.seen.every((r) => r.body.response_format === "pcm")).toBe(true)
   })
 
   test("sidecar errors map to messages the route turns into the right HTTP status", async () => {
@@ -173,8 +185,17 @@ describe("VoxCpmSynthesizer", () => {
     await expect(loading.synthesize({ text: "x" })).rejects.toThrow(/not configured or not ready: model is still loading/)
     const badKey = synth({ respond: () => new Response('{"detail":"invalid or missing API key"}', { status: 401 }) }).s
     await expect(badKey.synthesize({ text: "x" })).rejects.toThrow(/VOXCPM_SIDECAR_API_KEY/)
-    const badFormat = synth({ respond: () => new Response('{"detail":"response_format must be one of [\'wav\', \'pcm\', \'flac\']"}', { status: 400 }) }).s
-    await expect(badFormat.synthesize({ text: "x", format: "mp3" })).rejects.toThrow(/400: response_format must be one of/)
+    // The sidecar cannot produce mp3 (no ffmpeg on its host): the request falls back to WAV.
+    const badFormat = synth({
+      respond: (body: any) =>
+        body.response_format === "mp3"
+          ? new Response('{"detail":"response_format must be one of [\'wav\', \'pcm\', \'flac\']"}', { status: 400 })
+          : new Response(Buffer.from("AUDIOBYTES"), { status: 200, headers: { "x-sample-rate": "48000" } }),
+    }).s
+    expect((await badFormat.synthesize({ text: "x", format: "mp3" })).mimeType).toBe("audio/wav")
+    // When even WAV is refused, the sidecar's complaint reaches the caller.
+    const noFormat = synth({ respond: () => new Response('{"detail":"response_format must be one of [\'wav\', \'pcm\', \'flac\']"}', { status: 400 }) }).s
+    await expect(noFormat.synthesize({ text: "x", format: "mp3" })).rejects.toThrow(/response_format must be one of/)
     const down = new VoxCpmSynthesizer({ voice: "marin", defaultFormat: "wav", logger, config: { baseUrl: "http://sidecar.test" }, fetchImpl: (async () => { throw new TypeError("fetch failed") }) as any })
     await expect(down.synthesize({ text: "x" })).rejects.toThrow(/unreachable at http:\/\/sidecar.test: fetch failed/)
   })

@@ -50,7 +50,7 @@ import {
   pickPiperVoiceForLocale,
   resolvePiperModelAndSynthesis,
 } from "./piper-voice-catalog"
-import { createLocalTtsRouter, type LocalTtsRouter } from "./local-tts-router"
+import { createLocalTtsRouter, type LocalEngineDeps, type LocalTtsRouter } from "./local-tts-router"
 import {
   createVoxCpmTTSConnection,
   pickVoxCpmVoiceForLocale,
@@ -68,7 +68,7 @@ import type { DeepgramVoiceId } from "./deepgram-speech"
 import { sanitizeAsrText, sanitizeSpeechText, stripThinkingContent, isFillerTranscript, VOICE_INSTRUCTIONS } from "./speech-sanitize"
 import type WebSocket from "ws"
 import {
-  onVoiceSessionEnd,
+  onVoiceSessionEnd as realOnVoiceSessionEnd,
   type VoiceSessionEndReason,
 } from "./voice-session-end"
 import { openVoiceAgentSession } from "./voice-session-start"
@@ -172,6 +172,11 @@ export interface CreateVoiceSessionParams {
   locale?: "en" | "id" | "auto"
   /** Interpret mode: STT→EN for LLM, reply TTS in user language. */
   interpret?: boolean
+  /**
+   * Local-engine factories (Piper / VoxCPM2 / local STT). Defaults to the real ones;
+   * tests inject fakes so they never replace a module with bun's process-wide `mock.module`.
+   */
+  localEngines?: Partial<LocalEngineDeps>
 }
 
 // ── LLM Fallback Chain (Shared) ───────────────────────────────────────
@@ -582,6 +587,11 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     locale = "en",
     interpret = false,
   } = params
+  const localEngines = params.localEngines ?? {}
+  // Injectable so tests can tear a session down without the wiki/recording writes.
+  // The call site keeps the `onVoiceSessionEnd({` shape: voice-engine-parity.test.ts
+  // asserts on it that every engine passes the same attribution fields.
+  const onVoiceSessionEnd = localEngines.onSessionEnd ?? realOnVoiceSessionEnd
 
   const voiceKey = localTtsVoice || voice
   const localePlan = planVoiceLocales({ locale, interpret })
@@ -689,8 +699,8 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     {
       voxVoice,
       piper: { voice: piperResolved.model, synthesis: piperResolved.synthesis },
-      createPiper: createLocalTTSConnection,
-      createVox: createVoxCpmTTSConnection,
+      createPiper: localEngines.createPiper ?? createLocalTTSConnection,
+      createVox: localEngines.createVox ?? createVoxCpmTTSConnection,
     },
     ttsCallbacks,
   )
@@ -803,7 +813,7 @@ function createLocalSession(params: CreateVoiceSessionParams): VoiceSession {
     })
     console.log(`${LOG_PREFIX} Local STT backend: whisper.cpp`)
   } else {
-    stt = createLocalSTTConnection({
+    stt = (localEngines.createStt ?? createLocalSTTConnection)({
       language: localePlan.sttLanguage === null ? "auto" : localePlan.sttLanguage,
       model: localePlan.sttModel,
       ...sttCallbacks,
@@ -1233,6 +1243,7 @@ function createOrnithAdapter(params: CreateVoiceSessionParams): VoiceSession {
       interpret: Boolean(params.interpret),
       chatSessionId: params.chatSessionId,
       userId: params.userId,
+      localEngines: params.localEngines,
     },
   )
 

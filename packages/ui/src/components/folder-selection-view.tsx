@@ -141,7 +141,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       return
     }
 
-    const normalizedKey = e.key.toLowerCase()
+    const normalizedKey = (e.key ?? "").toLowerCase()
     const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
     const blockedKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Enter"]
 

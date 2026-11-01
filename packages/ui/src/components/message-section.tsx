@@ -1297,7 +1297,7 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
+      const key = (event.key ?? "").toLowerCase()
       const isModSearch = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "f"
       if (isModSearch && isActive()) {
         const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))

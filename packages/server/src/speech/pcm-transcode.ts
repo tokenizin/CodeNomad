@@ -8,10 +8,24 @@
  * @module pcm-transcode
  */
 
-import { spawn, spawnSync } from "node:child_process"
+import { createRequire } from "node:module"
 import { PassThrough, type Readable } from "node:stream"
+import type { spawn, spawnSync } from "node:child_process"
 
 export type TranscodeFormat = "mp3" | "aac"
+
+/**
+ * The real child_process entry points, read from the CJS registry.
+ *
+ * bun's `mock.module("node:child_process", …)` replaces the module process-wide, so a test
+ * double would silently take over ffmpeg spawning — and the availability probe — for every
+ * importer in the run. `createRequire` reads the builtin from the CJS registry, which the
+ * mock does not touch, so ffmpeg is always the real binary.
+ */
+const childProcess = createRequire(import.meta.url)("node:child_process") as {
+  spawn: typeof spawn
+  spawnSync: typeof spawnSync
+}
 
 const FORMAT_ARGS: Record<TranscodeFormat, string[]> = {
   mp3: ["-f", "mp3", "-codec:a", "libmp3lame", "-b:a", "128k"],
@@ -24,7 +38,7 @@ let cachedAvailability: boolean | undefined
 
 export function ffmpegAvailable(): boolean {
   if (cachedAvailability === undefined) {
-    cachedAvailability = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0
+    cachedAvailability = childProcess.spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0
   }
   return cachedAvailability
 }
@@ -36,9 +50,9 @@ export function resetFfmpegProbe(): void {
 
 export function transcodePcmStream(
   source: Readable,
-  options: { sampleRate: number; format: TranscodeFormat; spawnImpl?: typeof spawn },
+  options: { sampleRate: number; format: TranscodeFormat; spawnImpl?: typeof childProcess.spawn },
 ): Readable {
-  const proc = (options.spawnImpl ?? spawn)(
+  const proc = (options.spawnImpl ?? childProcess.spawn)(
     "ffmpeg",
     ["-loglevel", "error", "-f", "s16le", "-ar", String(options.sampleRate), "-ac", "1", "-i", "pipe:0", ...FORMAT_ARGS[options.format], "pipe:1"],
     { stdio: ["pipe", "pipe", "pipe"] },

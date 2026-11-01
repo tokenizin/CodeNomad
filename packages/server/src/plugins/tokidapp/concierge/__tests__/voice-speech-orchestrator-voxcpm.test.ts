@@ -1,34 +1,40 @@
 /**
  * Local voice engine ↔ VoxCPM2 wiring — drives the real createLocalSession.
  *
- * Mocked: the STT and Piper child-process wrappers, the session-end hook (it writes wiki files), and `fetch` for the sidecar.
- * Nothing else is replaced — bun's mock.module is process-wide, so extra mocks would leak into other test files.
+ * The Piper / local-STT factories and the session-end hook are injected through
+ * `localEngines` instead of being replaced with bun's `mock.module`: that mock is
+ * process-wide, so it would leak into every other test file in the run (the real
+ * `local-tts` and `voice-session-end` modules have their own test files).
+ * `fetch` plays the sidecar.
  */
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test"
 
+import { createVoiceSession } from "../voice-speech-orchestrator"
+
 const piper = { created: [] as Array<{ options: any; speak: Array<[string, any]>; flush: number }> }
 
-mock.module("../local-stt", () => ({
-  createLocalSTTConnection: mock(() => ({ sendAudio: mock(() => {}), close: mock(() => {}), flush: mock(() => {}), isReady: true })),
-}))
-mock.module("../local-tts", () => ({
-  createLocalTTSConnection: mock((options: any) => {
-    const rec = { options, speak: [] as Array<[string, any]>, flush: 0 }
-    piper.created.push(rec)
-    return {
-      ready: true,
-      voiceModel: "piper",
-      speak: (t: string, o: any) => rec.speak.push([t, o]),
-      flush: () => { rec.flush++ },
-      close: () => {},
-    }
-  }),
-  splitSentences: (t: string) => [t],
-}))
-mock.module("../voice-session-end", () => ({ onVoiceSessionEnd: mock(() => {}) }))
+/** Fake Piper connection factory (the real one spawns a python process). */
+const createPiper = mock((options: any) => {
+  const rec = { options, speak: [] as Array<[string, any]>, flush: 0 }
+  piper.created.push(rec)
+  return {
+    ready: true,
+    voiceModel: "piper",
+    speak: (t: string, o: any) => rec.speak.push([t, o]),
+    flush: () => { rec.flush++ },
+    close: () => {},
+  }
+})
 
-import { createVoiceSession } from "../voice-speech-orchestrator"
+/** Fake local STT connection (the real one spawns faster-whisper). */
+const createStt = mock(() => ({ sendAudio: mock(() => {}), close: mock(() => {}), flush: mock(() => {}), isReady: true }))
+
+const localEngines = {
+  createPiper: createPiper as any,
+  createStt: createStt as any,
+  onSessionEnd: mock(() => {}),
+}
 
 const realFetch = globalThis.fetch
 let requests: Array<{ url: string; body: any; headers: Record<string, string> }> = []
@@ -61,7 +67,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 async function start(id: string, voice: string, locale: "en" | "id" = "en") {
   const audio: string[] = []
-  const session = await createVoiceSession({ engine: "local", sessionId: id, chatSessionId: id, voice, localTtsVoice: voice, locale } as any)
+  const session = await createVoiceSession({ engine: "local", sessionId: id, chatSessionId: id, voice, localTtsVoice: voice, locale, localEngines } as any)
   session.onAudio = (chunk: string) => audio.push(chunk)
   return { session, audio }
 }

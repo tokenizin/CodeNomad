@@ -4,7 +4,7 @@ import { sanitizeAsrText, sanitizeSpeechText, VOICE_INSTRUCTIONS } from "./speec
 import { executeTool } from "./openai-realtime"
 import { voiceOrchestratorToolDefinitions } from "./voice-orchestrator-tools"
 import { createLocalTTSConnection } from "./local-tts"
-import { createLocalTtsRouter, type LocalTtsRouter } from "./local-tts-router"
+import { createLocalTtsRouter, type LocalEngineDeps, type LocalTtsRouter } from "./local-tts-router"
 import { SentenceBuffer } from "./speech-sentence-buffer"
 import {
   createVoxCpmTTSConnection,
@@ -749,6 +749,11 @@ export interface CreateOrnithSessionOptions {
   /** StarWorld chat session — what the conversation's usage is attributed to. */
   chatSessionId?: string
   userId?: string
+  /**
+   * Local-engine factories (Piper / VoxCPM2 / local STT). Defaults to the real ones;
+   * tests inject fakes so they never replace a module with bun's process-wide `mock.module`.
+   */
+  localEngines?: Partial<LocalEngineDeps>
 }
 
 export function createOrnithSession(
@@ -812,8 +817,8 @@ export function createOrnithSession(
     {
       voxVoice: session.voxVoice,
       piper: { voice: piper.model, synthesis: piper.synthesis },
-      createPiper: createLocalTTSConnection,
-      createVox: createVoxCpmTTSConnection,
+      createPiper: opts.localEngines?.createPiper ?? createLocalTTSConnection,
+      createVox: opts.localEngines?.createVox ?? createVoxCpmTTSConnection,
     },
     {
       onAudio: (base64Chunk) => {
@@ -886,7 +891,7 @@ export function createOrnithSession(
   if (ORNITH_USE_WHISPER) {
     session.stt = createWhisperSTTConnection(sttOpts)
   } else {
-    session.stt = createLocalSTTConnection(sttOpts)
+    session.stt = (opts.localEngines?.createStt ?? createLocalSTTConnection)(sttOpts)
   }
 
   // Mark connected once Piper is warm even if STT is still loading

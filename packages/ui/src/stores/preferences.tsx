@@ -38,6 +38,31 @@ export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible" | "deepgram" | "voxcpm"
+
+/** Transcription source for the VoxCPM2 provider (VoxCPM2 itself is text-to-speech only). */
+export type VoxCpmSttSource = "local" | "whisper" | "deepgram"
+
+/** "VoxCPM2 (Local TTS)" provider settings (server config speech.voxcpm). */
+export interface VoxCpmSpeechSettings {
+  baseUrl?: string
+  style?: string
+  quality?: string
+  speed?: number
+  instructions?: string
+  seed?: number
+  sttSource: VoxCpmSttSource
+  sttModel?: string
+  /** A sidecar key is saved in settings (otherwise it's found automatically). */
+  hasApiKey: boolean
+  /** A Deepgram key is saved for transcription. */
+  hasSttApiKey: boolean
+}
+
+/** Write-only fields: a string sets the secret, null clears it, absent keeps it. */
+export type VoxCpmSpeechSettingsUpdate = Partial<Omit<VoxCpmSpeechSettings, "hasApiKey" | "hasSttApiKey">> & {
+  apiKey?: string | null
+  sttApiKey?: string | null
+}
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 
@@ -57,10 +82,12 @@ export interface SpeechSettings {
   ttsVoice: string
   playbackMode: SpeechPlaybackMode
   ttsFormat: SpeechTtsFormat
+  voxcpm: VoxCpmSpeechSettings
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "voxcpm">> & {
   apiKey?: string | null
+  voxcpm?: VoxCpmSpeechSettingsUpdate
 }
 
 export interface UiSettings {
@@ -228,8 +255,19 @@ function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Part
   }
 }
 
+const defaultVoxCpmSettings: VoxCpmSpeechSettings = {
+  sttSource: "local",
+  hasApiKey: false,
+  hasSttApiKey: false,
+}
+
+/**
+ * VoxCPM2 on the Mac Studio by default: no cloud key needed (matches the server's default).
+ * `ttsModel`/`ttsVoice` stay the generic OpenAI values here — the voxcpm provider overrides
+ * them in `normalizeSpeechSettings` via `voxcpmDefaults`.
+ */
 const defaultSpeechSettings: SpeechSettings = {
-  provider: "openai-compatible",
+  provider: "voxcpm",
   hasApiKey: false,
   baseUrl: undefined,
   sttModel: "gpt-4o-transcribe",
@@ -237,6 +275,26 @@ const defaultSpeechSettings: SpeechSettings = {
   ttsVoice: "marin",
   playbackMode: "streaming",
   ttsFormat: "mp3",
+  voxcpm: defaultVoxCpmSettings,
+}
+
+function normalizeVoxCpmSettings(input: unknown): VoxCpmSpeechSettings {
+  const v = (input && typeof input === "object" ? input : {}) as Record<string, unknown>
+  const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
+  const speed = typeof v.speed === "number" && v.speed >= 0.25 && v.speed <= 4 ? v.speed : undefined
+  const seed = typeof v.seed === "number" && Number.isInteger(v.seed) ? v.seed : undefined
+  return {
+    baseUrl: text(v.baseUrl),
+    style: text(v.style),
+    quality: text(v.quality),
+    speed,
+    instructions: text(v.instructions),
+    seed,
+    sttSource: v.sttSource === "whisper" || v.sttSource === "deepgram" ? v.sttSource : "local",
+    sttModel: text(v.sttModel),
+    hasApiKey: v.hasApiKey === true || Boolean(text(v.apiKey)),
+    hasSttApiKey: v.hasSttApiKey === true || Boolean(text(v.sttApiKey)),
+  }
 }
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
@@ -345,6 +403,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       sanitized.ttsFormat === "wav" || sanitized.ttsFormat === "opus" || sanitized.ttsFormat === "aac" || sanitized.ttsFormat === "mp3"
         ? sanitized.ttsFormat
         : defaultSpeechSettings.ttsFormat,
+    voxcpm: normalizeVoxCpmSettings(sanitized.voxcpm),
   }
 }
 function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
@@ -712,15 +771,32 @@ function updateLogLevel(level: ServerLogLevel): void {
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const apiKeyPatch = updates.apiKey
-  const { apiKey: _apiKey, ...restUpdates } = updates
+  const { apiKey: _apiKey, voxcpm: voxcpmUpdates, ...restUpdates } = updates
   const next = normalizeSpeechSettings({
     ...serverSettings().speech,
     ...restUpdates,
     ...(apiKeyPatch === null ? {} : { apiKey: apiKeyPatch }),
   })
-  const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
+  const { hasApiKey: _hasApiKey, voxcpm: currentVoxCpm, ...persistedSpeech } = next
+  // VoxCPM2: merge the update; secrets are sent only when set or cleared.
+  const { apiKey: voxKey, sttApiKey: voxSttKey, ...voxRest } = voxcpmUpdates ?? {}
+  const { hasApiKey: _vh, hasSttApiKey: _vs, ...voxPersisted } = normalizeVoxCpmSettings({ ...currentVoxCpm, ...voxRest })
+  const voxcpm: Record<string, unknown> = {
+    ...voxPersisted,
+    ...(voxKey !== undefined ? { apiKey: voxKey } : {}),
+    ...(voxSttKey !== undefined ? { sttApiKey: voxSttKey } : {}),
+  }
+  // A field emptied in the form is cleared on the server (merge patch: null deletes).
+  // Only for fields that are saved now; a null for an absent key would be stored as null.
+  for (const field of ["baseUrl", "style", "quality", "speed", "instructions", "seed", "sttModel"] as const) {
+    if (voxcpm[field] === undefined) {
+      delete voxcpm[field]
+      if (voxcpmUpdates && field in voxcpmUpdates && currentVoxCpm[field] !== undefined) voxcpm[field] = null
+    }
+  }
   const patch = {
     ...persistedSpeech,
+    voxcpm,
     ...(apiKeyPatch === null ? { apiKey: null } : {}),
   }
   try {
