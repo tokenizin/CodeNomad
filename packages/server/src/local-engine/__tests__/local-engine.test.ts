@@ -3,6 +3,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import {
+  extractPartialEventText,
   failureText,
   OUTDATED_AGENT_MESSAGE,
   parseCatalog,
@@ -44,6 +45,38 @@ describe("RustStreamTranslator", () => {
     expect(toOpencodeTool("Write", { file_path: "a", content: "x" }).input.filePath).toBe("a")
     expect(toOpencodeTool("nomad_validate", { x: 1 }).tool).toBe("nomad_validate")
     expect(toOpencodeTool("Task", { subagent_type: "ba", description: "spec" })).toEqual({ tool: "task", input: { subagent_type: "ba", description: "spec" } })
+  })
+
+  test("extracts partial delta text from an incomplete JSON line", () => {
+    expect(extractPartialEventText('{"type":"delta","text":"hello')).toEqual({ type: "delta", text: "hello" })
+    expect(extractPartialEventText('{"type":"delta","text":"hello world')).toEqual({ type: "delta", text: "hello world" })
+    expect(extractPartialEventText('{"type":"delta","text":"remaining tokens for output sh')).toEqual({ type: "delta", text: "remaining tokens for output sh" })
+  })
+
+  test("extracts partial final text from an incomplete JSON line", () => {
+    expect(extractPartialEventText('{"type":"final","text":"answer is')).toEqual({ type: "final", text: "answer is" })
+    expect(extractPartialEventText('{"type":"final","text":"done')).toEqual({ type: "final", text: "done" })
+  })
+
+  test("returns undefined for non-event or non-JSON tails", () => {
+    expect(extractPartialEventText('{"type":"tool","id":"c1"}')).toBeUndefined()
+    expect(extractPartialEventText("plain text")).toBeUndefined()
+    expect(extractPartialEventText("")).toBeUndefined()
+  })
+
+  test("handles escaped characters in partial event text", () => {
+    // Incomplete JSON: closing quote/brace is missing because the process exited mid-event.
+    // In TS string literals, '\\n' is a 2-char sequence (backslash + n), matching JSON's escaped newline.
+    expect(extractPartialEventText('{"type":"delta","text":"line1\\nline2')).toEqual({ type: "delta", text: "line1\nline2" })
+    expect(extractPartialEventText('{"type":"delta","text":"say \\"hi\\"')).toEqual({ type: "delta", text: 'say "hi"' })
+    expect(extractPartialEventText('{"type":"delta","text":"tab\\there')).toEqual({ type: "delta", text: "tab\there" })
+    // '\\u0041' in a TS string literal is the 6-char sequence \u0041, which the function decodes to 'A'.
+    expect(extractPartialEventText('{"type":"delta","text":"\\u0041\\u0042')).toEqual({ type: "delta", text: "AB" })
+  })
+
+  test("uses the last text marker when multiple events are present", () => {
+    expect(extractPartialEventText('{"type":"delta","text":"first"}{"type":"delta","text":"second')).toEqual({ type: "delta", text: "second" })
+    expect(extractPartialEventText('{"type":"final","text":"old"}{"type":"delta","text":"new')).toEqual({ type: "delta", text: "new" })
   })
 })
 

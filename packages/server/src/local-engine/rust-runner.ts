@@ -35,6 +35,24 @@ function ensureExecutable(runner: string) {
 
 // ---------------------------------------------------------------- events
 
+export function extractPartialEventText(tail: string): { type: "delta" | "final"; text: string } | undefined {
+  const trimmed = tail.trim()
+  if (!trimmed.includes('"type"')) return undefined
+  const isDelta = trimmed.includes('"delta"')
+  const isFinal = trimmed.includes('"final"')
+  if (!isDelta && !isFinal) return undefined
+  const marker = '"text":"'
+  const idx = trimmed.lastIndexOf(marker)
+  if (idx < 0) return undefined
+  let text = trimmed.slice(idx + marker.length)
+  text = text
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"')
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+  return { type: isDelta ? "delta" : "final", text }
+}
+
 /** Events CodeNomad's UI reads (one NDJSON line each). */
 export type EngineEvent =
   | { type: "meta"; engine: "rust"; model?: string; agent?: string | null; note?: string }
@@ -203,8 +221,16 @@ export function runRustAgent(
     const finish = (code: number, error?: string) => {
       if (settled) return
       settled = true
-      if (out.trim()) for (const event of translator.feed(out)) onEvent(event)
-      if (err.trim()) stderr.push(err.trim())
+      if (out.trim()) {
+        const events = translator.feed(out)
+        for (const event of events) onEvent(event)
+        const partial = extractPartialEventText(out)
+        if (partial) onEvent({ type: partial.type, text: partial.text, isError: false })
+      }
+      if (err.trim()) {
+        const partial = extractPartialEventText(err)
+        if (partial) onEvent({ type: partial.type, text: partial.text, isError: true })
+      }
       if (error) stderr.push(error)
       resolve({ code, translator, stderr })
     }
