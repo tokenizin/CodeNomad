@@ -52,7 +52,15 @@ export function isGoneResponse(httpStatus: number, message: string): boolean {
   return /not found|does not exist|deprecated|no longer|retired|decommission/.test(lower)
 }
 
-function classifyError(error: unknown): { status: ModelStatus; details: string } {
+/**
+ * Only definite answers about the model make it unselectable: "error" (not
+ * found, retired, batch-only, blocked, BYOK) and "insufficient_funds". A
+ * missing or rejected key, a timeout, a rate limit or a server/network error
+ * says nothing about the model, so those stay "unknown" with the reason in
+ * errorDetails. "error" hides a model from the picker and drops it from
+ * favourites, so a test run without keys must not produce it.
+ */
+export function classifyError(error: unknown): { status: ModelStatus; details: string } {
   const message = error instanceof Error ? error.message : String(error)
   const lower = message.toLowerCase()
   
@@ -77,7 +85,7 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     lower.includes("too many requests") ||
     lower.includes("throttle")
   ) {
-    return { status: "error", details: `Rate limited: ${message}` }
+    return { status: "unknown", details: `Rate limited: ${message}` }
   }
   
   // Exists, but only for batch jobs (OpenRouter ":batch" variants)
@@ -118,18 +126,23 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     lower.includes("403") ||
     lower.includes("invalid key") ||
     lower.includes("authentication") ||
-    lower.includes("api key")
+    lower.includes("api key") ||
+    // OpenRouter's 401 body when no key is sent
+    lower.includes("credentials") ||
+    // Anthropic's 401 body when no key is sent
+    lower.includes("header is required")
   ) {
-    return { status: "error", details: `Authentication error: ${message}` }
+    return { status: "unknown", details: `Authentication error: ${message}` }
   }
   
-  // Timeout
+  // Timeout (an AbortController abort surfaces as "The operation was aborted.")
   if (
     lower.includes("timeout") ||
     lower.includes("timed out") ||
-    lower.includes("ETIMEDOUT")
+    lower.includes("etimedout") ||
+    lower.includes("aborted")
   ) {
-    return { status: "error", details: `Timeout: ${message}` }
+    return { status: "unknown", details: `Timeout: ${message}` }
   }
   
   // Server errors
@@ -141,7 +154,7 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     lower.includes("server error") ||
     lower.includes("internal error")
   ) {
-    return { status: "error", details: `Server error: ${message}` }
+    return { status: "unknown", details: `Server error: ${message}` }
   }
   
   // Network errors
@@ -149,9 +162,10 @@ function classifyError(error: unknown): { status: ModelStatus; details: string }
     lower.includes("network") ||
     lower.includes("econnrefused") ||
     lower.includes("enotfound") ||
-    lower.includes("fetch failed")
+    lower.includes("fetch failed") ||
+    lower.includes("unable to connect")
   ) {
-    return { status: "error", details: `Network error: ${message}` }
+    return { status: "unknown", details: `Network error: ${message}` }
   }
   
   // Unknown error
@@ -530,6 +544,20 @@ export async function testModel(rawOptions: TestModelOptions): Promise<ModelTest
     apiKey: resolveApiKey(rawOptions.providerId, rawOptions.apiKey),
   }
   const { providerId } = options
+
+  // No key for a cloud provider: say so instead of sending a request that can only fail.
+  if (!options.apiKey && PROVIDER_KEY_ENV[providerId]) {
+    return {
+      providerId,
+      modelId: options.modelId,
+      status: "unknown",
+      latencyMs: 0,
+      errorDetails:
+        `No API key: set ${PROVIDER_KEY_ENV[providerId].join(" or ")}, ` +
+        `add provider.${providerId}.options.apiKey to opencode.json, or run \`opencode auth login\``,
+      testedAt: Date.now(),
+    }
+  }
   
   // Set testing status immediately
   const testingResult: ModelTestResult = {

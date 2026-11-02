@@ -6,7 +6,7 @@ import {
   type Component,
   createMemo,
 } from "solid-js"
-import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, XCircle, Info, Globe, Sparkles, Star } from "lucide-solid"
+import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, XCircle, Info, Globe, Sparkles, Star, KeyRound, Clock } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import type React from "react"
 
@@ -60,11 +60,21 @@ function rowsFromSyncResults(results: any[]): SyncedModelRow[] {
 
 const rowKey = (providerId: string, modelId: string) => `${providerId}/${modelId}`
 
+// "unknown" plus errorDetails means the model was tested but the result was
+// inconclusive. The server prefixes the details with the cause.
+function inconclusiveKind(errorDetails?: string): "key" | "timeout" | "other" | null {
+  if (!errorDetails) return null
+  if (/^(No API key|Authentication error)/.test(errorDetails)) return "key"
+  if (/^Timeout/.test(errorDetails)) return "timeout"
+  return "other"
+}
+
 export const ModelSyncSettingsSection: Component = () => {
   const { t } = useI18n()
   const [status, setStatus] = createSignal<ModelSyncStatus>("idle")
   const [lastSync, setLastSync] = createSignal<number | null>(null)
   const [error, setError] = createSignal<string | null>(null)
+  const [testSummary, setTestSummary] = createSignal<string | null>(null)
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
 
   const loadCached = async () => {
@@ -140,6 +150,7 @@ export const ModelSyncSettingsSection: Component = () => {
   const handleTestModels = async () => {
     setStatus("testing")
     setError(null)
+    setTestSummary(null)
     const snapshot = models()
     // Show every row as "testing" while the batch runs
     setModels(snapshot.map((m) => ({ ...m, status: "testing" })))
@@ -179,15 +190,26 @@ export const ModelSyncSettingsSection: Component = () => {
 
       setModels(updated)
 
-      const counts = { available: 0, insufficient_funds: 0, error: 0 }
+      // Count only the rows this run tested
+      const counts = { available: 0, noCredits: 0, error: 0, noKey: 0, notVerified: 0 }
       for (const m of updated) {
-        if (m.status in counts) counts[m.status as keyof typeof counts]++
+        const r = byKey.get(rowKey(m.providerId, m.modelId))
+        if (!r) continue
+        if (r.status === "available") counts.available++
+        else if (r.status === "insufficient_funds") counts.noCredits++
+        else if (r.status === "error") counts.error++
+        else if (inconclusiveKind(r.errorDetails) === "key") counts.noKey++
+        else counts.notVerified++
       }
-      console.info(
-        `[model-sync] tested ${byKey.size}/${snapshot.length}: ` +
-          `${counts.available} available, ${counts.insufficient_funds} insufficient funds, ${counts.error} errors, ` +
-          `${removedCount} removed (not found / retired)`,
-      )
+      const parts = [t("settings.section.modelSync.summary.available", { count: counts.available })]
+      if (counts.noKey) parts.push(t("settings.section.modelSync.summary.noKey", { count: counts.noKey }))
+      if (counts.noCredits) parts.push(t("settings.section.modelSync.summary.noCredits", { count: counts.noCredits }))
+      if (counts.error) parts.push(t("settings.section.modelSync.summary.error", { count: counts.error }))
+      if (counts.notVerified) parts.push(t("settings.section.modelSync.summary.notVerified", { count: counts.notVerified }))
+      setTestSummary(`${t("settings.section.modelSync.summary.tested", { count: byKey.size })} · ${parts.join(" · ")}`)
+
+      // Statuses are saved on the server now; let the model selector refresh
+      window.dispatchEvent(new CustomEvent("model-sync-complete"))
       if (removedCount > 0) {
         setError(`Removed ${removedCount} model(s) the provider no longer serves. Clear cache to bring them back.`)
       }
@@ -238,6 +260,19 @@ export const ModelSyncSettingsSection: Component = () => {
   // Status icon component - shows appropriate icon for each status, displays error details visibly
   function StatusIcon({ status, errorDetails }: { status?: string; errorDetails?: string }) {
     if (!status) return null
+
+    // Tested, but the result says nothing about the model (no key, timeout,
+    // unreachable). Still selectable, so grey; the icon says what to fix.
+    const kind = status === "unknown" ? inconclusiveKind(errorDetails) : null
+    if (kind) {
+      const Icon = kind === "key" ? KeyRound : kind === "timeout" ? Clock : Info
+      return (
+        <span class="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-gray-400 bg-gray-400/10" title={errorDetails}>
+          <Icon class="w-3 h-3" />
+          {kind === "key" ? "Needs key" : "Not verified"}
+        </span>
+      )
+    }
 
     const configs = {
       available: {
@@ -381,6 +416,12 @@ export const ModelSyncSettingsSection: Component = () => {
               {t("settings.section.modelSync.clearCacheButton")}
             </Button>
           </div>
+
+          {status() === "idle" && testSummary() && (
+            <div class="settings-sync-status">
+              <span>{testSummary()}</span>
+            </div>
+          )}
 
           {status() === "idle" && error() && (
             <div class="settings-sync-status">
