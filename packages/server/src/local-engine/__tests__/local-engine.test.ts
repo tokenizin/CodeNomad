@@ -164,3 +164,14 @@ describe("agent PATH", () => {
     expect(withToolPaths(result.join(":"), home).split(":").filter((p) => p.endsWith(".cargo/bin")).length).toBe(1)
   })
 })
+
+describe("RustStreamTranslator usage", () => {
+  test("forwards usage events and keeps the latest one", () => {
+    const t = new RustStreamTranslator()
+    const [first] = t.feed(JSON.stringify({ type: "usage", model: "qwen3:8b", input: 900, output: 40, reasoning: 0, cacheRead: 100 }))
+    expect(first).toEqual({ type: "usage", usage: { input: 900, output: 40, reasoning: 0, cacheRead: 100 }, model: "qwen3:8b" })
+    t.feed(JSON.stringify({ type: "usage", input: 1500, output: 60 }))
+    expect(t.usage).toEqual({ input: 1500, output: 60, reasoning: 0, cacheRead: 0 })
+    expect(t.feed(JSON.stringify({ type: "usage", input: 0, output: 0 }))).toEqual([])
+  })
+})

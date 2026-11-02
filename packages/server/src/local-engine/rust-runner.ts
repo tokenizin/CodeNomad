@@ -54,6 +54,10 @@ export function extractPartialEventText(tail: string): { type: "delta" | "final"
 }
 
 /** Events CodeNomad's UI reads (one NDJSON line each). */
+export type TokenUsage = { input: number; output: number; reasoning: number; cacheRead: number }
+
+const tokenCount = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0)
+
 export type EngineEvent =
   | { type: "meta"; engine: "rust"; model?: string; agent?: string | null; note?: string }
   | { type: "delta"; text: string }
@@ -61,6 +65,8 @@ export type EngineEvent =
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
   | { type: "stderr"; line: string }
   | { type: "final"; text: string; isError: boolean; model?: string }
+  /** Token usage of the latest model call (input excludes cached prompt tokens). */
+  | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "exit"; code: number; error?: string }
 
 /**
@@ -101,6 +107,8 @@ export class RustStreamTranslator {
   isError = false
   finalText = ""
   model: string | undefined
+  /** Usage of the latest model call; the context in use after it. */
+  usage: TokenUsage | undefined
 
   feed(line: string): EngineEvent[] {
     const trimmed = line.trim()
@@ -135,6 +143,18 @@ export class RustStreamTranslator {
             isError: ev.isError === true,
           },
         ]
+      }
+      case "usage": {
+        const usage: TokenUsage = {
+          input: tokenCount(ev.input),
+          output: tokenCount(ev.output),
+          reasoning: tokenCount(ev.reasoning),
+          cacheRead: tokenCount(ev.cacheRead),
+        }
+        if (usage.input + usage.output + usage.cacheRead === 0) return []
+        this.usage = usage
+        if (typeof ev.model === "string") this.model = ev.model
+        return [{ type: "usage", usage, model: this.model }]
       }
       case "final":
         this.sawFinal = true

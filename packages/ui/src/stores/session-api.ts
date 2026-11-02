@@ -48,7 +48,7 @@ import {
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { fetchLocalLlmProvider, mergeLocalLlmProviders } from "../lib/local-llm-providers"
 import { normalizeMessagePart } from "./message-v2/normalizers"
-import { updateSessionInfo } from "./message-v2/session-info"
+import { updateSessionInfo, updateSessionInfoForInstance } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
@@ -302,6 +302,8 @@ async function fetchRustCatalogFor(instanceId: string, options?: { fresh?: boole
       next.set(instanceId, [catalogProvider(catalog)] as any)
       return next
     })
+    // Context sizes just arrived: sessions computed before this showed "Avail --".
+    updateSessionInfoForInstance(instanceId)
     setCommands(instanceId, catalogCommands(catalog) as any)
     rustCatalogFailures.delete(instanceId)
     return catalog
@@ -1037,6 +1039,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
       next.set(instanceId, mergedProviders)
       return next
     })
+    updateSessionInfoForInstance(instanceId)
     completeInstanceResourceFetch(instanceId, "providers")
   } catch (error) {
     log.error("Failed to fetch providers:", error)

@@ -54,6 +54,19 @@ export type RustCatalog = {
 }
 
 /** Server-side settings, stored in the server config under `localEngine`. */
+/** Token usage of the latest model call, as the server reports it. */
+export type LocalEngineUsage = { input: number; output: number; reasoning: number; cacheRead: number }
+
+/** OpenCode-shaped `tokens` for a message info, so the context meter reads it. */
+export function usageToTokens(usage: LocalEngineUsage) {
+  return {
+    input: usage.input,
+    output: usage.output,
+    reasoning: usage.reasoning,
+    cache: { read: usage.cacheRead, write: 0 },
+  }
+}
+
 export type LocalEngineServerSettings = {
   playgroundRoot?: string
   opencodeConfig?: string
@@ -103,6 +116,7 @@ export type LocalHistoryMessage = {
   isError?: boolean
   attachments?: Array<{ filename: string; mime?: string; path?: string }>
   parts?: HistoryPart[]
+  usage?: LocalEngineUsage
 }
 
 /** A session kept by CodeNomad (no OpenCode). */
@@ -170,6 +184,7 @@ export function historyToApiMessages(sessionId: string, history: LocalHistoryMes
         time: { created: message.createdAt, completed: message.createdAt },
         ...(message.agent ? { agent: message.agent, mode: message.agent } : {}),
         ...(message.model ? { providerID: RUST_PROVIDER_ID, modelID: message.model } : {}),
+        ...(message.role === "assistant" && message.usage ? { tokens: usageToTokens(message.usage), cost: 0 } : {}),
         ...(message.isError ? { error: { name: "LocalEngineError", data: { message: message.text } } } : {}),
       },
       parts: parts.map((part, index) => toOpencodePart(sessionId, message.id, part, index)),
@@ -250,6 +265,8 @@ export class LocalEngineReply {
   sawExit = false
   isError = false
   model: string | undefined
+  /** Usage of the latest model call (updated on every step of the run). */
+  usage: LocalEngineUsage | undefined
   readonly events: LocalEngineEvent[] = []
   readonly stderrLines: string[] = []
   readonly notes: string[] = []
@@ -303,6 +320,18 @@ export class LocalEngineReply {
       case "bridge_stderr":
         if (typeof ev.line === "string") this.stderrLines.push(ev.line)
         return false
+      case "usage": {
+        const usage = ev.usage as Partial<LocalEngineUsage> | undefined
+        if (!usage || typeof usage.input !== "number") return false
+        this.usage = {
+          input: usage.input,
+          output: usage.output ?? 0,
+          reasoning: usage.reasoning ?? 0,
+          cacheRead: usage.cacheRead ?? 0,
+        }
+        if (typeof ev.model === "string") this.model = ev.model
+        return false
+      }
       case "final":
         if (typeof ev.text === "string") this.finalText = ev.text
         if (ev.isError === true) this.isError = true
@@ -345,7 +374,7 @@ export class LocalEngineReply {
       parts.unshift({ type: "text", text: note })
       text = `${note}\n\n${text}`
     }
-    return { text, parts, exitCode: this.exitCode, isError: failed, model: this.model, events: this.events, stderrLines: this.stderrLines }
+    return { text, parts, exitCode: this.exitCode, isError: failed, model: this.model, usage: this.usage, events: this.events, stderrLines: this.stderrLines }
   }
 }
 
@@ -372,6 +401,7 @@ export type LocalEngineRunResult = {
   exitCode: number
   isError: boolean
   model?: string
+  usage?: LocalEngineUsage
   events: LocalEngineEvent[]
   stderrLines: string[]
 }

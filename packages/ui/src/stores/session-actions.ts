@@ -31,6 +31,8 @@ import {
   isUnauthorizedError,
   readLocalEngineStream,
   type LocalEngineAttachment,
+  type LocalEngineUsage,
+  usageToTokens,
 } from "../lib/local-engine"
 
 const log = getLogger("actions")
@@ -176,6 +178,22 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       isEphemeral: true,
     })
   }
+  // Token usage of the latest model call, recorded on the assistant message the
+  // way OpenCode does, so the context meter (Used / Avail) follows the run.
+  const recordUsage = (usage: LocalEngineUsage | undefined, usedModel: string | undefined) => {
+    if (!usage) return
+    store.setMessageInfo(assistantId, {
+      id: assistantId,
+      sessionID: sessionId,
+      role: "assistant",
+      providerID: RUST_PROVIDER_ID,
+      modelID: usedModel || model || session.model.modelId,
+      tokens: usageToTokens(usage),
+      cost: 0,
+      time: { created: userMessage.createdAt },
+    } as any)
+    updateSessionInfo(instanceId, sessionId)
+  }
   const textOnly = (text: string): HistoryPart[] => [{ type: "text", text }]
   // OpenCode would echo the prompt back as real parts; the local engine doesn't,
   // so the optimistic (synthetic, partly hidden) parts become the real ones.
@@ -231,7 +249,8 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     )
     // The server has the message now; it's saved even if this page goes away.
     upsertUser("complete")
-    const result = await readLocalEngineStream(response, (_ev, reply, changed) => {
+    const result = await readLocalEngineStream(response, (ev, reply, changed) => {
+      if (ev.type === "usage") recordUsage(reply.usage, reply.model)
       if (!changed) return
       // Copy: the reply keeps mutating its parts as events arrive.
       lastParts = reply.parts.map((p) => ({ ...p }))
@@ -241,6 +260,7 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     if (flushTimer) clearTimeout(flushTimer)
     upsertUser("complete")
     upsertAssistant(result.parts, result.isError ? "error" : "complete")
+    recordUsage(result.usage, result.model)
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
     if (controller.signal.aborted) {

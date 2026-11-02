@@ -15,6 +15,19 @@ function resolveSelectedModel(instanceProviders: Provider[], providerId?: string
   return provider?.models.find((m) => m.id === modelId)
 }
 
+/**
+ * The model a session runs with when it names none. Claude Code (Rust)
+ * sessions created before the catalog loaded have no model; the agent then
+ * runs its endpoint's default, which is the provider's defaultModelId.
+ */
+function resolveDefaultModel(instanceProviders: Provider[], providerId?: string) {
+  const provider =
+    (providerId ? instanceProviders.find((p) => p.id === providerId) : undefined) ??
+    (instanceProviders.length === 1 ? instanceProviders[0] : undefined)
+  if (!provider?.defaultModelId) return undefined
+  return provider.models.find((m) => m.id === provider.defaultModelId)
+}
+
 export function updateSessionInfo(instanceId: string, sessionId: string): void {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
@@ -60,7 +73,8 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
 
   const selectedModel =
     resolveSelectedModel(instanceProviders, sessionProviderId, sessionModelId) ??
-    resolveSelectedModel(instanceProviders, latestProviderId, latestModelId)
+    resolveSelectedModel(instanceProviders, latestProviderId, latestModelId) ??
+    (sessionModelId ? undefined : resolveDefaultModel(instanceProviders, sessionProviderId))
 
   let modelOutputLimit = DEFAULT_MODEL_OUTPUT_LIMIT
   let modelInputLimit: number | null = null
@@ -142,4 +156,11 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
   })
 
   updateThreadTotalsForSession(instanceId, sessionId)
+}
+
+/** Recompute Used / Avail for every session of an instance (e.g. after its model list loaded). */
+export function updateSessionInfoForInstance(instanceId: string): void {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return
+  for (const sessionId of instanceSessions.keys()) updateSessionInfo(instanceId, sessionId)
 }

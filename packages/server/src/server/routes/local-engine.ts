@@ -468,6 +468,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     let code = 1
     let isError = true
     let usedModel = model
+    let usage: HistoryMessage["usage"]
     let fallbackError: string | undefined
     try {
       const result = await runRustAgent(
@@ -477,6 +478,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
       )
       code = result.code
       usedModel = result.translator.model ?? model
+      usage = result.translator.usage
       isError = result.translator.isError || code !== 0
       if (!result.translator.sawFinal) {
         fallbackError = failureText(code, result.stderr)
@@ -522,6 +524,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
             engine: "claude-code-rust",
             ...(agent ? { agent } : {}),
             ...(usedModel ? { model: usedModel } : {}),
+            ...(usage ? { usage } : {}),
             ...(isError && !stopped ? { isError: true } : {}),
           },
         ]

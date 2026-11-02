@@ -41,6 +41,8 @@ export type HistoryMessage = {
   attachments?: HistoryAttachment[]
   /** Assistant replies: text and tool-call parts in order, for display. */
   parts?: ReplyPart[]
+  /** Assistant replies: token usage of the last model call (context in use). */
+  usage?: { input: number; output: number; reasoning: number; cacheRead: number }
 }
 
 const KEY = /^[A-Za-z0-9_.:-]{1,200}$/

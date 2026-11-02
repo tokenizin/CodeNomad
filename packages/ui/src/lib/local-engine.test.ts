@@ -155,3 +155,18 @@ test("isUnauthorizedError", () => {
   assert.equal(isUnauthorizedError(new Error("Request failed with 401")), true)
   assert.equal(isUnauthorizedError(new Error("cwd is not a directory")), false)
 })
+
+test("usage events reach the reply and saved history (context meter)", () => {
+  const reply = new LocalEngineReply()
+  reply.apply({ type: "usage", usage: { input: 900, output: 40, reasoning: 0, cacheRead: 100 }, model: "qwen3:8b" })
+  reply.apply({ type: "usage", usage: { input: 1500, output: 60, reasoning: 5, cacheRead: 0 } })
+  assert.deepEqual(reply.result().usage, { input: 1500, output: 60, reasoning: 5, cacheRead: 0 })
+  assert.equal(reply.model, "qwen3:8b")
+
+  const [, assistant] = historyToApiMessages("ses_lcl_1", [
+    { id: "u", role: "user", text: "hi", createdAt: 1 },
+    { id: "a", role: "assistant", text: "ok", createdAt: 2, model: "qwen3:8b", usage: { input: 1500, output: 60, reasoning: 5, cacheRead: 0 } },
+  ])
+  assert.deepEqual(assistant.info.tokens, { input: 1500, output: 60, reasoning: 5, cache: { read: 0, write: 0 } })
+  assert.equal(assistant.info.modelID, "qwen3:8b")
+})
