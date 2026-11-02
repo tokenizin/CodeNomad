@@ -972,8 +972,10 @@ async function fetchAgents(instanceId: string): Promise<void> {
 
 async function fetchProviders(instanceId: string): Promise<void> {
   if (localEngineEnabled()) {
-    // fetchAgents loads the same catalog; reuse it when it's already here.
-    if (!rustCatalogs.has(instanceId)) await loadRustCatalog(instanceId)
+    // fetchAgents loads the same catalog. A second call (e.g. after a model
+    // sync) reloads it so new context / capability data reaches the picker;
+    // the server keeps the agent's own catalog cached, so this is cheap.
+    await loadRustCatalog(instanceId)
     return
   }
   const instance = instances().get(instanceId)

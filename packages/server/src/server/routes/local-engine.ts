@@ -38,6 +38,9 @@ import path from "path"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { SettingsService } from "../../settings/service.js"
+import { enrichRustCatalog } from "../../local-engine/catalog-enrich.js"
+import { getCachedSyncResults } from "../../model-sync/service.js"
+import { fetchOllamaModels } from "../../model-sync/providers/ollama.js"
 import type { WorkspaceManager } from "../../workspaces/manager.js"
 import { ReplyParts } from "../../local-engine/reply-parts.js"
 import {
@@ -546,7 +549,9 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const { playgroundRoot, runner, opencodeConfig } = engineSetup()
     if (!playgroundRoot || !runner) return bad(reply, "Claude Code (Rust) not found. Set Engine setup → Playground root.", AGENT_FAILED)
     try {
-      return await fetchRustCatalog(runner, cwd, agentEnv(playgroundRoot, opencodeConfig), { fresh: query.fresh === "1" })
+      const catalog = await fetchRustCatalog(runner, cwd, agentEnv(playgroundRoot, opencodeConfig), { fresh: query.fresh === "1" })
+      // The agent only lists ids; add context, cost and capabilities for the model picker.
+      return await enrichRustCatalog(catalog, { syncResults: getCachedSyncResults, fetchOllamaModels })
     } catch (error) {
       return bad(reply, error instanceof Error ? error.message : String(error), AGENT_FAILED)
     }

@@ -86,10 +86,36 @@ describe("catalog → pickers", () => {
     const provider = catalogProvider(catalog)
     assert.equal(provider.defaultModelId, "gemma4:31b-cloud")
     assert.deepEqual(provider.models.map((m) => m.id), ["gemma4:31b-cloud", "qwen3:8b"])
+    assert.equal(provider.models[0].capabilities, undefined)
     const commands = catalogCommands(catalog)
     assert.equal(commands[1].description, "Echo")
     assert.ok(commands[0].description.includes("pma"))
   })
+})
+
+test("catalog model details reach the picker (icons, Ctx, Free filter)", () => {
+  const capabilities = { tools: true, image: true, video: false, reasoning: true, audio: false, cloud: false }
+  const provider = catalogProvider({
+    version: 1,
+    model: "qwen3.6:latest",
+    models: [
+      { id: "qwen3:8b" },
+      {
+        id: "qwen3.6:latest",
+        limit: { context: 262144, input: 262144, output: 262144 },
+        cost: { input: 0, output: 0 },
+        capabilities,
+        status: "available",
+      },
+    ],
+    agents: [],
+    commands: [],
+  })
+  assert.deepEqual(provider.models.map((m) => m.id), ["qwen3.6:latest", "qwen3:8b"])
+  assert.deepEqual(provider.models[0].capabilities, capabilities)
+  assert.equal(provider.models[0].limit?.context, 262144)
+  assert.deepEqual(provider.models[0].cost, { input: 0, output: 0 })
+  assert.equal(provider.models[0].status, "available")
 })
 
 test("buildLocalEnginePrompt puts paths in the prompt and uploads pasted data", () => {

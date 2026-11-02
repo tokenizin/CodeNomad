@@ -5,6 +5,8 @@
  * app or CLI.
  */
 
+import type { ModelCapabilities, ModelStatus } from "../types/session"
+
 /** Provider id for the agent's models in the model picker. */
 export const RUST_PROVIDER_ID = "claude-code-rust"
 export const RUST_PROVIDER_NAME = "Claude Code (Rust)"
@@ -26,12 +28,26 @@ export type LocalEngineStatus = {
   activeRuns?: number
 }
 
+export type RustCatalogModel = {
+  id: string
+  name?: string
+  limit?: { context: number; input?: number; output: number }
+  cost?: { input: number; output: number }
+  capabilities?: ModelCapabilities
+  status?: ModelStatus
+  lastTested?: number
+  errorDetails?: string
+  /** The model-sync provider the details came from, e.g. "ollama". */
+  detailsFrom?: string
+}
+
 /** What the agent reports with --catalog. */
 export type RustCatalog = {
   version: number
   model: string
   baseUrl?: string
-  models: Array<{ id: string; name?: string }>
+  /** The server adds limit, cost and capabilities from model sync / Ollama when it knows them. */
+  models: Array<RustCatalogModel>
   modelsError?: string | null
   agents: Array<{ name: string; description?: string; model?: string | null }>
   commands: Array<{ name: string; description?: string; agent?: boolean }>
@@ -187,7 +203,11 @@ export function catalogAgents(catalog: RustCatalog) {
 /** The agent's endpoint as one provider in the model picker. */
 export function catalogProvider(catalog: RustCatalog) {
   const seen = new Set<string>()
-  const models = [{ id: catalog.model }, ...catalog.models].filter((m) => m.id && !seen.has(m.id) && seen.add(m.id))
+  const models: RustCatalogModel[] = [...catalog.models, { id: catalog.model }].filter(
+    (m) => m.id && !seen.has(m.id) && seen.add(m.id),
+  )
+  // Keep the default model first, as before.
+  models.sort((a, b) => Number(b.id === catalog.model) - Number(a.id === catalog.model))
   return {
     id: RUST_PROVIDER_ID,
     name: RUST_PROVIDER_NAME,
@@ -196,8 +216,12 @@ export function catalogProvider(catalog: RustCatalog) {
       id: model.id,
       name: model.name || model.id,
       providerId: RUST_PROVIDER_ID,
-      limit: undefined,
-      cost: undefined,
+      limit: model.limit,
+      cost: model.cost,
+      capabilities: model.capabilities,
+      status: model.status,
+      lastTested: model.lastTested,
+      errorDetails: model.errorDetails,
       variantKeys: [] as string[],
     })),
   }
