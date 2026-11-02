@@ -13,6 +13,7 @@ import {
   isLocalSessionId,
   isUnauthorizedError,
   LocalEngineReply,
+  usesRecentModels,
 } from "./local-engine.ts"
 
 describe("LocalEngineReply", () => {
@@ -169,4 +170,10 @@ test("usage events reach the reply and saved history (context meter)", () => {
   ])
   assert.deepEqual(assistant.info.tokens, { input: 1500, output: 60, reasoning: 5, cache: { read: 0, write: 0 } })
   assert.equal(assistant.info.modelID, "qwen3:8b")
+})
+
+test("Claude Code (Rust) agents don't inherit the last-clicked model", () => {
+  assert.equal(usesRecentModels([{ id: "claude-code-rust" }]), false)
+  assert.equal(usesRecentModels([{ id: "openrouter" }, { id: "ollama" }]), true)
+  assert.equal(usesRecentModels([]), true)
 })

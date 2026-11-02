@@ -10,6 +10,15 @@ import type { ModelCapabilities, ModelStatus } from "../types/session"
 /** Provider id for the agent's models in the model picker. */
 export const RUST_PROVIDER_ID = "claude-code-rust"
 export const RUST_PROVIDER_NAME = "Claude Code (Rust)"
+/**
+ * Whether a new default model may come from the recent-models list. Not for
+ * Claude Code (Rust): its agents run their own pinned model or the engine's
+ * default, and recents are just the last model clicked anywhere.
+ */
+export function usesRecentModels(instanceProviders: Array<{ id: string }>): boolean {
+  return !instanceProviders.some((provider) => provider.id === RUST_PROVIDER_ID)
+}
+
 /** Agent entry meaning "no --agent": the full agent with all tools and skills. */
 export const RUST_DEFAULT_AGENT = "claude-code"
 

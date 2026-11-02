@@ -1,5 +1,6 @@
 import { agents, providers } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
+import { usesRecentModels } from "../lib/local-engine"
 
 export const LOCAL_LLM_PROVIDER_ID = "ollama"
 export const DEFAULT_LOCAL_LLM_MODEL = "hermes3:latest"
@@ -54,7 +55,11 @@ async function getDefaultModel(
     }
   }
 
-  const recent = getRecentModelPreferenceForInstance(instanceId)
+  // Claude Code (Rust) agents run their own pinned model, else the engine's
+  // default (the provider's defaultModelId). The recent-models list is not a
+  // pin: it is whatever was last clicked anywhere (e.g. a 1B test model), and
+  // whatever model the session holds is sent as --model, overriding the agent.
+  const recent = usesRecentModels(instanceProviders) ? getRecentModelPreferenceForInstance(instanceId) : undefined
   if (recent) {
     return recent
   }
