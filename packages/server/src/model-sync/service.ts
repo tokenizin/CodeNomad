@@ -12,7 +12,8 @@ import { getMLXModels, transformMLXModels } from "./providers/mlx"
 import { getMLXDeepSeekModels, transformMLXDeepSeekModels } from "./providers/mlx-deepseek"
 import { fetchOllamaModels } from "./providers/ollama"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
 
 export interface SyncedModel {
@@ -121,13 +122,16 @@ loadSyncCacheFromFile()
  * Find opencode.json by searching upward from process.cwd() and from the
  * compiled server directory. Returns the first match or null.
  */
+// ESM module: __dirname doesn't exist here
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
+
 function findOpencodeJson(): string | null {
   const searchDirs = [
     process.cwd(),
     join(homedir(), "starworld"),
     // From compiled JS: dist/model-sync/service.js → go up 5 levels to starworld root
-    join(__dirname, "..", "..", "..", "..", ".."),
-    join(__dirname, "..", "..", "..", "..", "..", ".."),
+    join(MODULE_DIR, "..", "..", "..", "..", ".."),
+    join(MODULE_DIR, "..", "..", "..", "..", "..", ".."),
   ]
   for (const dir of searchDirs) {
     const candidate = join(dir, "opencode.json")

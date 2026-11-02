@@ -144,21 +144,53 @@ export function extractOllamaMaxOutput(parameters: string | undefined | null): n
 interface OllamaShowResponse {
   model_info?: Record<string, unknown>
   parameters?: string
+  capabilities?: unknown
+  remote_host?: string
+  remote_model?: string
+}
+
+export interface OllamaModelDetails extends OllamaModelLimits {
+  /**
+   * Official capability tags from `/api/show` (e.g. "completion", "tools",
+   * "vision", "thinking", "embedding", "audio"). null when Ollama did not
+   * report them (older Ollama, or the call failed).
+   */
+  capabilities: string[] | null
+  /** True for Ollama cloud models (served from a remote host, e.g. `glm-5.2:cloud`). */
+  remote: boolean
+}
+
+/** Read the `capabilities` array from `/api/show`. Returns null when absent. */
+export function extractOllamaCapabilities(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null
+  const tags = raw.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.toLowerCase())
+  return tags.length > 0 ? tags : null
 }
 
 /**
- * Resolve the official context window and max output for one Ollama model via
- * `POST /api/show`. Falls back to the Ollama maximum (256K) for both when the
- * model does not advertise them or `/api/show` is unreachable.
+ * Max output can never exceed the context window. The 256K fallback is
+ * clamped so a 512-token embedding model doesn't report a 256K output.
  */
-export async function getOllamaModelLimits(
+function clampOutput(output: number, context: number): number {
+  return Math.min(output, context)
+}
+
+/**
+ * Resolve the official context window, max output, capabilities and cloud
+ * flag for one Ollama model via `POST /api/show`. Context and output fall back
+ * to the Ollama maximum (256K) when the model doesn't advertise them or
+ * `/api/show` is unreachable; output is always clamped to the context window.
+ */
+export async function getOllamaModelDetails(
   modelId: string,
   baseUrl?: string,
-): Promise<OllamaModelLimits> {
+): Promise<OllamaModelDetails> {
   const host = normalizeHost(baseUrl)
-  const fallback: OllamaModelLimits = {
+  const fallback: OllamaModelDetails = {
     context: DEFAULT_OLLAMA_CONTEXT_LIMIT,
     output: DEFAULT_OLLAMA_CONTEXT_LIMIT,
+    capabilities: null,
+    remote: isOllamaCloudModelId(modelId),
   }
 
   try {
@@ -166,16 +198,38 @@ export async function getOllamaModelLimits(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: modelId }),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(10_000),
     })
 
     if (!response.ok) return fallback
 
     const payload = (await response.json()) as OllamaShowResponse
     const context = extractOllamaContextLength(payload.model_info) ?? DEFAULT_OLLAMA_CONTEXT_LIMIT
-    const output = extractOllamaMaxOutput(payload.parameters) ?? DEFAULT_OLLAMA_CONTEXT_LIMIT
-    return { context, output }
+    const output = clampOutput(
+      extractOllamaMaxOutput(payload.parameters) ?? DEFAULT_OLLAMA_CONTEXT_LIMIT,
+      context,
+    )
+    return {
+      context,
+      output,
+      capabilities: extractOllamaCapabilities(payload.capabilities),
+      remote: Boolean(payload.remote_host) || isOllamaCloudModelId(modelId),
+    }
   } catch {
     return fallback
   }
+}
+
+/** Ollama cloud models are tagged `:cloud` or `-cloud` (e.g. `glm-5.2:cloud`). */
+export function isOllamaCloudModelId(modelId: string): boolean {
+  return /[:-]cloud$/i.test(modelId)
+}
+
+/** Context window and max output only. See `getOllamaModelDetails`. */
+export async function getOllamaModelLimits(
+  modelId: string,
+  baseUrl?: string,
+): Promise<OllamaModelLimits> {
+  const { context, output } = await getOllamaModelDetails(modelId, baseUrl)
+  return { context, output }
 }

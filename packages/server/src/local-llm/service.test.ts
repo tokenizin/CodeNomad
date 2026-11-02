@@ -5,6 +5,8 @@ import {
   DEFAULT_OLLAMA_CONTEXT_LIMIT,
   extractOllamaContextLength,
   extractOllamaMaxOutput,
+  extractOllamaCapabilities,
+  getOllamaModelDetails,
   getOllamaModelLimits,
   listLocalLlmModels,
 } from "./service"
@@ -55,5 +57,22 @@ describe("getOllamaModelLimits", () => {
     const limits = await getOllamaModelLimits("qwen3.6:latest", "http://127.0.0.1:1")
     assert.equal(limits.context, DEFAULT_OLLAMA_CONTEXT_LIMIT)
     assert.equal(limits.output, DEFAULT_OLLAMA_CONTEXT_LIMIT)
+  })
+})
+
+describe("getOllamaModelDetails", () => {
+  it("falls back to 256K, no capabilities, and detects cloud ids when unreachable", async () => {
+    const details = await getOllamaModelDetails("glm-5.2:cloud", "http://127.0.0.1:1")
+    assert.equal(details.context, DEFAULT_OLLAMA_CONTEXT_LIMIT)
+    assert.equal(details.capabilities, null)
+    assert.equal(details.remote, true)
+  })
+})
+
+describe("extractOllamaCapabilities", () => {
+  it("reads the capabilities array", () => {
+    assert.deepEqual(extractOllamaCapabilities(["completion", "Tools"]), ["completion", "tools"])
+    assert.equal(extractOllamaCapabilities(undefined), null)
+    assert.equal(extractOllamaCapabilities([]), null)
   })
 })
