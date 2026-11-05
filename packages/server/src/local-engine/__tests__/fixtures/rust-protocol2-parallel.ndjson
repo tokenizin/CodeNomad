@@ -1,0 +1,18 @@
+{"type":"meta","model":"m","agent":null,"baseUrl":"http://127.0.0.1:1/v1","protocol":2}
+{"id":"call_1","input":{"description":"job 1","prompt":"do-sub-1","subagent_type":"worker"},"name":"Task","type":"tool"}
+{"id":"call_2","input":{"description":"job 2","prompt":"do-sub-2","subagent_type":"worker"},"name":"Task","type":"tool"}
+{"id":"call_3","input":{"description":"job 3","prompt":"do-sub-3","subagent_type":"worker"},"name":"Task","type":"tool"}
+{"agent":"worker","description":"job 1","mode":"subagent","model":"m","parent_call_id":"call_1","resumed":false,"task_id":"task_18e510e898f954424ef","type":"task.start"}
+{"agent":"worker","description":"job 2","mode":"subagent","model":"m","parent_call_id":"call_2","resumed":false,"task_id":"task_18e510e89915a3314ef","type":"task.start"}
+{"agent":"worker","description":"job 3","mode":"subagent","model":"m","parent_call_id":"call_3","resumed":false,"task_id":"task_18e510e89932023d4ef","type":"task.start"}
+{"parent_call_id":"call_2","task_id":"task_18e510e89915a3314ef","text":"answer-2","type":"delta"}
+{"parent_call_id":"call_2","status":"completed","summary":"answer-2","task_id":"task_18e510e89915a3314ef","type":"task.end"}
+{"id":"call_2","isError":false,"name":"Task","output":"task_id: task_18e510e89915a3314ef (for resuming to continue this task if needed)\n\n<task_result>\nanswer-2\n</task_result>","type":"tool_result"}
+{"parent_call_id":"call_3","task_id":"task_18e510e89932023d4ef","text":"answer-3","type":"delta"}
+{"parent_call_id":"call_3","status":"completed","summary":"answer-3","task_id":"task_18e510e89932023d4ef","type":"task.end"}
+{"id":"call_3","isError":false,"name":"Task","output":"task_id: task_18e510e89932023d4ef (for resuming to continue this task if needed)\n\n<task_result>\nanswer-3\n</task_result>","type":"tool_result"}
+{"parent_call_id":"call_1","task_id":"task_18e510e898f954424ef","text":"answer-1","type":"delta"}
+{"parent_call_id":"call_1","status":"completed","summary":"answer-1","task_id":"task_18e510e898f954424ef","type":"task.end"}
+{"id":"call_1","isError":false,"name":"Task","output":"task_id: task_18e510e898f954424ef (for resuming to continue this task if needed)\n\n<task_result>\nanswer-1\n</task_result>","type":"tool_result"}
+{"text":"ALL DONE","type":"delta"}
+{"type":"final","text":"ALL DONE","model":"m"}

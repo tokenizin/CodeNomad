@@ -14,6 +14,7 @@ import {
   isUnauthorizedError,
   LocalEngineReply,
   usesRecentModels,
+  type LocalEngineEvent,
 } from "./local-engine.ts"
 
 describe("LocalEngineReply", () => {
@@ -176,4 +177,37 @@ test("Claude Code (Rust) agents don't inherit the last-clicked model", () => {
   assert.equal(usesRecentModels([{ id: "claude-code-rust" }]), false)
   assert.equal(usesRecentModels([{ id: "openrouter" }, { id: "ollama" }]), true)
   assert.equal(usesRecentModels([]), true)
+})
+
+describe("protocol 2 task events (an UI that predates them)", () => {
+  test("a delegated task's envelopes leave the reply exactly as the parent wrote it", () => {
+    const plain = new LocalEngineReply()
+    const withTasks = new LocalEngineReply()
+    const parentEvents: LocalEngineEvent[] = [
+      { type: "meta", model: "m" },
+      { type: "tool", id: "c1", name: "task", input: { subagent_type: "ba", prompt: "p" } },
+      { type: "tool_result", id: "c1", name: "task", output: "done", isError: false },
+      { type: "delta", text: "ALL DONE" },
+      { type: "final", text: "ALL DONE" },
+    ]
+    const taskEvents: LocalEngineEvent[] = [
+      { type: "task_start", taskId: "task_a", parentCallId: "c1", agent: "ba", description: "d", mode: "subagent", resumed: false },
+      { type: "task_event", taskId: "task_a", parentCallId: "c1", event: { type: "delta", text: "SUBAGENT TEXT" } },
+      { type: "task_event", taskId: "task_a", parentCallId: "c1", event: { type: "tool", id: "x", name: "bash", input: {} } },
+      { type: "task_end", taskId: "task_a", parentCallId: "c1", status: "completed" },
+    ]
+    for (const ev of parentEvents) plain.apply(ev)
+    // Task envelopes interleaved in the middle of the run, as they arrive live.
+    withTasks.apply(parentEvents[0])
+    withTasks.apply(parentEvents[1])
+    for (const ev of taskEvents) assert.equal(withTasks.apply(ev), false, `${ev.type} must not change the reply`)
+    for (const ev of parentEvents.slice(2)) withTasks.apply(ev)
+
+    assert.equal(withTasks.text, "ALL DONE")
+    assert.ok(!withTasks.result().text.includes("SUBAGENT TEXT"))
+    assert.deepEqual(
+      withTasks.result().parts.map((p) => ({ ...p, startedAt: 0, endedAt: 0 })),
+      plain.result().parts.map((p) => ({ ...p, startedAt: 0, endedAt: 0 })),
+    )
+  })
 })

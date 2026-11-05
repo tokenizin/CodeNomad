@@ -9,6 +9,12 @@
  *   --model <id> --agent <name> --image <path>… --history <file>
  *
  * stream-json events: meta | delta | tool | tool_result | final | error.
+ *
+ * Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): events of a delegated task
+ * arrive stamped with `task_id` (+ `parent_call_id`, `parent_task_id`), plus
+ * `task.start` / `task.end`. They are never forwarded as plain events — a subagent's
+ * text must not land in the parent's reply — but as `task_start` / `task_event` /
+ * `task_end` envelopes, which a reader that doesn't know them ignores.
  */
 
 import { spawn, type ChildProcess } from "child_process"
@@ -53,21 +59,37 @@ export function extractPartialEventText(tail: string): { type: "delta" | "final"
   return { type: isDelta ? "delta" : "final", text }
 }
 
-/** Events CodeNomad's UI reads (one NDJSON line each). */
+/** Token counts of one model call. */
 export type TokenUsage = { input: number; output: number; reasoning: number; cacheRead: number }
 
 const tokenCount = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0)
 
-export type EngineEvent =
-  | { type: "meta"; engine: "rust"; model?: string; agent?: string | null; note?: string }
+/** The events a delegated task shares with the top-level run. */
+export type PlainEvent =
   | { type: "delta"; text: string }
   | { type: "tool"; id: string; name: string; input: Record<string, unknown>; summary?: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
+
+export type TaskStatus = "completed" | "failed" | "aborted"
+
+/** Where a delegated task hangs: the parent's Task card, and the task that delegated it (if any). */
+export type TaskRef = { taskId: string; parentCallId: string; parentTaskId?: string }
+
+/** Events CodeNomad's UI reads (one NDJSON line each). */
+export type EngineEvent =
+  | { type: "meta"; engine: "rust"; model?: string; agent?: string | null; note?: string; protocol?: number }
+  | PlainEvent
   | { type: "stderr"; line: string }
   | { type: "final"; text: string; isError: boolean; model?: string }
   /** Token usage of the latest model call (input excludes cached prompt tokens). */
   | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "exit"; code: number; error?: string }
+  // Protocol 2 — delegated tasks.
+  | ({ type: "task_start"; agent: string; description: string; model?: string; mode: "subagent" | "orchestrator"; resumed: boolean } & TaskRef)
+  | ({ type: "task_event"; event: PlainEvent } & TaskRef)
+  | ({ type: "task_end"; status: TaskStatus; summary?: string; error?: string } & TaskRef)
+
+export const TASK_EVENT_TYPES = ["task_start", "task_event", "task_end"] as const
 
 /**
  * Rust tool names → the OpenCode tool names CodeNomad's tool cards know,
@@ -101,6 +123,33 @@ function summarize(input: Record<string, unknown>): string | undefined {
   return line.length > 120 ? `${line.slice(0, 117)}…` : line
 }
 
+/** delta / tool / tool_result → the event the UI reads; anything else is not shared with tasks. */
+function translatePlain(ev: any): PlainEvent | undefined {
+  switch (ev.type) {
+    case "delta":
+      return typeof ev.text === "string" && ev.text ? { type: "delta", text: ev.text } : undefined
+    case "tool": {
+      const raw = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : {}
+      const mapped = toOpencodeTool(String(ev.name ?? "tool"), raw)
+      return { type: "tool", id: String(ev.id ?? ""), name: mapped.tool, input: mapped.input, summary: summarize(mapped.input) }
+    }
+    case "tool_result": {
+      const mapped = toOpencodeTool(String(ev.name ?? "tool"), {})
+      return {
+        type: "tool_result",
+        id: String(ev.id ?? ""),
+        name: mapped.tool,
+        output: typeof ev.output === "string" ? ev.output : JSON.stringify(ev.output ?? ""),
+        isError: ev.isError === true,
+      }
+    }
+    default:
+      return undefined
+  }
+}
+
+const TASK_STATUSES: readonly TaskStatus[] = ["completed", "failed", "aborted"]
+
 /** Translates one line of the agent's stream-json stdout. */
 export class RustStreamTranslator {
   sawFinal = false
@@ -109,6 +158,8 @@ export class RustStreamTranslator {
   model: string | undefined
   /** Usage of the latest model call; the context in use after it. */
   usage: TokenUsage | undefined
+  /** Wire protocol the agent announced in `meta` (1 when it didn't). */
+  protocol = 1
 
   feed(line: string): EngineEvent[] {
     const trimmed = line.trim()
@@ -121,28 +172,26 @@ export class RustStreamTranslator {
       return [{ type: "stderr", line: trimmed }]
     }
     if (!ev || typeof ev !== "object") return []
+    // A delegated task's event: never part of the top-level reply.
+    if (typeof ev.task_id === "string" && ev.task_id) return this.feedTask(ev)
     switch (ev.type) {
       case "meta":
         if (typeof ev.model === "string") this.model = ev.model
-        return [{ type: "meta", engine: "rust", model: this.model, agent: typeof ev.agent === "string" ? ev.agent : null }]
-      case "delta":
-        return typeof ev.text === "string" && ev.text ? [{ type: "delta", text: ev.text }] : []
-      case "tool": {
-        const raw = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : {}
-        const mapped = toOpencodeTool(String(ev.name ?? "tool"), raw)
-        return [{ type: "tool", id: String(ev.id ?? ""), name: mapped.tool, input: mapped.input, summary: summarize(mapped.input) }]
-      }
-      case "tool_result": {
-        const mapped = toOpencodeTool(String(ev.name ?? "tool"), {})
+        if (typeof ev.protocol === "number") this.protocol = ev.protocol
         return [
           {
-            type: "tool_result",
-            id: String(ev.id ?? ""),
-            name: mapped.tool,
-            output: typeof ev.output === "string" ? ev.output : JSON.stringify(ev.output ?? ""),
-            isError: ev.isError === true,
+            type: "meta",
+            engine: "rust",
+            model: this.model,
+            agent: typeof ev.agent === "string" ? ev.agent : null,
+            ...(this.protocol > 1 ? { protocol: this.protocol } : {}),
           },
         ]
+      case "delta":
+      case "tool":
+      case "tool_result": {
+        const plain = translatePlain(ev)
+        return plain ? [plain] : []
       }
       case "usage": {
         const usage: TokenUsage = {
@@ -168,6 +217,45 @@ export class RustStreamTranslator {
         return [{ type: "final", text: this.finalText, isError: true, model: this.model }]
       default:
         return []
+    }
+  }
+
+  /** Protocol 2: events stamped with `task_id`. Unknown kinds (usage, …) are dropped. */
+  private feedTask(ev: any): EngineEvent[] {
+    const ref: TaskRef = {
+      taskId: ev.task_id,
+      parentCallId: typeof ev.parent_call_id === "string" ? ev.parent_call_id : "",
+      ...(typeof ev.parent_task_id === "string" && ev.parent_task_id ? { parentTaskId: ev.parent_task_id } : {}),
+    }
+    switch (ev.type) {
+      case "task.start":
+        return [
+          {
+            type: "task_start",
+            ...ref,
+            agent: typeof ev.agent === "string" ? ev.agent : "",
+            description: typeof ev.description === "string" ? ev.description : "",
+            ...(typeof ev.model === "string" ? { model: ev.model } : {}),
+            mode: ev.mode === "orchestrator" ? "orchestrator" : "subagent",
+            resumed: ev.resumed === true,
+          },
+        ]
+      case "task.end": {
+        const status = TASK_STATUSES.includes(ev.status) ? (ev.status as TaskStatus) : "failed"
+        return [
+          {
+            type: "task_end",
+            ...ref,
+            status,
+            ...(typeof ev.summary === "string" ? { summary: ev.summary } : {}),
+            ...(typeof ev.error === "string" ? { error: ev.error } : {}),
+          },
+        ]
+      }
+      default: {
+        const plain = translatePlain(ev)
+        return plain ? [{ type: "task_event", ...ref, event: plain }] : []
+      }
     }
   }
 }

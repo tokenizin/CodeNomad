@@ -111,6 +111,8 @@ export type HistoryPart =
       output?: string
       startedAt: number
       endedAt?: number
+      /** Task cards, protocol 2: the session holding the delegated task's own transcript. */
+      childSessionId?: string
     }
 
 /** A message saved by the server for a session. */
@@ -138,6 +140,12 @@ export type LocalSessionRecord = {
   createdAt: number
   updatedAt: number
   parentId?: string
+  /** "task" = a delegated subagent's transcript (protocol 2); only listed with `?tasks=1`. */
+  kind?: "task"
+  taskId?: string
+  /** The parent's Task tool-call id, i.e. the card this session belongs to. */
+  parentCallId?: string
+  taskStatus?: "running" | "completed" | "failed" | "aborted"
 }
 
 export const LOCAL_SESSION_PREFIX = "ses_lcl_"

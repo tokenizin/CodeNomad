@@ -5,6 +5,7 @@
  */
 
 import type { EngineEvent } from "./rust-runner.js"
+import { taskSessionId } from "./store.js"
 
 export type ReplyTextPart = { type: "text"; text: string }
 export type ReplyToolPart = {
@@ -16,6 +17,8 @@ export type ReplyToolPart = {
   output?: string
   startedAt: number
   endedAt?: number
+  /** A Task card's child session (protocol 2): the delegated task's own transcript. */
+  childSessionId?: string
 }
 export type ReplyPart = ReplyTextPart | ReplyToolPart
 
@@ -44,6 +47,13 @@ export class ReplyParts {
           part.output = ev.output
           part.endedAt = Date.now()
         }
+        break
+      }
+      // A delegated task's own events are not part of this reply: they go to the
+      // task's session (task-sessions.ts). Only the card is linked to it.
+      case "task_start": {
+        const card = [...this.parts].reverse().find((p): p is ReplyToolPart => p.type === "tool" && p.id === ev.parentCallId)
+        if (card) card.childSessionId = taskSessionId(ev.taskId)
         break
       }
       case "meta":

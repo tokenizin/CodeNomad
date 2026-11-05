@@ -43,6 +43,7 @@ import { getCachedSyncResults } from "../../model-sync/service.js"
 import { fetchOllamaModels } from "../../model-sync/providers/ollama.js"
 import type { WorkspaceManager } from "../../workspaces/manager.js"
 import { ReplyParts } from "../../local-engine/reply-parts.js"
+import { TaskSessions } from "../../local-engine/task-sessions.js"
 import {
   failureText,
   fetchRustCatalog,
@@ -380,6 +381,8 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
       bridge: runner,
       claudeCodePlayground: playgroundRoot,
       persist: process.env.PLAYGROUND_PERSIST === "1",
+      // 2 = delegated tasks stream their own events and get their own sessions (NOMAD_PROTOCOL=2).
+      taskProtocol: process.env.NOMAD_PROTOCOL?.trim() === "2" ? 2 : 1,
     }
   }
 
@@ -454,8 +457,12 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const send = startStream(reply)
     const replyParts = new ReplyParts()
     const transcript: object[] = []
+    // Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): each delegated task gets
+    // its own session. Needs a session to hang them on.
+    const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: cwd, parentParts: replyParts }) : undefined
     const write = (event: EngineEvent) => {
       replyParts.apply(event)
+      taskSessions?.apply(event)
       transcript.push(event)
       send(event)
     }
@@ -506,6 +513,8 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
           ...names.filter((name) => !uploads.attachments.some((a) => a.filename === name)).map((filename) => ({ filename })),
           ...uploads.attachments,
         ]
+        // Tasks still open when the run ended keep what they did.
+        taskSessions?.finish({ stopped })
         const saved = replyParts.finish({ stopped, isError, fallbackError })
         const messages: HistoryMessage[] = [
           {
@@ -604,9 +613,12 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const folder = str((request.query as Record<string, unknown> | undefined)?.folder)
     const real = folder ? realpath(folder) ?? folder : undefined
     // Match on both the given and the real path (symlinked workspace folders).
+    // Delegated task sessions are listed only on request (?tasks=1), so clients that don't know them see what they always did.
+    const includeTasks = str((request.query as Record<string, unknown> | undefined)?.tasks) === "1"
+    const listed = { includeTasks }
     const sessions = folder
-      ? [...new Map([...store.listSessions(folder), ...(real ? store.listSessions(real) : [])].map((s) => [s.id, s])).values()]
-      : store.listSessions()
+      ? [...new Map([...store.listSessions(folder, listed), ...(real ? store.listSessions(real, listed) : [])].map((s) => [s.id, s])).values()]
+      : store.listSessions(undefined, listed)
     return { sessions: sessions.sort((a, b) => b.updatedAt - a.updatedAt) }
   })
 

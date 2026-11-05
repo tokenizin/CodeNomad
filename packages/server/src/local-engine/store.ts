@@ -16,6 +16,13 @@ import type { ReplyPart } from "./reply-parts.js"
 
 export const LOCAL_SESSION_PREFIX = "ses_lcl_"
 
+/** The session that holds a delegated task's own transcript (protocol 2). Same id every time the task is resumed. */
+export function taskSessionId(taskId: string): string {
+  return `${LOCAL_SESSION_PREFIX}t_${taskId}`
+}
+
+export type TaskRunStatus = "running" | "completed" | "failed" | "aborted"
+
 export type LocalSession = {
   id: string
   folder: string
@@ -24,6 +31,14 @@ export type LocalSession = {
   model?: { providerId: string; modelId: string }
   createdAt: number
   updatedAt: number
+  /** Task sessions only: the session (or task session) that delegated to it. */
+  parentId?: string
+  /** "task" = a delegated subagent's transcript. Left out of the default session list. */
+  kind?: "task"
+  taskId?: string
+  /** The parent's Task tool-call id (the card this session belongs to). */
+  parentCallId?: string
+  taskStatus?: TaskRunStatus
 }
 
 export type HistoryAttachment = { filename: string; mime?: string; path?: string }
@@ -50,6 +65,18 @@ const KEY = /^[A-Za-z0-9_.:-]{1,200}$/
 /** Keys come from clients; keep them to safe file names. */
 export function safeKey(key: string): string | null {
   return KEY.test(key) && !key.includes("..") ? key : null
+}
+
+function withoutTaskLinks(message: HistoryMessage): HistoryMessage {
+  if (!message.parts?.some((p) => p.type === "tool" && p.childSessionId)) return message
+  return {
+    ...message,
+    parts: message.parts.map((p) => {
+      if (p.type !== "tool" || !p.childSessionId) return p
+      const { childSessionId: _dropped, ...rest } = p
+      return rest
+    }),
+  }
 }
 
 function safeFileName(name: string): string {
@@ -90,12 +117,61 @@ export class LocalEngineStore {
     this.sessionsCache = sessions
   }
 
-  listSessions(folder?: string): LocalSession[] {
+  /** Task sessions (delegated subagents) are only listed when asked for: the session list stays as it was. */
+  listSessions(folder?: string, options?: { includeTasks?: boolean }): LocalSession[] {
     const all = Object.values(this.readSessions())
     const wanted = folder ? path.resolve(folder) : null
     return all
+      .filter((session) => options?.includeTasks || session.kind !== "task")
       .filter((session) => !wanted || path.resolve(session.folder) === wanted)
       .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /** Sessions delegated by `parentId` (direct children only). */
+  listChildren(parentId: string): LocalSession[] {
+    return Object.values(this.readSessions()).filter((session) => session.parentId === parentId)
+  }
+
+  /**
+   * The session for a delegated task: created on first sight, reused when the
+   * same task_id is resumed (its later turns are appended to the same transcript).
+   */
+  upsertTaskSession(input: {
+    taskId: string
+    parentId: string
+    parentCallId: string
+    folder: string
+    title: string
+    agent: string
+    model?: string
+  }): { session: LocalSession; created: boolean } {
+    const id = taskSessionId(input.taskId)
+    if (!safeKey(id)) throw new Error(`Invalid task id: ${input.taskId}`)
+    const sessions = this.readSessions()
+    const now = Date.now()
+    const existing = sessions[id]
+    const session: LocalSession = {
+      id,
+      folder: input.folder,
+      title: input.title.trim().slice(0, 200) || "Task",
+      agent: input.agent,
+      ...(input.model ? { model: { providerId: "claude-code-rust", modelId: input.model } } : existing?.model ? { model: existing.model } : {}),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      parentId: input.parentId,
+      kind: "task",
+      taskId: input.taskId,
+      parentCallId: input.parentCallId,
+      taskStatus: "running",
+    }
+    this.writeSessions({ ...sessions, [id]: session })
+    return { session, created: !existing }
+  }
+
+  setTaskStatus(id: string, status: TaskRunStatus): void {
+    const current = this.readSessions()[id]
+    if (!current || current.kind !== "task") return
+    this.writeSessions({ ...this.readSessions(), [id]: { ...current, taskStatus: status, updatedAt: Date.now() } })
   }
 
   getSession(id: string): LocalSession | undefined {
@@ -132,13 +208,27 @@ export class LocalEngineStore {
     return next
   }
 
+  /** Deleting a session deletes the task sessions it delegated (and theirs), and nothing else. */
   deleteSession(id: string): boolean {
+    for (const child of this.listChildren(id)) if (child.kind === "task") this.deleteSession(child.id)
     const sessions = { ...this.readSessions() }
     const existed = Boolean(sessions[id])
     delete sessions[id]
     if (existed) this.writeSessions(sessions)
     this.deleteHistory(id)
     return existed
+  }
+
+  /**
+   * Task sessions linked from the removed messages' Task cards go with them,
+   * unless a message that stays still links to the same one (a resumed task
+   * keeps its session across turns).
+   */
+  private dropTaskSessionsOf(removed: HistoryMessage[], kept: HistoryMessage[]) {
+    const links = (messages: HistoryMessage[]) =>
+      messages.flatMap((m) => (m.parts ?? []).flatMap((p) => (p.type === "tool" && p.childSessionId ? [p.childSessionId] : [])))
+    const stillLinked = new Set(links(kept))
+    for (const id of new Set(links(removed))) if (!stillLinked.has(id)) this.deleteSession(id)
   }
 
   // ------------------------------------------------------------ history
@@ -213,6 +303,7 @@ export class LocalEngineStore {
     const messages = this.readHistory(key)
     const index = messages.findIndex((m) => m.id === messageId)
     if (index < 0) return 0
+    this.dropTaskSessionsOf(messages.slice(index), messages.slice(0, index))
     this.writeHistory(key, messages.slice(0, index))
     return messages.length - index
   }
@@ -221,6 +312,7 @@ export class LocalEngineStore {
     const messages = this.readHistory(key)
     const next = messages.filter((m) => m.id !== messageId)
     if (next.length === messages.length) return false
+    this.dropTaskSessionsOf(messages.filter((m) => m.id === messageId), next)
     this.writeHistory(key, next)
     return true
   }
@@ -260,7 +352,9 @@ export class LocalEngineStore {
 
   /** Fork: copies history before `messageId` from one session key to another. */
   copyHistory(from: string, to: string, beforeMessageId?: string): number {
-    const messages = this.historyBefore(from, beforeMessageId)
+    // A fork gets its own copy of the turns, not the original's task sessions: those
+    // belong to (and are deleted with) the original, so the copied Task cards lose their link.
+    const messages = this.historyBefore(from, beforeMessageId).map(withoutTaskLinks)
     if (messages.length) this.writeHistory(to, messages)
     // Subagents named in the copied turns can be resumed from the fork too.
     const tasks = this.tasksDir(from)
