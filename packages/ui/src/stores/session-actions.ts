@@ -1,6 +1,7 @@
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
+import { syncLocalTaskSessions } from "./local-task-sessions"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import {
@@ -30,6 +31,8 @@ import {
   type HistoryPart,
   isUnauthorizedError,
   readLocalEngineStream,
+  type LocalEngineReply,
+  type LocalTaskView,
   type LocalEngineAttachment,
   type LocalEngineUsage,
   usageToTokens,
@@ -222,8 +225,20 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
   // Re-render at most every 60 ms while the reply streams in.
   let pending: HistoryPart[] | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  // Delegated tasks (protocol 2) get sessions of their own, filled in as they run.
+  const folder = args.folder || instances().get(instanceId)?.folder || ""
+  const pendingTasks = new Map<string, LocalTaskView>()
+  // Assigned from the stream callback, which the compiler cannot see.
+  let liveReply = null as LocalEngineReply | null
+  const syncTasks = (tasks: LocalTaskView[]) => syncLocalTaskSessions(instanceId, folder, tasks)
   const flush = () => {
     flushTimer = null
+    // Tasks first: the parent's Task card opens its task's session, which must exist by then.
+    if (pendingTasks.size) {
+      const tasks = [...pendingTasks.values()]
+      pendingTasks.clear()
+      syncTasks(tasks)
+    }
     if (pending) upsertAssistant(pending, "streaming")
     pending = null
   }
@@ -251,18 +266,31 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     upsertUser("complete")
     const result = await readLocalEngineStream(response, (ev, reply, changed) => {
       if (ev.type === "usage") recordUsage(reply.usage, reply.model)
-      if (!changed) return
-      // Copy: the reply keeps mutating its parts as events arrive.
-      lastParts = reply.parts.map((p) => ({ ...p }))
-      pending = lastParts
+      liveReply = reply
+      for (const task of reply.takeChangedTasks()) pendingTasks.set(task.taskId, task)
+      if (!changed && pendingTasks.size === 0) return
+      if (changed) {
+        // Copy: the reply keeps mutating its parts as events arrive.
+        lastParts = reply.parts.map((p) => ({ ...p }))
+        pending = lastParts
+      }
       if (!flushTimer) flushTimer = setTimeout(flush, 60)
     })
     if (flushTimer) clearTimeout(flushTimer)
+    // Final state of every task, then the reply that links to them.
+    syncTasks(result.tasks)
+    pendingTasks.clear()
     upsertUser("complete")
     upsertAssistant(result.parts, result.isError ? "error" : "complete")
     recordUsage(result.usage, result.model)
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
+    // Tasks still running when the stream broke did not finish: stopped by the user, or cut off.
+    if (liveReply) {
+      liveReply.closeOpenTasks(controller.signal.aborted ? "aborted" : "failed")
+      syncTasks(liveReply.tasks)
+      pendingTasks.clear()
+    }
     if (controller.signal.aborted) {
       upsertUser("complete")
       const stopped = lastParts.map((p) =>

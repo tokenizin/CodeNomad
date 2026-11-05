@@ -720,8 +720,9 @@ export const serverApi = {
     return request(`/api/local-engine/history?sessionKey=${encodeURIComponent(sessionKey)}`)
   },
 
-  listLocalSessions(folder: string): Promise<{ sessions: import("./local-engine").LocalSessionRecord[] }> {
-    return request(`/api/local-engine/sessions?folder=${encodeURIComponent(folder)}`)
+  /** `tasks`: also the sessions of delegated subagents (protocol 2), which the plain list leaves out. */
+  listLocalSessions(folder: string, options?: { tasks?: boolean }): Promise<{ sessions: import("./local-engine").LocalSessionRecord[] }> {
+    return request(`/api/local-engine/sessions?folder=${encodeURIComponent(folder)}${options?.tasks ? "&tasks=1" : ""}`)
   },
 
   createLocalSession(body: {

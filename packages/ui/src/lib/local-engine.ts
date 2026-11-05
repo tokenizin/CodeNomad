@@ -167,17 +167,20 @@ export function toOpencodePart(sessionId: string, messageId: string, part: Histo
     return { id, sessionID: sessionId, messageID: messageId, type: "text", text: part.text }
   }
   const time = { start: part.startedAt, ...(part.endedAt ? { end: part.endedAt } : {}) }
+  // A Task card names its child session in metadata.sessionId — that is how the task
+  // renderer finds the delegated task's own steps (it does the same for OpenCode).
+  const link = part.childSessionId ? { metadata: { sessionId: part.childSessionId } } : {}
   const state =
     part.status === "running"
-      ? { status: "running", input: part.input, time }
+      ? { status: "running", input: part.input, time, ...link }
       : part.status === "error"
-        ? { status: "error", input: part.input, error: part.output ?? "Failed", time: { ...time, end: part.endedAt ?? part.startedAt } }
+        ? { status: "error", input: part.input, error: part.output ?? "Failed", time: { ...time, end: part.endedAt ?? part.startedAt }, ...link }
         : {
             status: "completed",
             input: part.input,
             output: part.output ?? "",
             title: part.tool,
-            metadata: {},
+            metadata: part.childSessionId ? { sessionId: part.childSessionId } : {},
             time: { ...time, end: part.endedAt ?? part.startedAt },
           }
   return { id, sessionID: sessionId, messageID: messageId, type: "tool", callID: part.id, tool: part.tool, state }
@@ -269,6 +272,94 @@ export function catalogCommands(catalog: RustCatalog) {
   }))
 }
 
+// ---------------------------------------------------------------- delegated tasks (protocol 2)
+
+export type LocalTaskStatus = "running" | "completed" | "failed" | "aborted"
+
+/**
+ * A delegated task as the browser sees it while the run streams: the session CodeNomad
+ * keeps for it, its prompt, and its own reply parts. Ids are the server's, so the live
+ * messages are the ones saved to history and a reload does not duplicate them.
+ */
+export type LocalTaskView = {
+  taskId: string
+  sessionId: string
+  /** The session that delegated it: the run's session, or another task's session. */
+  parentSessionId: string
+  parentTaskId?: string
+  parentCallId: string
+  agent: string
+  description: string
+  model?: string
+  prompt: string
+  userMessageId: string
+  assistantMessageId: string
+  startedAt: number
+  endedAt?: number
+  status: LocalTaskStatus
+  parts: HistoryPart[]
+}
+
+/** Task sessions whose messages are being fed live by a run in this tab. */
+export const liveTaskSessions = new Set<string>()
+
+/** delta / tool / tool_result applied to a list of reply parts. True when the list changed. */
+export function applyPlainEvent(parts: HistoryPart[], ev: LocalEngineEvent, now = Date.now()): boolean {
+  switch (ev.type) {
+    case "delta": {
+      if (typeof ev.text !== "string" || !ev.text) return false
+      const last = parts[parts.length - 1]
+      if (last?.type === "text") last.text += ev.text
+      else parts.push({ type: "text", text: ev.text })
+      return true
+    }
+    case "tool":
+      if (typeof ev.name !== "string") return false
+      parts.push({
+        type: "tool",
+        id: typeof ev.id === "string" && ev.id ? ev.id : `tool_${parts.length}`,
+        tool: ev.name,
+        input: ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : {},
+        status: "running",
+        startedAt: now,
+      })
+      return true
+    case "tool_result": {
+      const part = [...parts].reverse().find((p): p is Extract<HistoryPart, { type: "tool" }> => p.type === "tool" && p.id === ev.id && p.status === "running")
+      if (!part) return false
+      part.status = ev.isError === true ? "error" : "completed"
+      part.output = typeof ev.output === "string" ? ev.output : ""
+      part.endedAt = now
+      return true
+    }
+    default:
+      return false
+  }
+}
+
+/** Tools still running when a reply ends did not finish. */
+export function closeRunningTools(parts: HistoryPart[], output: string, now = Date.now()): HistoryPart[] {
+  return parts.map((p) => (p.type === "tool" && p.status === "running" ? { ...p, status: "error" as const, output, endedAt: now } : p))
+}
+
+/** The session record a task is kept under (what `GET /sessions?tasks=1` returns for it). */
+export function taskSessionRecord(task: LocalTaskView, folder: string): LocalSessionRecord {
+  return {
+    id: task.sessionId,
+    folder,
+    title: `[${task.agent}] ${task.description}`.trim().slice(0, 200),
+    agent: task.agent,
+    ...(task.model ? { model: { providerId: RUST_PROVIDER_ID, modelId: task.model } } : {}),
+    createdAt: task.startedAt,
+    updatedAt: task.endedAt ?? Date.now(),
+    parentId: task.parentSessionId,
+    kind: "task",
+    taskId: task.taskId,
+    parentCallId: task.parentCallId,
+    taskStatus: task.status,
+  }
+}
+
 // ---------------------------------------------------------------- live reply
 
 /**
@@ -287,6 +378,9 @@ export class LocalEngineReply {
   readonly events: LocalEngineEvent[] = []
   readonly stderrLines: string[] = []
   readonly notes: string[] = []
+  /** Delegated tasks (protocol 2), in the order they started. */
+  readonly tasks: LocalTaskView[] = []
+  private readonly changedTasks = new Set<string>()
 
   get text(): string {
     return this.parts
@@ -295,40 +389,109 @@ export class LocalEngineReply {
       .join("\n\n")
   }
 
+  /** Tasks that changed since the last call (and forgets them). */
+  takeChangedTasks(): LocalTaskView[] {
+    const changed = this.tasks.filter((t) => this.changedTasks.has(t.taskId))
+    this.changedTasks.clear()
+    return changed
+  }
+
+  /**
+   * Ends tasks that never reported an end (the run was stopped or died).
+   * Returns the ones it closed, so their sessions can be updated.
+   */
+  closeOpenTasks(status: "aborted" | "failed"): LocalTaskView[] {
+    const closed: LocalTaskView[] = []
+    for (const task of this.tasks) {
+      if (task.status !== "running") continue
+      task.status = status
+      task.endedAt = Date.now()
+      task.parts = closeRunningTools(task.parts, status === "aborted" ? "Stopped" : "Did not finish")
+      this.changedTasks.add(task.taskId)
+      closed.push(task)
+    }
+    return closed
+  }
+
+  /** The parts a task's Task card lives in: the run's reply, or the task that delegated it. */
+  private partsFor(parentTaskId: string | undefined): HistoryPart[] {
+    const parent = parentTaskId ? this.tasks.find((t) => t.taskId === parentTaskId) : undefined
+    return parent ? parent.parts : this.parts
+  }
+
+  private applyTaskEvent(ev: LocalEngineEvent): boolean {
+    const taskId = typeof ev.taskId === "string" ? ev.taskId : ""
+    if (!taskId) return false
+    switch (ev.type) {
+      case "task_start": {
+        // Without a session id from the server there is nothing to show the task in.
+        if (typeof ev.sessionId !== "string" || !ev.sessionId) return false
+        const parentCallId = typeof ev.parentCallId === "string" ? ev.parentCallId : ""
+        const parentTaskId = typeof ev.parentTaskId === "string" && ev.parentTaskId ? ev.parentTaskId : undefined
+        const task: LocalTaskView = {
+          taskId,
+          sessionId: ev.sessionId,
+          parentSessionId: typeof ev.parentSessionId === "string" ? ev.parentSessionId : "",
+          ...(parentTaskId ? { parentTaskId } : {}),
+          parentCallId,
+          agent: typeof ev.agent === "string" ? ev.agent : "",
+          description: typeof ev.description === "string" ? ev.description : "",
+          ...(typeof ev.model === "string" ? { model: ev.model } : {}),
+          prompt: typeof ev.prompt === "string" ? ev.prompt : typeof ev.description === "string" ? ev.description : "",
+          userMessageId: typeof ev.userMessageId === "string" ? ev.userMessageId : `msg_tu_${taskId}`,
+          assistantMessageId: typeof ev.assistantMessageId === "string" ? ev.assistantMessageId : `msg_ta_${taskId}`,
+          startedAt: Date.now(),
+          status: "running",
+          parts: [],
+        }
+        const existing = this.tasks.findIndex((t) => t.taskId === taskId)
+        if (existing >= 0) this.tasks[existing] = task
+        else this.tasks.push(task)
+        this.changedTasks.add(taskId)
+        // The Task card now opens this session.
+        const card = [...this.partsFor(parentTaskId)].reverse().find((p): p is Extract<HistoryPart, { type: "tool" }> => p.type === "tool" && p.id === parentCallId)
+        if (!card) return false
+        card.childSessionId = ev.sessionId
+        return true
+      }
+      case "task_event": {
+        const task = this.tasks.find((t) => t.taskId === taskId)
+        const inner = ev.event && typeof ev.event === "object" ? (ev.event as LocalEngineEvent) : undefined
+        if (task && inner && applyPlainEvent(task.parts, inner)) this.changedTasks.add(taskId)
+        return false
+      }
+      case "task_end": {
+        const task = this.tasks.find((t) => t.taskId === taskId)
+        if (!task || task.status !== "running") return false
+        const status: LocalTaskStatus = ev.status === "completed" || ev.status === "aborted" ? ev.status : "failed"
+        task.status = status
+        task.endedAt = Date.now()
+        task.parts = closeRunningTools(task.parts, status === "aborted" ? "Stopped" : "Did not finish")
+        if (status === "failed" && typeof ev.error === "string" && ev.error) task.parts.push({ type: "text", text: ev.error })
+        this.changedTasks.add(taskId)
+        return false
+      }
+    }
+    return false
+  }
+
   /** Returns true when the visible reply changed. */
   apply(ev: LocalEngineEvent): boolean {
     this.events.push(ev)
     switch (ev.type) {
+      case "task_start":
+      case "task_event":
+      case "task_end":
+        return this.applyTaskEvent(ev)
       case "delta":
       case "stdout": {
         const text = ev.type === "delta" ? ev.text : typeof ev.line === "string" ? `${ev.line}\n` : undefined
         if (typeof text !== "string" || !text) return false
-        const last = this.parts[this.parts.length - 1]
-        if (last?.type === "text") last.text += text
-        else this.parts.push({ type: "text", text })
-        return true
+        return applyPlainEvent(this.parts, { type: "delta", text })
       }
       case "tool":
-        if (typeof ev.name !== "string") return false
-        this.parts.push({
-          type: "tool",
-          id: typeof ev.id === "string" && ev.id ? ev.id : `tool_${this.parts.length}`,
-          tool: ev.name,
-          input: ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : {},
-          status: "running",
-          startedAt: Date.now(),
-        })
-        return true
-      case "tool_result": {
-        const part = [...this.parts]
-          .reverse()
-          .find((p): p is Extract<HistoryPart, { type: "tool" }> => p.type === "tool" && p.id === ev.id && p.status === "running")
-        if (!part) return false
-        part.status = ev.isError === true ? "error" : "completed"
-        part.output = typeof ev.output === "string" ? ev.output : ""
-        part.endedAt = Date.now()
-        return true
-      }
+      case "tool_result":
+        return applyPlainEvent(this.parts, ev)
       case "meta":
         if (typeof ev.model === "string") this.model = ev.model
         if (typeof ev.note === "string" && ev.note) this.notes.push(ev.note)
@@ -391,7 +554,7 @@ export class LocalEngineReply {
       parts.unshift({ type: "text", text: note })
       text = `${note}\n\n${text}`
     }
-    return { text, parts, exitCode: this.exitCode, isError: failed, model: this.model, usage: this.usage, events: this.events, stderrLines: this.stderrLines }
+    return { text, parts, tasks: this.tasks, exitCode: this.exitCode, isError: failed, model: this.model, usage: this.usage, events: this.events, stderrLines: this.stderrLines }
   }
 }
 
@@ -415,6 +578,8 @@ export type LocalEngineEvent = {
 export type LocalEngineRunResult = {
   text: string
   parts: HistoryPart[]
+  /** Delegated tasks the run started (protocol 2), as they ended. */
+  tasks: LocalTaskView[]
   exitCode: number
   isError: boolean
   model?: string
@@ -458,6 +623,8 @@ export async function readLocalEngineStream(
   buffer += decoder.decode()
   handle(buffer)
 
+  // The stream ended: a task that never reported an end did not finish.
+  reply.closeOpenTasks("failed")
   return reply.result()
 }
 

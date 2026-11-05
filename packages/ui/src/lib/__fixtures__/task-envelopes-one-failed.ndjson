@@ -1,0 +1,18 @@
+{"type":"meta","engine":"rust","model":"m","agent":null,"protocol":2}
+{"type":"tool","id":"call_1","name":"task","input":{"description":"job 1","prompt":"do-sub-1","subagent_type":"worker"},"summary":"worker: job 1"}
+{"type":"tool","id":"call_2","name":"task","input":{"description":"job 2","prompt":"do-sub-2","subagent_type":"worker"},"summary":"worker: job 2"}
+{"type":"tool","id":"call_3","name":"task","input":{"description":"job 3","prompt":"do-sub-3","subagent_type":"worker"},"summary":"worker: job 3"}
+{"type":"task_start","taskId":"task_18e510e895bc119b4ef","parentCallId":"call_1","agent":"worker","description":"job 1","model":"m","mode":"subagent","resumed":false,"sessionId":"ses_lcl_t_task_18e510e895bc119b4ef","parentSessionId":"ses_lcl_mw36nf19d9714ded629d","prompt":"do-sub-1","userMessageId":"msg_tu_task_18e510e895bc119b4ef_mw36nf19","assistantMessageId":"msg_ta_task_18e510e895bc119b4ef_mw36nf19"}
+{"type":"task_start","taskId":"task_18e510e895db867d4ef","parentCallId":"call_2","agent":"worker","description":"job 2","model":"m","mode":"subagent","resumed":false,"sessionId":"ses_lcl_t_task_18e510e895db867d4ef","parentSessionId":"ses_lcl_mw36nf19d9714ded629d","prompt":"do-sub-2","userMessageId":"msg_tu_task_18e510e895db867d4ef_mw36nf1a","assistantMessageId":"msg_ta_task_18e510e895db867d4ef_mw36nf1a"}
+{"type":"task_start","taskId":"task_18e510e895f990824ef","parentCallId":"call_3","agent":"worker","description":"job 3","model":"m","mode":"subagent","resumed":false,"sessionId":"ses_lcl_t_task_18e510e895f990824ef","parentSessionId":"ses_lcl_mw36nf19d9714ded629d","prompt":"do-sub-3","userMessageId":"msg_tu_task_18e510e895f990824ef_mw36nf1a","assistantMessageId":"msg_ta_task_18e510e895f990824ef_mw36nf1a"}
+{"type":"task_end","taskId":"task_18e510e895db867d4ef","parentCallId":"call_2","status":"failed","error":"failed to deserialize api response: error:invalid type: string \"boom\", expected struct ApiError at line 1 column 15 content:{\"error\":\"boom\"}"}
+{"type":"tool_result","id":"call_2","name":"task","output":"Error: subagent worker failed: failed to deserialize api response: error:invalid type: string \"boom\", expected struct ApiError at line 1 column 15 content:{\"error\":\"boom\"}\n\ntask_id: task_18e510e895db867d4ef (progress was saved; pass this task_id to continue)","isError":true}
+{"type":"task_event","taskId":"task_18e510e895f990824ef","parentCallId":"call_3","event":{"type":"delta","text":"answer-3"}}
+{"type":"task_end","taskId":"task_18e510e895f990824ef","parentCallId":"call_3","status":"completed","summary":"answer-3"}
+{"type":"tool_result","id":"call_3","name":"task","output":"task_id: task_18e510e895f990824ef (for resuming to continue this task if needed)\n\n<task_result>\nanswer-3\n</task_result>","isError":false}
+{"type":"task_event","taskId":"task_18e510e895bc119b4ef","parentCallId":"call_1","event":{"type":"delta","text":"answer-1"}}
+{"type":"task_end","taskId":"task_18e510e895bc119b4ef","parentCallId":"call_1","status":"completed","summary":"answer-1"}
+{"type":"tool_result","id":"call_1","name":"task","output":"task_id: task_18e510e895bc119b4ef (for resuming to continue this task if needed)\n\n<task_result>\nanswer-1\n</task_result>","isError":false}
+{"type":"delta","text":"ALL DONE"}
+{"type":"final","text":"ALL DONE","isError":false,"model":"m"}
+{"type":"exit","code":0}

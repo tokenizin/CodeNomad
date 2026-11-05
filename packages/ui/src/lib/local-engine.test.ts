@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it as test } from "node:test"
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   buildLocalEnginePrompt,
@@ -14,6 +17,9 @@ import {
   isUnauthorizedError,
   LocalEngineReply,
   usesRecentModels,
+  readLocalEngineStream,
+  taskSessionRecord,
+  type HistoryPart,
   type LocalEngineEvent,
 } from "./local-engine.ts"
 
@@ -179,35 +185,187 @@ test("Claude Code (Rust) agents don't inherit the last-clicked model", () => {
   assert.equal(usesRecentModels([]), true)
 })
 
-describe("protocol 2 task events (an UI that predates them)", () => {
-  test("a delegated task's envelopes leave the reply exactly as the parent wrote it", () => {
+// ---------------------------------------------------------------- delegated tasks (protocol 2)
+
+/** What the server really sends the browser for a run (see __fixtures__/): the Rust agent's output, translated. */
+function envelopes(name: string): LocalEngineEvent[] {
+  const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", name)
+  return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as LocalEngineEvent)
+}
+
+function replay(events: LocalEngineEvent[]) {
+  const reply = new LocalEngineReply()
+  const seen: string[][] = []
+  for (const ev of events) {
+    reply.apply(ev)
+    seen.push(reply.takeChangedTasks().map((t) => t.taskId))
+  }
+  return { reply, seen }
+}
+
+const tool = (parts: HistoryPart[]) => parts.flatMap((p) => (p.type === "tool" ? [p] : []))
+
+describe("delegated tasks in the live reply", () => {
+  test("three parallel tasks each get a view with their own prompt, ids and parts", () => {
+    const { reply } = replay(envelopes("task-envelopes-parallel.ndjson"))
+    assert.equal(reply.tasks.length, 3)
+    for (const [i, task] of reply.tasks.entries()) {
+      assert.equal(task.agent, "worker")
+      assert.equal(task.status, "completed")
+      assert.match(task.sessionId, /^ses_lcl_t_task_/)
+      assert.equal(task.prompt, `do-sub-${task.parentCallId.at(-1)}`)
+      assert.equal(task.userMessageId.startsWith("msg_tu_"), true)
+      assert.equal(task.assistantMessageId.startsWith("msg_ta_"), true)
+      assert.deepEqual(task.parts, [{ type: "text", text: `answer-${task.parentCallId.at(-1)}` }], `task ${i}`)
+    }
+    // Distinct sessions, one per task.
+    assert.equal(new Set(reply.tasks.map((t) => t.sessionId)).size, 3)
+  })
+
+  test("each Task card is linked to its own task session, and the subagents' text stays out of the reply", () => {
+    const { reply } = replay(envelopes("task-envelopes-parallel.ndjson"))
+    const cards = tool(reply.parts)
+    assert.equal(cards.length, 3)
+    for (const card of cards) {
+      const task = reply.tasks.find((t) => t.parentCallId === card.id)
+      assert.ok(task, `a task for ${card.id}`)
+      assert.equal(card.childSessionId, task!.sessionId)
+    }
+    assert.equal(reply.text, "ALL DONE")
+    assert.ok(!reply.result().text.includes("answer-"))
+  })
+
+  test("the cards hand the renderer the session id it looks for", () => {
+    const { reply } = replay(envelopes("task-envelopes-parallel.ndjson"))
+    for (const card of tool(reply.result().parts)) {
+      const part = toOpencodePart("ses_parent", "msg_a", card, 0)
+      assert.equal(part.state.metadata.sessionId, card.childSessionId)
+    }
+  })
+
+  test("a card that is still running links too, and a plain tool does not", () => {
+    const running = toOpencodePart("s", "m", { type: "tool", id: "c", tool: "task", input: {}, status: "running", startedAt: 1, childSessionId: "ses_lcl_t_x" }, 0)
+    assert.equal(running.state.status, "running")
+    assert.equal(running.state.metadata.sessionId, "ses_lcl_t_x")
+    const failed = toOpencodePart("s", "m", { type: "tool", id: "c", tool: "task", input: {}, status: "error", output: "x", startedAt: 1, childSessionId: "ses_lcl_t_x" }, 0)
+    assert.equal(failed.state.metadata.sessionId, "ses_lcl_t_x")
+    const plain = toOpencodePart("s", "m", { type: "tool", id: "c", tool: "bash", input: {}, status: "completed", output: "ok", startedAt: 1 }, 0)
+    assert.deepEqual(plain.state.metadata, {})
+  })
+
+  test("saved history keeps the link, so a reloaded Task card still opens its session", () => {
+    const [message] = historyToApiMessages("ses_parent", [
+      {
+        id: "a1",
+        role: "assistant",
+        text: "x",
+        createdAt: 1,
+        parts: [{ type: "tool", id: "c1", tool: "task", input: {}, status: "completed", output: "ok", startedAt: 1, childSessionId: "ses_lcl_t_z" }],
+      },
+    ])
+    assert.equal(message.parts[0].state.metadata.sessionId, "ses_lcl_t_z")
+  })
+
+  test("only the tasks that changed are reported, once", () => {
+    const { seen, reply } = replay(envelopes("task-envelopes-parallel.ndjson"))
+    // The three task_start lines each report their own task; a later event only its task.
+    const starts = seen.filter((ids) => ids.length > 0)
+    assert.ok(starts.every((ids) => ids.length === 1), JSON.stringify(starts))
+    assert.equal(new Set(starts.flat()).size, 3)
+    assert.deepEqual(reply.takeChangedTasks(), [])
+  })
+
+  test("a failed task is failed, its siblings are not", () => {
+    const { reply } = replay(envelopes("task-envelopes-one-failed.ndjson"))
+    assert.deepEqual(
+      reply.tasks.map((t) => [t.parentCallId, t.status]),
+      [["call_1", "completed"], ["call_2", "failed"], ["call_3", "completed"]],
+    )
+    assert.ok(reply.tasks[1].endedAt)
+  })
+
+  test("a stream cut before the tasks end leaves them open until they are closed", () => {
+    const all = envelopes("task-envelopes-parallel.ndjson")
+    const firstEnd = all.findIndex((e) => e.type === "task_end")
+    const { reply } = replay(all.slice(0, firstEnd))
+    assert.deepEqual(reply.tasks.map((t) => t.status), ["running", "running", "running"])
+    const closed = reply.closeOpenTasks("aborted")
+    assert.equal(closed.length, 3)
+    assert.ok(closed.every((t) => t.status === "aborted" && t.endedAt))
+    assert.deepEqual(reply.takeChangedTasks().length, 3)
+    // Closing again finds nothing to close.
+    assert.deepEqual(reply.closeOpenTasks("failed"), [])
+  })
+
+  test("a task's running tools are closed with it", () => {
+    const { reply } = replay([
+      { type: "tool", id: "c1", name: "task", input: { prompt: "p" } },
+      { type: "task_start", taskId: "t1", parentCallId: "c1", agent: "ba", description: "d", sessionId: "ses_lcl_t_t1", parentSessionId: "ses_p", prompt: "p", userMessageId: "u", assistantMessageId: "a" },
+      { type: "task_event", taskId: "t1", parentCallId: "c1", event: { type: "tool", id: "x", name: "bash", input: { command: "ls" } } },
+    ])
+    reply.closeOpenTasks("aborted")
+    const part = reply.tasks[0].parts[0]
+    assert.equal(part.type === "tool" && part.status, "error")
+    assert.equal(part.type === "tool" && part.output, "Stopped")
+  })
+
+  test("a task delegated by a task is linked inside that task, not in the run's reply", () => {
+    const { reply } = replay([
+      { type: "tool", id: "c1", name: "task", input: { prompt: "lead" } },
+      { type: "task_start", taskId: "tl", parentCallId: "c1", agent: "tl", description: "lead", sessionId: "ses_lcl_t_tl", parentSessionId: "ses_p", prompt: "lead", userMessageId: "u1", assistantMessageId: "a1" },
+      { type: "task_event", taskId: "tl", parentCallId: "c1", event: { type: "tool", id: "c2", name: "task", input: { prompt: "build" } } },
+      { type: "task_start", taskId: "dev", parentTaskId: "tl", parentCallId: "c2", agent: "dev", description: "build", sessionId: "ses_lcl_t_dev", parentSessionId: "ses_lcl_t_tl", prompt: "build", userMessageId: "u2", assistantMessageId: "a2" },
+    ])
+    const inner = tool(reply.tasks[0].parts)
+    assert.equal(inner[0].childSessionId, "ses_lcl_t_dev")
+    assert.equal(tool(reply.parts)[0].childSessionId, "ses_lcl_t_tl")
+    assert.equal(reply.tasks[1].parentTaskId, "tl")
+  })
+
+  test("a server that sends no session id (older, or no session) leaves the run exactly as before", () => {
     const plain = new LocalEngineReply()
-    const withTasks = new LocalEngineReply()
-    const parentEvents: LocalEngineEvent[] = [
-      { type: "meta", model: "m" },
+    const old = new LocalEngineReply()
+    const parent: LocalEngineEvent[] = [
       { type: "tool", id: "c1", name: "task", input: { subagent_type: "ba", prompt: "p" } },
       { type: "tool_result", id: "c1", name: "task", output: "done", isError: false },
       { type: "delta", text: "ALL DONE" },
-      { type: "final", text: "ALL DONE" },
     ]
-    const taskEvents: LocalEngineEvent[] = [
-      { type: "task_start", taskId: "task_a", parentCallId: "c1", agent: "ba", description: "d", mode: "subagent", resumed: false },
-      { type: "task_event", taskId: "task_a", parentCallId: "c1", event: { type: "delta", text: "SUBAGENT TEXT" } },
-      { type: "task_event", taskId: "task_a", parentCallId: "c1", event: { type: "tool", id: "x", name: "bash", input: {} } },
-      { type: "task_end", taskId: "task_a", parentCallId: "c1", status: "completed" },
-    ]
-    for (const ev of parentEvents) plain.apply(ev)
-    // Task envelopes interleaved in the middle of the run, as they arrive live.
-    withTasks.apply(parentEvents[0])
-    withTasks.apply(parentEvents[1])
-    for (const ev of taskEvents) assert.equal(withTasks.apply(ev), false, `${ev.type} must not change the reply`)
-    for (const ev of parentEvents.slice(2)) withTasks.apply(ev)
-
-    assert.equal(withTasks.text, "ALL DONE")
-    assert.ok(!withTasks.result().text.includes("SUBAGENT TEXT"))
+    for (const ev of parent) plain.apply(ev)
+    old.apply(parent[0])
+    for (const ev of [
+      { type: "task_start", taskId: "t", parentCallId: "c1", agent: "ba", description: "d" },
+      { type: "task_event", taskId: "t", parentCallId: "c1", event: { type: "delta", text: "SUBAGENT TEXT" } },
+      { type: "task_end", taskId: "t", parentCallId: "c1", status: "completed" },
+    ] as LocalEngineEvent[]) assert.equal(old.apply(ev), false)
+    old.apply(parent[1])
+    old.apply(parent[2])
+    assert.equal(old.tasks.length, 0)
+    assert.equal(old.text, "ALL DONE")
     assert.deepEqual(
-      withTasks.result().parts.map((p) => ({ ...p, startedAt: 0, endedAt: 0 })),
+      old.result().parts.map((p) => ({ ...p, startedAt: 0, endedAt: 0 })),
       plain.result().parts.map((p) => ({ ...p, startedAt: 0, endedAt: 0 })),
     )
+  })
+
+  test("the task session record is what the server lists for it", () => {
+    const { reply } = replay(envelopes("task-envelopes-parallel.ndjson"))
+    const task = reply.tasks[0]
+    const record = taskSessionRecord(task, "/work")
+    assert.equal(record.id, task.sessionId)
+    assert.equal(record.parentId, task.parentSessionId)
+    assert.equal(record.kind, "task")
+    assert.equal(record.taskStatus, "completed")
+    assert.equal(record.title, "[worker] job " + task.parentCallId.at(-1))
+    assert.deepEqual(record.model, { providerId: RUST_PROVIDER_ID, modelId: "m" })
+  })
+
+  test("a stream that ends with a task still open closes it as failed", async () => {
+    const all = envelopes("task-envelopes-parallel.ndjson")
+    const cut = all.slice(0, all.findIndex((e) => e.type === "task_end"))
+    const body = new Response(cut.map((e) => JSON.stringify(e)).join("\n") + "\n")
+    const result = await readLocalEngineStream(body)
+    assert.deepEqual(result.tasks.map((t) => t.status), ["failed", "failed", "failed"])
+    // And the card still links to the (failed) task's session.
+    assert.ok(tool(result.parts).every((c) => c.childSessionId))
   })
 })

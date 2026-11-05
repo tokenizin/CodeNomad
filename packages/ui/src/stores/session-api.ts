@@ -70,6 +70,7 @@ import {
   catalogProvider,
   historyToApiMessages,
   isLocalSessionId,
+  liveTaskSessions,
   localEngineRuns,
   localRunKey,
   RUST_DEFAULT_AGENT,
@@ -227,7 +228,8 @@ function localRecordToSession(instanceId: string, record: LocalSessionRecord, ex
     id: record.id,
     instanceId,
     title: record.title || "New Session",
-    parentId: null,
+    // Delegated tasks hang under the session (or task) that dispatched them, like OpenCode's subagent sessions.
+    parentId: record.parentId ?? null,
     agent: existing?.agent || record.agent || "",
     model: existing?.model?.modelId ? existing.model : record.model ?? { providerId: "", modelId: "" },
     status: existing?.status ?? "idle",
@@ -239,7 +241,7 @@ function localRecordToSession(instanceId: string, record: LocalSessionRecord, ex
   } as Session
 }
 
-function upsertLocalSessions(instanceId: string, records: LocalSessionRecord[]) {
+export function upsertLocalSessions(instanceId: string, records: LocalSessionRecord[]) {
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = new Map(next.get(instanceId) ?? new Map())
@@ -339,7 +341,7 @@ function defaultRustModel(instanceId: string, agent?: string): { providerId: str
 async function fetchLocalSessions(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.folder) return
-  const { sessions: records } = await serverApi.listLocalSessions(instance.folder)
+  const { sessions: records } = await serverApi.listLocalSessions(instance.folder, { tasks: true })
   if (records.length > 0) upsertLocalSessions(instanceId, records)
 }
 
@@ -1134,7 +1136,8 @@ async function loadMessages(
 
     // A local-engine run started before a reload is still going on the server:
     // show it as working and pick up the reply once it's saved.
-    if (!localEngineRuns.has(localRunKey(instanceId, sessionId))) {
+    // (A task session being fed live by this tab's own run is not "elsewhere" and must not be reset to idle.)
+    if (!localEngineRuns.has(localRunKey(instanceId, sessionId)) && !liveTaskSessions.has(sessionId)) {
       if (runningElsewhere) {
         setSessionStatus(instanceId, sessionId, "working")
         setTimeout(() => {
