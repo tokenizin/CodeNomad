@@ -3,7 +3,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { ReplyParts } from "../reply-parts.js"
-import { RustStreamTranslator, type EngineEvent } from "../rust-runner.js"
+import { RustStreamTranslator, toOpencodeTool, type EngineEvent } from "../rust-runner.js"
 import { LocalEngineStore, taskSessionId } from "../store.js"
 import { TaskSessions } from "../task-sessions.js"
 
@@ -287,3 +287,48 @@ function tmpStoreWithParent() {
   const { store, dir } = tmpStore()
   return { store, dir, parent: store.createSession({ folder: "/work" }) }
 }
+
+describe("a workflow session (orchestrator) from the real agent", () => {
+  const lines = () => fixture("rust-protocol2-workflow.ndjson")
+
+  test("it is a task in orchestrator mode, shown on the same card as a Task", () => {
+    const { forwarded, replyParts } = replay(lines())
+    const start = forwarded.find((e) => e.type === "task_start")
+    expect(start?.type === "task_start" && start.mode).toBe("orchestrator")
+    expect(start?.type === "task_start" && start.agent).toBe("workflow_runner")
+    const card = replyParts.parts.find((p) => p.type === "tool")
+    expect(card?.type === "tool" && card.tool).toBe("task")
+    expect(card?.type === "tool" && card.input.subagent_type).toBe("workflow_runner")
+    expect(card?.type === "tool" && card.input.description).toBe("Workflow TASK-9")
+    expect(card?.type === "tool" && card.input.prompt).toBe("do it")
+    expect(card?.type === "tool" && card.childSessionId).toBeDefined()
+    expect(replyParts.text()).toBe("PMA DONE")
+  })
+
+  test("the orchestrator's session holds its instructions and the handover it filed", () => {
+    const { store, replyParts } = replay(lines())
+    const card = replyParts.parts.find((p) => p.type === "tool")
+    const sessionId = card?.type === "tool" ? card.childSessionId! : ""
+    const session = store.getSession(sessionId)
+    expect(session?.kind).toBe("task")
+    expect(session?.taskStatus).toBe("completed")
+    expect(session?.title).toBe("[workflow_runner] Workflow TASK-9")
+    const [user, assistant] = store.readHistory(sessionId)
+    expect(user.text).toBe("do it")
+    const handover = assistant.parts?.find((p) => p.type === "tool" && p.tool === "handover")
+    expect(handover?.type === "tool" && handover.status).toBe("completed")
+    expect(handover?.type === "tool" && handover.output).toContain("Handover filed: tasks/todo/TASK-9/HANDOVER.md (revision 1")
+    expect(handover?.type === "tool" && (handover.input.requirements as unknown[]).length).toBe(1)
+    expect(assistant.text).toContain("closing note")
+  })
+
+  test("a follow-up to a workflow is the same kind of card", () => {
+    expect(toOpencodeTool("nomadflow_prompt_workflow", { session_id: "wf_1", text: "fix the header" })).toEqual({
+      tool: "task",
+      input: { session_id: "wf_1", text: "fix the header", subagent_type: "workflow_runner", description: "Workflow follow-up wf_1", prompt: "fix the header" },
+    })
+    expect(toOpencodeTool("nomadflow_run_workflow", { task_path: "tasks/todo/TASK-9/TASK-9.md", instructions: "go" }).input.description).toBe("Workflow TASK-9")
+    // Other NomadWorks tools are untouched.
+    expect(toOpencodeTool("nomadworks_validate", { mode: "phase0" }).tool).toBe("nomadworks_validate")
+  })
+})

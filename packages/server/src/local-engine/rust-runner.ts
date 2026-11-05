@@ -123,6 +123,23 @@ export function toOpencodeTool(name: string, input: Record<string, unknown>): { 
     // Subagent delegation: same card as OpenCode's task tool ([subagent] description).
     case "Task":
       return { tool: "task", input }
+    // A workflow session (an orchestrator with a handover) opens its session from the same card.
+    case "nomadflow_run_workflow":
+    case "nomadflow_prompt_workflow": {
+      const taskPath = typeof input.task_path === "string" ? input.task_path : ""
+      const stem = taskPath ? taskPath.split("/").pop()!.replace(/\.[^.]+$/, "") : ""
+      const sessionId = typeof input.session_id === "string" ? input.session_id : ""
+      const prompt = input.instructions ?? input.text
+      return {
+        tool: "task",
+        input: {
+          ...input,
+          subagent_type: "workflow_runner",
+          description: stem ? `Workflow ${stem}` : sessionId ? `Workflow follow-up ${sessionId}` : "Workflow",
+          prompt: typeof prompt === "string" ? prompt : "",
+        },
+      }
+    }
     default:
       return { tool: name, input }
   }

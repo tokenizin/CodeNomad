@@ -369,3 +369,33 @@ describe("delegated tasks in the live reply", () => {
     assert.ok(tool(result.parts).every((c) => c.childSessionId))
   })
 })
+
+describe("a workflow session (orchestrator) in the live reply", () => {
+  test("its card opens a session holding the instructions and the handover call", () => {
+    const { reply } = replay(envelopes("task-envelopes-workflow.ndjson"))
+    // The card is a Task card (the translator presents workflow tools as tasks), linked to the workflow's session.
+    const card = tool(reply.parts)[0]
+    assert.equal(card.tool, "task")
+    assert.equal(card.input.subagent_type, "workflow_runner")
+    const task = reply.tasks[0]
+    assert.equal(card.childSessionId, task.sessionId)
+    assert.equal(task.agent, "workflow_runner")
+    assert.equal(task.status, "completed")
+    assert.equal(task.prompt, "do it")
+    assert.match(task.sessionId, /^ses_lcl_t_wf_/)
+
+    const handover = tool(task.parts).find((p) => p.tool === "handover")
+    assert.ok(handover, "the handover call is in the workflow's own transcript")
+    assert.equal(handover!.status, "completed")
+    assert.match(handover!.output ?? "", /^Handover filed: tasks\/todo\/TASK-9\/HANDOVER\.md/)
+    // The manager's reply is its own.
+    assert.equal(reply.text, "PMA DONE")
+  })
+
+  test("the card the browser draws for it points at the session the task renderer will open", () => {
+    const { reply } = replay(envelopes("task-envelopes-workflow.ndjson"))
+    const part = toOpencodePart("ses_parent", "msg_a", tool(reply.result().parts)[0], 0)
+    assert.equal(part.tool, "task")
+    assert.equal(part.state.metadata.sessionId, reply.tasks[0].sessionId)
+  })
+})
