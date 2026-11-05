@@ -460,9 +460,10 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     // Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): each delegated task gets
     // its own session. Needs a session to hang them on.
     const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: cwd, parentParts: replyParts }) : undefined
-    const write = (event: EngineEvent) => {
-      replyParts.apply(event)
-      taskSessions?.apply(event)
+    const write = (incoming: EngineEvent) => {
+      replyParts.apply(incoming)
+      // A task_start goes on to the browser with its session and message ids.
+      const event = taskSessions ? taskSessions.apply(incoming) : incoming
       transcript.push(event)
       send(event)
     }

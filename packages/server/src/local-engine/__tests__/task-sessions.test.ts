@@ -27,8 +27,7 @@ function replay(lines: string[], options?: { stopAfter?: number; stopped?: boole
   for (const line of options?.stopAfter ? lines.slice(0, options.stopAfter) : lines) {
     for (const event of translator.feed(line)) {
       replyParts.apply(event)
-      tasks.apply(event)
-      forwarded.push(event)
+      forwarded.push(tasks.apply(event))
     }
   }
   if (options?.stopAfter !== undefined) tasks.finish({ stopped: options.stopped ?? true })
@@ -49,6 +48,24 @@ describe("protocol 2 stream from the real Rust agent", () => {
     // The children arrive as envelopes an old reader ignores.
     expect(forwarded.filter((e) => e.type === "task_start").length).toBe(3)
     expect(forwarded.filter((e) => e.type === "task_event").length).toBe(3)
+    expect(forwarded.filter((e) => e.type === "task_end").length).toBe(3)
+  })
+
+  test("the task_start sent on to the browser carries the ids the saved history will use", () => {
+    const { store, forwarded, parent } = replay(fixture("rust-protocol2-parallel.ndjson"))
+    const starts = forwarded.filter((e) => e.type === "task_start")
+    expect(starts.length).toBe(3)
+    for (const start of starts) {
+      if (start.type !== "task_start") continue
+      expect(start.sessionId).toBe(taskSessionId(start.taskId))
+      expect(start.parentSessionId).toBe(parent.id)
+      expect(start.prompt).toMatch(/^do-sub-\d$/)
+      // Same ids as the messages written to the task's history, so a reload doesn't duplicate them.
+      const [user, assistant] = store.readHistory(start.sessionId!)
+      expect(user.id).toBe(start.userMessageId)
+      expect(assistant.id).toBe(start.assistantMessageId)
+    }
+    // Everything else passes through untouched.
     expect(forwarded.filter((e) => e.type === "task_end").length).toBe(3)
   })
 
@@ -174,7 +191,11 @@ describe("translator edge cases", () => {
       { type: "task.end", task_id: "task_dev", parent_task_id: "task_tl", parent_call_id: "c2", status: "completed" },
       { type: "task.end", task_id: "task_tl", parent_call_id: "c1", status: "completed" },
     ]
-    for (const l of lines) for (const e of t.feed(JSON.stringify(l))) { parts.apply(e); tasks.apply(e) }
+    const sent: EngineEvent[] = []
+    for (const l of lines) for (const e of t.feed(JSON.stringify(l))) { parts.apply(e); sent.push(tasks.apply(e)) }
+    // A task delegated by a task reports the task, not the top-level session, as its parent.
+    const nested = sent.find((e) => e.type === "task_start" && e.taskId === "task_dev")
+    expect(nested?.type === "task_start" && nested.parentSessionId).toBe(taskSessionId("task_tl"))
     expect(store.getSession(taskSessionId("task_dev"))?.parentId).toBe(taskSessionId("task_tl"))
     expect(store.getSession(taskSessionId("task_tl"))?.parentId).toBe(parent.id)
     // The nested task's prompt comes from the Task card inside its parent task.

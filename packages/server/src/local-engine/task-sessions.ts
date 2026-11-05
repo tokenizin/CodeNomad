@@ -15,6 +15,8 @@ import { taskSessionId, type HistoryMessage, type LocalEngineStore } from "./sto
 type TaskRun = {
   taskId: string
   sessionId: string
+  userMessageId: string
+  assistantMessageId: string
   prompt: string
   agent: string
   model?: string
@@ -42,16 +44,19 @@ export class TaskSessions {
     return [...this.runs.values()].filter((run) => !run.ended).length
   }
 
-  apply(event: EngineEvent): void {
+  /** Records the event; returns what to send on to the browser (`task_start` gains its session and message ids). */
+  apply(event: EngineEvent): EngineEvent {
     switch (event.type) {
       case "task_start":
         return this.start(event)
       case "task_event":
         this.runs.get(event.taskId)?.parts.apply(event.event)
-        return
+        break
       case "task_end":
-        return this.end(event.taskId, event.status, event.error)
+        this.end(event.taskId, event.status, event.error)
+        break
     }
+    return event
   }
 
   /** Closes tasks still open at the end of the run. */
@@ -61,7 +66,7 @@ export class TaskSessions {
     }
   }
 
-  private start(event: Extract<EngineEvent, { type: "task_start" }>) {
+  private start(event: Extract<EngineEvent, { type: "task_start" }>): EngineEvent {
     // The prompt is on the Task card: the parent's, or — for a task delegated by a task — that task's.
     const parentRun = event.parentTaskId ? this.runs.get(event.parentTaskId) : undefined
     // A task delegated by a task: its card is in that task's transcript, so link it there
@@ -82,16 +87,28 @@ export class TaskSessions {
       agent: event.agent,
       model: event.model,
     })
-    this.runs.set(event.taskId, {
+    const startedAt = Date.now()
+    const run: TaskRun = {
       taskId: event.taskId,
       sessionId: taskSessionId(event.taskId),
+      userMessageId: `msg_tu_${event.taskId}_${startedAt.toString(36)}`,
+      assistantMessageId: `msg_ta_${event.taskId}_${startedAt.toString(36)}`,
       prompt,
       agent: event.agent,
       model: event.model,
-      startedAt: Date.now(),
+      startedAt,
       parts: new ReplyParts(),
       ended: false,
-    })
+    }
+    this.runs.set(event.taskId, run)
+    return {
+      ...event,
+      sessionId: run.sessionId,
+      parentSessionId: parentId,
+      prompt,
+      userMessageId: run.userMessageId,
+      assistantMessageId: run.assistantMessageId,
+    }
   }
 
   private end(taskId: string, status: TaskStatus, error?: string) {
@@ -104,9 +121,9 @@ export class TaskSessions {
     const saved = run.parts.finish({ stopped: status === "aborted", isError: status === "failed", fallbackError: error })
     const failed = status === "failed"
     const messages: HistoryMessage[] = [
-      { id: `msg_tu_${run.taskId}_${run.startedAt.toString(36)}`, role: "user", text: run.prompt, createdAt: run.startedAt },
+      { id: run.userMessageId, role: "user", text: run.prompt, createdAt: run.startedAt },
       {
-        id: `msg_ta_${run.taskId}_${run.startedAt.toString(36)}`,
+        id: run.assistantMessageId,
         role: "assistant",
         text: saved.text,
         parts: saved.parts,

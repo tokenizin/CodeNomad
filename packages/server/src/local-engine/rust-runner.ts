@@ -85,7 +85,21 @@ export type EngineEvent =
   | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "exit"; code: number; error?: string }
   // Protocol 2 — delegated tasks.
-  | ({ type: "task_start"; agent: string; description: string; model?: string; mode: "subagent" | "orchestrator"; resumed: boolean } & TaskRef)
+  | ({
+      type: "task_start"
+      agent: string
+      description: string
+      model?: string
+      mode: "subagent" | "orchestrator"
+      resumed: boolean
+      // Filled in by CodeNomad (task-sessions.ts) before the event goes to the browser, so the
+      // live view uses the very ids the saved history will have.
+      sessionId?: string
+      parentSessionId?: string
+      prompt?: string
+      userMessageId?: string
+      assistantMessageId?: string
+    } & TaskRef)
   | ({ type: "task_event"; event: PlainEvent } & TaskRef)
   | ({ type: "task_end"; status: TaskStatus; summary?: string; error?: string } & TaskRef)
 
