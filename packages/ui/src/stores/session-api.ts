@@ -50,6 +50,7 @@ import { fetchLocalLlmProvider, mergeLocalLlmProviders } from "../lib/local-llm-
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo, updateSessionInfoForInstance } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
+import { attachedLocalSessions, getLocalRunAttacher } from "./local-run-attacher"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import {
@@ -76,6 +77,8 @@ import {
   RUST_DEFAULT_AGENT,
   RUST_PROVIDER_ID,
   type LocalSessionRecord,
+  type LocalWorkflowView,
+  workflowSessionRecord,
   type RustCatalog,
 } from "../lib/local-engine"
 import { setCommands } from "./commands"
@@ -256,6 +259,74 @@ export function upsertLocalSessions(instanceId: string, records: LocalSessionRec
     prependSessionListId(instanceId, record.id)
   }
   syncInstanceSessionIndicator(instanceId)
+}
+
+// ---------------------------------------------------------------- background workflows
+// The Product Manager starts a workflow and its turn ends; the Workflow Runner works in a session of its
+// own, and when it is done a notification message appears in the manager's session and gets a turn. That
+// happens on the server with nobody streaming it, so a page that knows a runner is at work looks at the
+// manager's history every few seconds until nothing is pending.
+
+/** Follows the session's runs live when the attach is there, else looks at its history every few seconds. */
+function followLocalRuns(instanceId: string, sessionId: string) {
+  const attacher = getLocalRunAttacher()
+  if (attacher) attacher(instanceId, sessionId)
+  else watchLocalWorkflows(instanceId, sessionId)
+}
+
+const WORKFLOW_WATCH_MS = 3000
+const workflowWatchers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Lists the runner sessions a run just started, and watches the manager for their notifications. */
+export function registerLocalWorkflows(instanceId: string, folder: string, managerSessionId: string, workflows: LocalWorkflowView[]) {
+  if (workflows.length === 0) return
+  const records = workflows.map((w) => workflowSessionRecord({ ...w, managerSessionId }, folder))
+  upsertLocalSessions(instanceId, records)
+  for (const w of workflows) setSessionStatus(instanceId, w.sessionId, "working")
+  followLocalRuns(instanceId, managerSessionId)
+}
+
+/**
+ * Re-reads the manager's history while a background workflow of it is pending, and shows what arrives
+ * (the notification and the manager's turn on it). `runners`: sessions to mark idle when they stop.
+ */
+export function watchLocalWorkflows(instanceId: string, managerSessionId: string, runners: string[] = []) {
+  const key = `${instanceId}\u0000${managerSessionId}`
+  if (workflowWatchers.has(key)) return
+  const known = new Set(runners)
+  const poll = async () => {
+    workflowWatchers.delete(key)
+    // This tab's own run is streaming into the session: the stream shows it, and the next look comes after.
+    if (localEngineRuns.has(localRunKey(instanceId, managerSessionId))) {
+      scheduleNext()
+      return
+    }
+    try {
+      const state = await serverApi.fetchLocalEngineHistory(managerSessionId)
+      const shown = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(managerSessionId).length
+      // More saved messages than shown: the notification (and the turn on it) arrived.
+      if (state.messages.length > shown || state.running) {
+        await loadMessages(instanceId, managerSessionId, { force: true, skipChildren: true })
+      }
+      // Runners that are no longer working are idle in the list.
+      for (const runnerId of known) {
+        const runner = await serverApi.fetchLocalEngineHistory(runnerId).catch(() => null)
+        if (runner && !runner.running) {
+          setSessionStatus(instanceId, runnerId, "idle")
+          known.delete(runnerId)
+        }
+      }
+      if (state.watching || state.running) scheduleNext()
+    } catch {
+      // The server is unreachable for a moment: try again.
+      scheduleNext()
+    }
+  }
+  // loadMessages may have started a watcher of its own meanwhile; one is enough.
+  const scheduleNext = () => {
+    if (!workflowWatchers.has(key)) workflowWatchers.set(key, setTimeout(poll, WORKFLOW_WATCH_MS))
+  }
+  scheduleNext()
 }
 
 // ---------------------------------------------------------------- Claude Code (Rust) catalog
@@ -1107,10 +1178,12 @@ async function loadMessages(
   try {
     let apiMessages: any[]
     let runningElsewhere = false
+    let watchingWorkflows = false
     if (isLocal) {
-      const { messages, running } = await serverApi.fetchLocalEngineHistory(sessionId)
+      const { messages, running, watching } = await serverApi.fetchLocalEngineHistory(sessionId)
       apiMessages = historyToApiMessages(sessionId, messages)
       runningElsewhere = Boolean(running)
+      watchingWorkflows = Boolean(watching)
     } else {
       const client = getRootClient(instanceId)
       log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
@@ -1121,6 +1194,7 @@ async function loadMessages(
       // Turns sent through the local engine are saved by CodeNomad, not OpenCode.
       const local = await serverApi.fetchLocalEngineHistory(sessionId).catch(() => null)
       runningElsewhere = Boolean(local?.running)
+      watchingWorkflows = Boolean(local?.watching)
       if (Array.isArray(apiMessages) && local?.messages.length) {
         const known = new Set(apiMessages.map((m: any) => (m.info || m)?.id))
         const extra = historyToApiMessages(sessionId, local.messages).filter((m) => !known.has(m.info.id))
@@ -1137,18 +1211,27 @@ async function loadMessages(
     // A local-engine run started before a reload is still going on the server:
     // show it as working and pick up the reply once it's saved.
     // (A task session being fed live by this tab's own run is not "elsewhere" and must not be reset to idle.)
-    if (!localEngineRuns.has(localRunKey(instanceId, sessionId)) && !liveTaskSessions.has(sessionId)) {
+    if (!localEngineRuns.has(localRunKey(instanceId, sessionId)) && !liveTaskSessions.has(sessionId) && !attachedLocalSessions.has(sessionId)) {
       if (runningElsewhere) {
         setSessionStatus(instanceId, sessionId, "working")
-        setTimeout(() => {
-          void loadMessages(instanceId, sessionId, { force: true, skipChildren: true }).catch(() => undefined)
-        }, 3000)
+        const attacher = getLocalRunAttacher()
+        if (attacher) {
+          // Follow the run live (it is replayed from its start); the history is reloaded when it ends.
+          attacher(instanceId, sessionId)
+        } else {
+          setTimeout(() => {
+            void loadMessages(instanceId, sessionId, { force: true, skipChildren: true }).catch(() => undefined)
+          }, 3000)
+        }
       } else if (sessions().get(instanceId)?.get(sessionId)?.status === "working" && (isLocal || pendingLocalRefresh.has(sessionId))) {
         setSessionStatus(instanceId, sessionId, "idle")
       }
       if (runningElsewhere) pendingLocalRefresh.add(sessionId)
       else pendingLocalRefresh.delete(sessionId)
     }
+
+    // A background workflow of this session is still working (the page was reloaded meanwhile): keep looking for its notification.
+    if (watchingWorkflows) followLocalRuns(instanceId, sessionId)
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
 

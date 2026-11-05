@@ -679,6 +679,14 @@ export const serverApi = {
     })
   },
 
+  /**
+   * Follows the session's current run live (NDJSON: `attach`, the run's events, `exit`); held open while a background workflow
+   * of the session is at work, `idle` when nothing is pending.
+   */
+  attachLocalEngine(sessionKey: string, signal?: AbortSignal): Promise<Response> {
+    return requestRaw(`/api/local-engine/attach?sessionKey=${encodeURIComponent(sessionKey)}&wait=1`, { signal })
+  },
+
   fetchLocalEngineCatalog(folder: string, options?: { fresh?: boolean }): Promise<import("./local-engine").RustCatalog> {
     return request(`/api/local-engine/catalog?folder=${encodeURIComponent(folder)}${options?.fresh ? "&fresh=1" : ""}`)
   },
@@ -716,7 +724,7 @@ export const serverApi = {
 
   fetchLocalEngineHistory(
     sessionKey: string,
-  ): Promise<{ messages: import("./local-engine").LocalHistoryMessage[]; running?: boolean }> {
+  ): Promise<{ messages: import("./local-engine").LocalHistoryMessage[]; running?: boolean; watching?: boolean }> {
     return request(`/api/local-engine/history?sessionKey=${encodeURIComponent(sessionKey)}`)
   },
 

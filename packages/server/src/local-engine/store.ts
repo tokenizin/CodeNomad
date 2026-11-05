@@ -33,13 +33,36 @@ export type LocalSession = {
   updatedAt: number
   /** Task sessions only: the session (or task session) that delegated to it. */
   parentId?: string
-  /** "task" = a delegated subagent's transcript. Left out of the default session list. */
-  kind?: "task"
+  /** "task" = a delegated subagent's transcript, left out of the default session list.
+   *  "workflow" = a Workflow Runner's own session (started by nomadflow_run_workflow): an ordinary, listed session. */
+  kind?: "task" | "workflow"
   taskId?: string
   /** The parent's Task tool-call id (the card this session belongs to). */
   parentCallId?: string
   taskStatus?: TaskRunStatus
+  /** Workflow sessions only. */
+  workflow?: WorkflowInfo
 }
+
+export type WorkflowStatus = "running" | "idle" | "failed" | "aborted"
+
+/** What a workflow session remembers about the workflow it runs. */
+export type WorkflowInfo = {
+  workflowId: string
+  /** The session that started it and is told when it is done. */
+  managerSessionId: string
+  /** The agent and model the manager ran with, so its notification turn runs the same way. */
+  managerAgent?: string
+  managerModel?: string
+  taskPath: string
+  track: string
+  status: WorkflowStatus
+  /** Prompts waiting behind the run that is going (each owes its manager a notification); kept so a restart can say they were not run. */
+  queued?: string[]
+}
+
+/** Notifications a workflow's runner owes a session and that have not been delivered yet (they survive a restart). */
+export type InboxEntry = { manager: { key: string; folder: string; agent?: string; model?: string }; messages: string[] }
 
 export type HistoryAttachment = { filename: string; mime?: string; path?: string }
 
@@ -185,10 +208,87 @@ export class LocalEngineStore {
     return changed
   }
 
+  /** The session of a background workflow: created when the Product Manager starts it, reused by every follow-up. */
+  upsertWorkflowSession(input: { sessionId: string; folder: string; title: string; workflow: Omit<WorkflowInfo, "status"> }): LocalSession {
+    if (!safeKey(input.sessionId)) throw new Error(`Invalid workflow session id: ${input.sessionId}`)
+    const sessions = this.readSessions()
+    const now = Date.now()
+    const existing = sessions[input.sessionId]
+    const session: LocalSession = {
+      id: input.sessionId,
+      folder: input.folder,
+      title: input.title.trim().slice(0, 200) || "Workflow Run",
+      agent: "workflow_runner",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      kind: "workflow",
+      workflow: { ...input.workflow, status: "running" },
+    }
+    this.writeSessions({ ...sessions, [input.sessionId]: session })
+    return session
+  }
+
+  setWorkflowQueue(id: string, queued: string[]): void {
+    const current = this.readSessions()[id]
+    if (!current?.workflow) return
+    const { queued: _before, ...rest } = current.workflow
+    this.writeSessions({ ...this.readSessions(), [id]: { ...current, workflow: { ...rest, ...(queued.length ? { queued } : {}) } } })
+  }
+
+  setWorkflowStatus(id: string, status: WorkflowStatus): void {
+    const current = this.readSessions()[id]
+    if (!current?.workflow) return
+    this.writeSessions({ ...this.readSessions(), [id]: { ...current, workflow: { ...current.workflow, status }, updatedAt: Date.now() } })
+  }
+
+  /**
+   * Workflow sessions still marked running when the server starts lost their runner with the last
+   * shutdown. Marks them failed and returns them (their registry entries need releasing).
+   */
+  reconcileInterruptedWorkflows(): LocalSession[] {
+    const sessions = this.readSessions()
+    const next = { ...sessions }
+    const changed: LocalSession[] = []
+    for (const session of Object.values(sessions)) {
+      if (session.kind !== "workflow" || session.workflow?.status !== "running") continue
+      next[session.id] = { ...session, workflow: { ...session.workflow, status: "failed" }, updatedAt: Date.now() }
+      changed.push(session)
+    }
+    if (changed.length > 0) this.writeSessions(next)
+    return changed
+  }
+
   setTaskStatus(id: string, status: TaskRunStatus): void {
     const current = this.readSessions()[id]
     if (!current || current.kind !== "task") return
     this.writeSessions({ ...this.readSessions(), [id]: { ...current, taskStatus: status, updatedAt: Date.now() } })
+  }
+
+  // ------------------------------------------------------------ workflow inbox
+
+  private get inboxFile() {
+    return path.join(this.root, "workflow-inbox.json")
+  }
+
+  readInbox(): Record<string, InboxEntry> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.inboxFile, "utf8"))
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** Replaces the inbox (atomic write); an empty one removes the file. */
+  writeInbox(inbox: Record<string, InboxEntry>): void {
+    if (Object.keys(inbox).length === 0) {
+      fs.rmSync(this.inboxFile, { force: true })
+      return
+    }
+    fs.mkdirSync(this.root, { recursive: true })
+    const tmp = `${this.inboxFile}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(inbox, null, 2))
+    fs.renameSync(tmp, this.inboxFile)
   }
 
   getSession(id: string): LocalSession | undefined {

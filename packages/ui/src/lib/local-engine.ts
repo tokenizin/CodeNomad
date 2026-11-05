@@ -140,12 +140,15 @@ export type LocalSessionRecord = {
   createdAt: number
   updatedAt: number
   parentId?: string
-  /** "task" = a delegated subagent's transcript (protocol 2); only listed with `?tasks=1`. */
-  kind?: "task"
+  /** "task" = a delegated subagent's transcript (protocol 2); only listed with `?tasks=1`.
+   *  "workflow" = a Workflow Runner's own session (background workflow): an ordinary, listed session. */
+  kind?: "task" | "workflow"
   taskId?: string
   /** The parent's Task tool-call id, i.e. the card this session belongs to. */
   parentCallId?: string
   taskStatus?: "running" | "completed" | "failed" | "aborted"
+  /** Workflow sessions: the workflow it runs and where it stands. */
+  workflow?: { workflowId: string; managerSessionId: string; taskPath: string; track: string; status: "running" | "idle" | "failed" | "aborted" }
 }
 
 export const LOCAL_SESSION_PREFIX = "ses_lcl_"
@@ -303,6 +306,41 @@ export type LocalTaskView = {
   parts: HistoryPart[]
 }
 
+/**
+ * A background workflow the Product Manager started in this run: the Workflow Runner works in
+ * a session of its own, which is listed like any other (the manager is told when it is done).
+ */
+export type LocalWorkflowView = {
+  workflowId: string
+  sessionId: string
+  title: string
+  taskPath: string
+  track: string
+  /** The manager's session, which is told when the runner is done. */
+  managerSessionId: string
+  startedAt: number
+}
+
+/** The session record for a background workflow's runner (what `GET /sessions` returns for it). */
+export function workflowSessionRecord(workflow: LocalWorkflowView, folder: string): LocalSessionRecord {
+  return {
+    id: workflow.sessionId,
+    folder,
+    title: workflow.title.slice(0, 200),
+    agent: "workflow_runner",
+    createdAt: workflow.startedAt,
+    updatedAt: Date.now(),
+    kind: "workflow",
+    workflow: {
+      workflowId: workflow.workflowId,
+      managerSessionId: workflow.managerSessionId,
+      taskPath: workflow.taskPath,
+      track: workflow.track,
+      status: "running",
+    },
+  }
+}
+
 /** Task sessions whose messages are being fed live by a run in this tab. */
 export const liveTaskSessions = new Set<string>()
 
@@ -384,6 +422,16 @@ export class LocalEngineReply {
   /** Delegated tasks (protocol 2), in the order they started. */
   readonly tasks: LocalTaskView[] = []
   private readonly changedTasks = new Set<string>()
+  /** Background workflows the run started, in order; `takeNewWorkflows` hands each out once. */
+  readonly workflows: LocalWorkflowView[] = []
+  private handedOut = 0
+
+  /** The workflows started since the last call. */
+  takeNewWorkflows(): LocalWorkflowView[] {
+    const fresh = this.workflows.slice(this.handedOut)
+    this.handedOut = this.workflows.length
+    return fresh
+  }
 
   get text(): string {
     return this.parts
@@ -486,6 +534,19 @@ export class LocalEngineReply {
       case "task_event":
       case "task_end":
         return this.applyTaskEvent(ev)
+      case "workflow_start":
+        if (typeof ev.sessionId === "string" && ev.sessionId && !this.workflows.some((w) => w.sessionId === ev.sessionId)) {
+          this.workflows.push({
+            workflowId: typeof ev.workflowId === "string" ? ev.workflowId : "",
+            sessionId: ev.sessionId,
+            title: typeof ev.title === "string" && ev.title ? ev.title : "Workflow Run",
+            taskPath: typeof ev.taskPath === "string" ? ev.taskPath : "",
+            track: typeof ev.track === "string" ? ev.track : "implementation",
+            managerSessionId: "",
+            startedAt: Date.now(),
+          })
+        }
+        return false
       case "delta":
       case "stdout": {
         const text = ev.type === "delta" ? ev.text : typeof ev.line === "string" ? `${ev.line}\n` : undefined

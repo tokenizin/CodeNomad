@@ -102,14 +102,61 @@ export type EngineEvent =
     } & TaskRef)
   | ({ type: "task_event"; event: PlainEvent } & TaskRef)
   | ({ type: "task_end"; status: TaskStatus; summary?: string; error?: string } & TaskRef)
+  // Asynchronous workflows (the agent runs with NOMAD_WORKFLOW_MODE=async) — see workflows.ts.
+  | WorkflowStartEvent
+  | WorkflowPromptEvent
+  | WorkflowDoneEvent
 
 export const TASK_EVENT_TYPES = ["task_start", "task_event", "task_end"] as const
+
+/** The Product Manager started a workflow: a Workflow Runner is to work on it in a session of its own. */
+export type WorkflowStartEvent = {
+  type: "workflow_start"
+  /** `wf_…`; the session is `ses_lcl_` + this. */
+  workflowId: string
+  sessionId: string
+  title: string
+  taskPath: string
+  track: string
+  /** What the runner is told to do (the Product Manager's instructions). */
+  instructions: string
+  /** The first message the runner's session shows. */
+  prompt: string
+  /** The Product Manager's tool call that started it. */
+  callId: string
+}
+
+/** The Product Manager sent text to a workflow's runner (`active`: it is still working, so the text is queued). */
+export type WorkflowPromptEvent = {
+  type: "workflow_prompt"
+  workflowId: string
+  sessionId: string
+  text: string
+  active: boolean
+  callId: string
+}
+
+/** A runner's process ended its session: how, and the handover it filed. */
+export type WorkflowHandover = { outcome: string; path: string; revision: number; verification: string; openIssues: number; markdown: string }
+export type WorkflowDoneEvent = {
+  type: "workflow_done"
+  workflowId: string
+  sessionId: string
+  taskPath: string
+  status: "completed" | "failed"
+  handover?: WorkflowHandover
+  error?: string
+}
 
 /**
  * Rust tool names → the OpenCode tool names CodeNomad's tool cards know,
  * with inputs renamed to what those cards read.
  */
-export function toOpencodeTool(name: string, input: Record<string, unknown>): { tool: string; input: Record<string, unknown> } {
+export function toOpencodeTool(
+  name: string,
+  input: Record<string, unknown>,
+  options: { asyncWorkflows?: boolean } = {},
+): { tool: string; input: Record<string, unknown> } {
   const filePath = typeof input.file_path === "string" ? input.file_path : undefined
   switch (name) {
     case "Read":
@@ -147,9 +194,11 @@ export function toOpencodeTool(name: string, input: Record<string, unknown>): { 
       return { tool: "todowrite", input }
     case "TodoRead":
       return { tool: "todoread", input }
-    // A workflow session (an orchestrator with a handover) opens its session from the same card.
+    // A workflow that runs inside the call (synchronous mode) opens its session from the same card as a Task.
+    // A background one is a plain tool call, as in OpenCode: it only starts the workflow.
     case "nomadflow_run_workflow":
     case "nomadflow_prompt_workflow": {
+      if (options.asyncWorkflows) return { tool: name, input }
       const taskPath = typeof input.task_path === "string" ? input.task_path : ""
       const stem = taskPath ? taskPath.split("/").pop()!.replace(/\.[^.]+$/, "") : ""
       const sessionId = typeof input.session_id === "string" ? input.session_id : ""
@@ -179,17 +228,17 @@ function summarize(input: Record<string, unknown>): string | undefined {
 }
 
 /** delta / tool / tool_result → the event the UI reads; anything else is not shared with tasks. */
-function translatePlain(ev: any): PlainEvent | undefined {
+function translatePlain(ev: any, options: { asyncWorkflows?: boolean } = {}): PlainEvent | undefined {
   switch (ev.type) {
     case "delta":
       return typeof ev.text === "string" && ev.text ? { type: "delta", text: ev.text } : undefined
     case "tool": {
       const raw = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : {}
-      const mapped = toOpencodeTool(String(ev.name ?? "tool"), raw)
+      const mapped = toOpencodeTool(String(ev.name ?? "tool"), raw, options)
       return { type: "tool", id: String(ev.id ?? ""), name: mapped.tool, input: mapped.input, summary: summarize(mapped.input) }
     }
     case "tool_result": {
-      const mapped = toOpencodeTool(String(ev.name ?? "tool"), {})
+      const mapped = toOpencodeTool(String(ev.name ?? "tool"), {}, options)
       return {
         type: "tool_result",
         id: String(ev.id ?? ""),
@@ -215,6 +264,8 @@ export class RustStreamTranslator {
   usage: TokenUsage | undefined
   /** Wire protocol the agent announced in `meta` (1 when it didn't). */
   protocol = 1
+
+  constructor(private readonly options: { asyncWorkflows?: boolean } = {}) {}
 
   feed(line: string): EngineEvent[] {
     const trimmed = line.trim()
@@ -245,7 +296,7 @@ export class RustStreamTranslator {
       case "delta":
       case "tool":
       case "tool_result": {
-        const plain = translatePlain(ev)
+        const plain = translatePlain(ev, this.options)
         return plain ? [plain] : []
       }
       case "usage": {
@@ -260,6 +311,12 @@ export class RustStreamTranslator {
         if (typeof ev.model === "string") this.model = ev.model
         return [{ type: "usage", usage, model: this.model }]
       }
+      case "workflow.start":
+        return this.workflowStart(ev)
+      case "workflow.prompt":
+        return this.workflowPrompt(ev)
+      case "workflow.done":
+        return this.workflowDone(ev)
       case "final":
         this.sawFinal = true
         this.finalText = typeof ev.text === "string" ? ev.text : ""
@@ -308,10 +365,69 @@ export class RustStreamTranslator {
         ]
       }
       default: {
-        const plain = translatePlain(ev)
+        const plain = translatePlain(ev, this.options)
         return plain ? [{ type: "task_event", ...ref, event: plain }] : []
       }
     }
+  }
+
+  private workflowStart(ev: any): EngineEvent[] {
+    const str = (v: unknown) => (typeof v === "string" ? v : "")
+    if (!str(ev.workflow_id) || !str(ev.session_id)) return []
+    return [
+      {
+        type: "workflow_start",
+        workflowId: ev.workflow_id,
+        sessionId: ev.session_id,
+        title: str(ev.title) || "Workflow Run",
+        taskPath: str(ev.task_path),
+        track: str(ev.track) || "implementation",
+        instructions: str(ev.instructions),
+        prompt: str(ev.prompt) || str(ev.instructions),
+        callId: str(ev.call_id),
+      },
+    ]
+  }
+
+  private workflowPrompt(ev: any): EngineEvent[] {
+    if (typeof ev.session_id !== "string" || typeof ev.text !== "string" || !ev.text.trim()) return []
+    return [
+      {
+        type: "workflow_prompt",
+        workflowId: typeof ev.workflow_id === "string" ? ev.workflow_id : "",
+        sessionId: ev.session_id,
+        text: ev.text,
+        active: ev.active === true,
+        callId: typeof ev.call_id === "string" ? ev.call_id : "",
+      },
+    ]
+  }
+
+  private workflowDone(ev: any): EngineEvent[] {
+    if (typeof ev.session_id !== "string") return []
+    const h = ev.handover && typeof ev.handover === "object" ? ev.handover : undefined
+    return [
+      {
+        type: "workflow_done",
+        workflowId: typeof ev.workflow_id === "string" ? ev.workflow_id : "",
+        sessionId: ev.session_id,
+        taskPath: typeof ev.task_path === "string" ? ev.task_path : "",
+        status: ev.status === "completed" ? "completed" : "failed",
+        ...(h
+          ? {
+              handover: {
+                outcome: String(h.outcome ?? ""),
+                path: String(h.path ?? ""),
+                revision: Number(h.revision ?? 0),
+                verification: String(h.verification ?? ""),
+                openIssues: Array.isArray(h.open_issues) ? h.open_issues.length : Number(h.open_issues ?? 0),
+                markdown: String(h.markdown ?? ""),
+              },
+            }
+          : {}),
+        ...(typeof ev.error === "string" && ev.error ? { error: ev.error } : {}),
+      },
+    ]
   }
 }
 
@@ -328,6 +444,8 @@ export type RustRunOptions = {
   images?: string[]
   /** JSON file of earlier turns: [{ role, content }]. */
   historyFile?: string
+  /** The agent starts workflows in the background (NOMAD_WORKFLOW_MODE=async): their tool cards are plain tool calls. */
+  asyncWorkflows?: boolean
 }
 
 export function rustRunArgs(options: Omit<RustRunOptions, "runner" | "cwd" | "env">): string[] {
@@ -352,7 +470,7 @@ export function runRustAgent(
 ): Promise<{ code: number; translator: RustStreamTranslator; stderr: string[] }> {
   return new Promise((resolve) => {
     ensureExecutable(options.runner)
-    const translator = new RustStreamTranslator()
+    const translator = new RustStreamTranslator({ asyncWorkflows: options.asyncWorkflows })
     const stderr: string[] = []
     const child = spawn(options.runner, rustRunArgs(options), {
       cwd: options.cwd,

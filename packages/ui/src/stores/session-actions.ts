@@ -2,6 +2,9 @@ import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { syncLocalTaskSessions } from "./local-task-sessions"
+import { registerLocalWorkflows } from "./session-api"
+// Registers how a run this tab did not start is followed live (a workflow's notification turn, a runner, a run from before a reload).
+import "./local-run-attach"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import {
@@ -268,6 +271,9 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       if (ev.type === "usage") recordUsage(reply.usage, reply.model)
       liveReply = reply
       for (const task of reply.takeChangedTasks()) pendingTasks.set(task.taskId, task)
+      // A workflow the manager started runs in a session of its own: list it now, and keep looking for its notification.
+      const started = reply.takeNewWorkflows()
+      if (started.length > 0) registerLocalWorkflows(instanceId, folder, sessionId, started)
       if (!changed && pendingTasks.size === 0) return
       if (changed) {
         // Copy: the reply keeps mutating its parts as events arrive.

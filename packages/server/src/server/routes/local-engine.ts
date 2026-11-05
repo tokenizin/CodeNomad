@@ -7,6 +7,7 @@
  *   GET    /api/local-engine/status
  *   GET    /api/local-engine/catalog?folder=&fresh=1   agents, slash commands, models (from the agent)
  *   POST   /api/local-engine/run       { prompt, cwd, sessionKey, agent?, model?, uploads?, messageIds? }
+ *   GET    /api/local-engine/attach?sessionKey=&wait=1   follow the session's current run live (see below)
  *   POST   /api/local-engine/abort     { sessionKey }
  *   GET    /api/local-engine/history?sessionKey=        saved messages for a session
  *   POST   /api/local-engine/history/:key/truncate      { messageId }  revert from a message
@@ -44,6 +45,8 @@ import { fetchOllamaModels } from "../../model-sync/providers/ollama.js"
 import type { WorkspaceManager } from "../../workspaces/manager.js"
 import { ReplyParts } from "../../local-engine/reply-parts.js"
 import { TaskSessions } from "../../local-engine/task-sessions.js"
+import { RunBus } from "../../local-engine/run-bus.js"
+import { WorkflowSupervisor, type Manager } from "../../local-engine/workflows.js"
 import {
   failureText,
   fetchRustCatalog,
@@ -51,6 +54,7 @@ import {
   recordRustTranscript,
   runRustAgent,
   type EngineEvent,
+  type WorkflowDoneEvent,
 } from "../../local-engine/rust-runner.js"
 import { LocalEngineStore, safeKey, type HistoryAttachment, type HistoryMessage } from "../../local-engine/store.js"
 
@@ -351,6 +355,38 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
   if (interrupted > 0) app.log?.warn?.({ interrupted }, "local engine: marked task sessions left running by the last shutdown as failed")
   /** Lets /abort tell a run it was stopped on purpose (for the saved "(stopped)" note). */
   const abortListeners = new Map<string, () => void>()
+  /** The runs going now, for pages that did not start them (GET /attach). */
+  const runBus = new RunBus()
+
+  /** Runs workflows in the background and tells the Product Manager when they are done (workflows.ts). */
+  const supervisor: WorkflowSupervisor = new WorkflowSupervisor({
+    store,
+    isBusy: (key) => activeRuns.has(key),
+    warn: (message, detail) => app.log?.warn?.({ detail }, `local engine: ${message}`),
+    execute: async (job) => {
+      const { playgroundRoot, runner, opencodeConfig } = engineSetup()
+      if (!playgroundRoot || !runner) throw new Error("Claude Code (Rust) not found")
+      const outcome = await executeRun({
+        sessionKey: job.sessionKey,
+        cwd: job.folder,
+        prompt: job.prompt,
+        displayText: job.displayText,
+        agent: job.agent && job.agent !== FULL_AGENT ? job.agent : undefined,
+        model: job.model,
+        uploads: { images: [], promptLines: [], attachments: [] },
+        attachmentNames: [],
+        persist: false,
+        history: job.history,
+        extraEnv: job.env,
+        assistantAgent: job.assistantAgent,
+        playgroundRoot,
+        runner,
+        opencodeConfig,
+        send: () => {},
+      })
+      return { stopped: outcome.stopped, isError: outcome.isError, finalText: outcome.finalText, workflowDone: outcome.workflowDone }
+    },
+  })
 
   const engineSetup = () => {
     const config = readLocalEngineConfig(deps.settings)
@@ -395,6 +431,186 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     return target ? checkCwd(target, allowedRoots(deps, config)) : null
   }
 
+  /** What one agent run needs, whoever asked for it (a person's message, a background workflow, a notification). */
+  type RunParams = {
+    sessionKey?: string
+    cwd: string
+    /** What the agent is given (the message plus any uploaded files' paths). */
+    prompt: string
+    /** What the history shows as the user message. */
+    displayText: string
+    agent?: string
+    model?: string
+    uploads: SavedUploads
+    attachmentNames: string[]
+    messageIds?: { user: string; assistant: string }
+    persist: boolean
+    /** Earlier turns of the session go to the agent. */
+    history: boolean
+    extraEnv?: Record<string, string>
+    /** Agent name saved on the reply when the process is not started with `--agent`. */
+    assistantAgent?: string
+    playgroundRoot: string
+    runner: string
+    opencodeConfig: string | null
+    send: (event: EngineEvent | Record<string, unknown>) => void
+  }
+
+  type RunOutcome = { code: number; isError: boolean; stopped: boolean; finalText: string; workflowDone?: WorkflowDoneEvent }
+
+  /** Runs the agent for a session to the end, streams its events to `send`, and saves the exchange to history. */
+  const executeRun = async (params: RunParams): Promise<RunOutcome> => {
+    const { sessionKey, cwd, uploads, playgroundRoot, runner, opencodeConfig } = params
+    const agent = params.agent
+    const model = params.model
+
+    // Earlier turns, read before this run adds to them.
+    const history = sessionKey && params.history ? historyForAgent(store.readHistory(sessionKey)) : []
+    let historyFile: string | undefined
+    if (history.length) {
+      historyFile = path.join(os.tmpdir(), `codenomad-history-${randomUUID()}.json`)
+      fs.writeFileSync(historyFile, JSON.stringify(history))
+    }
+
+    const register = (child: ChildProcess) => {
+      if (sessionKey) activeRuns.set(sessionKey, child)
+    }
+    let aborted = false
+    if (sessionKey) abortListeners.set(sessionKey, () => (aborted = true))
+
+    // The ids the saved history will use, known now so a page that attaches to this run draws the very messages that get saved.
+    const startedAt = Date.now()
+    const userMessageId = params.messageIds?.user ?? `msg_lu_${startedAt.toString(36)}`
+    const assistantMessageId = params.messageIds?.assistant ?? `msg_la_${startedAt.toString(36)}`
+    // Every event goes to the caller and to any page watching this session (run-bus.ts).
+    const send = (event: EngineEvent | Record<string, unknown>) => {
+      params.send(event)
+      if (sessionKey) runBus.publish(sessionKey, event)
+    }
+    if (sessionKey) {
+      runBus.start({
+        type: "attach",
+        sessionKey,
+        startedAt,
+        user: { id: userMessageId, text: params.displayText, createdAt: startedAt },
+        assistantId: assistantMessageId,
+        ...(params.agent ?? params.assistantAgent ? { agent: params.agent ?? params.assistantAgent } : {}),
+        ...(params.model ? { model: params.model } : {}),
+      })
+    }
+
+    const replyParts = new ReplyParts()
+    const transcript: object[] = []
+    // Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): each delegated task gets
+    // its own session. Needs a session to hang them on.
+    const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: cwd, parentParts: replyParts }) : undefined
+    const manager: Manager | undefined = sessionKey ? { key: sessionKey, folder: cwd, agent, model } : undefined
+    let workflowDone: WorkflowDoneEvent | undefined
+    const write = (incoming: EngineEvent) => {
+      replyParts.apply(incoming)
+      // A task_start goes on to the browser with its session and message ids.
+      const event = taskSessions ? taskSessions.apply(incoming) : incoming
+      transcript.push(event)
+      send(event)
+      // A workflow the Product Manager started or wrote to runs in the background; its runner's process ends with workflow_done.
+      if (incoming.type === "workflow_start" && manager) supervisor.start(manager, incoming)
+      else if (incoming.type === "workflow_prompt" && manager) supervisor.prompt(manager, incoming)
+      else if (incoming.type === "workflow_done") workflowDone = incoming
+    }
+
+    const env = agentEnv(playgroundRoot, opencodeConfig)
+    // Workflows start in the background unless the host says otherwise (NOMAD_WORKFLOW_MODE=sync).
+    env.NOMAD_WORKFLOW_MODE = process.env.NOMAD_WORKFLOW_MODE?.trim() || "async"
+    // Subagents the agent delegates to (Task tool) keep their conversations per
+    // session, so "resume task_id …" works on later messages.
+    if (sessionKey) {
+      env.CODENOMAD_TASK_STORE = store.tasksDir(sessionKey)
+      env.CODENOMAD_SESSION_KEY = sessionKey
+    }
+    Object.assign(env, params.extraEnv)
+    let code = 1
+    let isError = true
+    let usedModel = model
+    let usage: HistoryMessage["usage"]
+    let fallbackError: string | undefined
+    let finalText = ""
+    try {
+      const result = await runRustAgent(
+        { runner, cwd, env, prompt: params.prompt, agent, model, images: uploads.images, historyFile, asyncWorkflows: env.NOMAD_WORKFLOW_MODE?.toLowerCase() === "async" },
+        write,
+        register,
+      )
+      code = result.code
+      usedModel = result.translator.model ?? model
+      usage = result.translator.usage
+      isError = result.translator.isError || code !== 0
+      if (!result.translator.sawFinal) {
+        fallbackError = failureText(code, result.stderr)
+        write({ type: "final", text: isError ? fallbackError : replyParts.text(), isError })
+      }
+      finalText = result.translator.sawFinal ? result.translator.finalText : (fallbackError ?? replyParts.text())
+      if (params.persist || process.env.PLAYGROUND_PERSIST === "1") {
+        const warning = await recordRustTranscript(
+          playgroundRoot,
+          [{ type: "meta", cwd, prompt: params.prompt, agent: agent ?? null }, ...transcript, { type: "exit", code }],
+          env,
+        )
+        if (warning) send({ type: "stderr", line: `WARN: ${warning}` })
+      }
+      send({ type: "exit", code })
+    } catch (error) {
+      finalText = error instanceof Error ? error.message : String(error)
+      send({ type: "exit", code: 1, error: finalText })
+    } finally {
+      if (historyFile) fs.rmSync(historyFile, { force: true })
+      if (sessionKey) {
+        activeRuns.delete(sessionKey)
+        abortListeners.delete(sessionKey)
+        const stopped = aborted
+        const names = params.attachmentNames
+        const attachments: HistoryAttachment[] = [
+          ...names.filter((name) => !uploads.attachments.some((a) => a.filename === name)).map((filename) => ({ filename })),
+          ...uploads.attachments,
+        ]
+        // Tasks still open when the run ended keep what they did.
+        taskSessions?.finish({ stopped })
+        const saved = replyParts.finish({ stopped, isError, fallbackError })
+        const label = agent ?? params.assistantAgent
+        const messages: HistoryMessage[] = [
+          {
+            id: userMessageId,
+            role: "user",
+            text: params.displayText,
+            createdAt: startedAt,
+            ...(attachments.length ? { attachments } : {}),
+          },
+          {
+            id: assistantMessageId,
+            role: "assistant",
+            text: saved.text,
+            parts: saved.parts,
+            createdAt: Date.now(),
+            engine: "claude-code-rust",
+            ...(label ? { agent: label } : {}),
+            ...(usedModel ? { model: usedModel } : {}),
+            ...(usage ? { usage } : {}),
+            ...(isError && !stopped ? { isError: true } : {}),
+          },
+        ]
+        try {
+          store.appendHistory(sessionKey, messages)
+        } catch (error) {
+          app.log?.warn?.({ error }, "local engine: could not save history")
+        }
+        // Pages watching the run are told it is over once its history is saved, so what they reload is complete.
+        runBus.end(sessionKey)
+        // Whatever was waiting for this session to be free (a runner's notification) can go in now.
+        supervisor.sessionIdle(sessionKey)
+      }
+    }
+    return { code, isError, stopped: aborted, finalText, workflowDone }
+  }
+
   const run = async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = RunSchema.safeParse(request.body ?? {})
     if (!parsed.success) {
@@ -434,122 +650,43 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
       }
     }
 
-    // Earlier turns, read before this run adds to them.
-    const history = sessionKey ? historyForAgent(store.readHistory(sessionKey)) : []
     const uploads = saveUploads(store, sessionKey, body.uploads)
     const prompt = [body.prompt, ...uploads.promptLines].filter((part) => part.trim()).join("\n\n") || "(see attached image)"
     // "claude-code" is the UI's name for the full agent (no --agent).
     const requestedAgent = body.agent ?? (localSession?.agent || undefined)
     const agent = requestedAgent && requestedAgent !== FULL_AGENT ? requestedAgent : undefined
     const model = body.model ?? (localSession?.model?.modelId || undefined)
-    let historyFile: string | undefined
-    if (history.length) {
-      historyFile = path.join(os.tmpdir(), `codenomad-history-${randomUUID()}.json`)
-      fs.writeFileSync(historyFile, JSON.stringify(history))
-    }
 
-    const register = (child: ChildProcess) => {
-      if (sessionKey) activeRuns.set(sessionKey, child)
-    }
     // A closed page (reload, sleep, network blip) does not stop the run: it
     // finishes and is saved to history. Only Stop (/abort) ends it early.
     reply.raw.on("error", () => {})
-    let aborted = false
-    if (sessionKey) abortListeners.set(sessionKey, () => (aborted = true))
-
     const send = startStream(reply)
-    const replyParts = new ReplyParts()
-    const transcript: object[] = []
-    // Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): each delegated task gets
-    // its own session. Needs a session to hang them on.
-    const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: cwd, parentParts: replyParts }) : undefined
-    const write = (incoming: EngineEvent) => {
-      replyParts.apply(incoming)
-      // A task_start goes on to the browser with its session and message ids.
-      const event = taskSessions ? taskSessions.apply(incoming) : incoming
-      transcript.push(event)
-      send(event)
-    }
-
-    const env = agentEnv(playgroundRoot, opencodeConfig)
-    // Subagents the agent delegates to (Task tool) keep their conversations per
-    // session, so "resume task_id …" works on later messages.
-    if (sessionKey) env.CODENOMAD_TASK_STORE = store.tasksDir(sessionKey)
-    const startedAt = Date.now()
-    let code = 1
-    let isError = true
-    let usedModel = model
-    let usage: HistoryMessage["usage"]
-    let fallbackError: string | undefined
     try {
-      const result = await runRustAgent(
-        { runner, cwd, env, prompt, agent, model, images: uploads.images, historyFile },
-        write,
-        register,
-      )
-      code = result.code
-      usedModel = result.translator.model ?? model
-      usage = result.translator.usage
-      isError = result.translator.isError || code !== 0
-      if (!result.translator.sawFinal) {
-        fallbackError = failureText(code, result.stderr)
-        write({ type: "final", text: isError ? fallbackError : replyParts.text(), isError })
-      }
-      if (body.persist || process.env.PLAYGROUND_PERSIST === "1") {
-        const warning = await recordRustTranscript(
-          playgroundRoot,
-          [{ type: "meta", cwd, prompt, agent: agent ?? null }, ...transcript, { type: "exit", code }],
-          env,
-        )
-        if (warning) send({ type: "stderr", line: `WARN: ${warning}` })
-      }
-      send({ type: "exit", code })
-    } catch (error) {
-      send({ type: "exit", code: 1, error: error instanceof Error ? error.message : String(error) })
+      await executeRun({
+        sessionKey,
+        cwd,
+        prompt,
+        displayText: body.displayText ?? body.prompt,
+        agent,
+        model,
+        uploads,
+        attachmentNames: body.attachmentNames ?? [],
+        messageIds: body.messageIds,
+        persist: body.persist,
+        history: true,
+        playgroundRoot,
+        runner,
+        opencodeConfig,
+        send,
+      })
     } finally {
-      if (historyFile) fs.rmSync(historyFile, { force: true })
-      if (sessionKey) {
-        activeRuns.delete(sessionKey)
-        abortListeners.delete(sessionKey)
-        const stopped = aborted
-        const names = body.attachmentNames ?? []
-        const attachments: HistoryAttachment[] = [
-          ...names.filter((name) => !uploads.attachments.some((a) => a.filename === name)).map((filename) => ({ filename })),
-          ...uploads.attachments,
-        ]
-        // Tasks still open when the run ended keep what they did.
-        taskSessions?.finish({ stopped })
-        const saved = replyParts.finish({ stopped, isError, fallbackError })
-        const messages: HistoryMessage[] = [
-          {
-            id: body.messageIds?.user ?? `msg_lu_${startedAt.toString(36)}`,
-            role: "user",
-            text: body.displayText ?? body.prompt,
-            createdAt: startedAt,
-            ...(attachments.length ? { attachments } : {}),
-          },
-          {
-            id: body.messageIds?.assistant ?? `msg_la_${startedAt.toString(36)}`,
-            role: "assistant",
-            text: saved.text,
-            parts: saved.parts,
-            createdAt: Date.now(),
-            engine: "claude-code-rust",
-            ...(agent ? { agent } : {}),
-            ...(usedModel ? { model: usedModel } : {}),
-            ...(usage ? { usage } : {}),
-            ...(isError && !stopped ? { isError: true } : {}),
-          },
-        ]
-        try {
-          store.appendHistory(sessionKey, messages)
-        } catch (error) {
-          request.log?.warn?.({ error }, "local engine: could not save history")
-        }
-      }
       if (canWrite(reply)) reply.raw.end()
     }
   }
+
+  // (After executeRun exists: the notification is a run.) A runner that was working when the server stopped is gone: release the worktree it held, and tell the manager that was waiting for it.
+  supervisor.restoreInbox()
+  supervisor.recoverInterrupted(store.reconcileInterruptedWorkflows())
 
   const bad = (reply: FastifyReply, error: string, code = 400) => {
     reply.code(code)
@@ -575,6 +712,62 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post("/api/local-engine/run", { bodyLimit: RUN_BODY_LIMIT }, (request, reply) => run(request, reply))
 
+  /**
+   * Follows the session's run live. A run going now is replayed from its start and followed to its end
+   * (`{type:"attach",…}` first, then the run's own events, ending with `exit`). With `wait=1` and nothing running but a
+   * workflow's notification pending, the call is held open until that run starts. Otherwise `{type:"idle"}` and the
+   * stream ends. Reconnect after each end while the session is `watching`.
+   */
+  app.get("/api/local-engine/attach", async (request, reply) => {
+    const query = (request.query ?? {}) as Record<string, unknown>
+    const sessionKey = str(query.sessionKey)
+    if (!sessionKey || !safeKey(sessionKey)) return bad(reply, "sessionKey is required")
+    const wait = str(query.wait) === "1"
+    const send = startStream(reply)
+    let stop: (() => void) | undefined
+    let timer: ReturnType<typeof setInterval> | undefined
+    let finished = false
+    const finish = () => {
+      if (finished) return
+      finished = true
+      stop?.()
+      if (timer) clearInterval(timer)
+      if (canWrite(reply)) reply.raw.end()
+    }
+    reply.raw.on("close", finish)
+    reply.raw.on("error", () => {})
+    const follow = (): boolean => {
+      const header = runBus.current(sessionKey)
+      if (!header) return false
+      send(header)
+      stop = runBus.follow(sessionKey, (event) => {
+        if (event === null) return finish()
+        send(event as EngineEvent)
+      })
+      return true
+    }
+    if (follow()) return
+    if (!wait || !supervisor.watching(sessionKey)) {
+      send({ type: "idle" })
+      return finish()
+    }
+    // Hold the connection until the pending run starts (or there is nothing pending any more).
+    let beats = 0
+    timer = setInterval(() => {
+      if (finished) return
+      if (follow()) {
+        clearInterval(timer)
+        timer = undefined
+      } else if (!supervisor.watching(sessionKey)) {
+        send({ type: "idle" })
+        finish()
+      } else if (++beats % 30 === 0) {
+        send({ type: "ping" })
+      }
+    }, 250)
+    timer.unref?.()
+  })
+
   app.post("/api/local-engine/abort", async (request, reply) => {
     const parsed = SessionKeySchema.safeParse(request.body ?? {})
     if (!parsed.success) return bad(reply, "sessionKey is required")
@@ -589,7 +782,12 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const parsed = SessionKeySchema.safeParse(request.query ?? {})
     if (!parsed.success || !safeKey(parsed.data.sessionKey)) return bad(reply, "sessionKey is required")
     // running: a run for this session is still going (e.g. the page was reloaded mid-run).
-    return { messages: store.readHistory(parsed.data.sessionKey), running: activeRuns.has(parsed.data.sessionKey) }
+    // watching: a background workflow of this session is still working, or its notification has not been delivered yet.
+    return {
+      messages: store.readHistory(parsed.data.sessionKey),
+      running: activeRuns.has(parsed.data.sessionKey),
+      watching: supervisor.watching(parsed.data.sessionKey),
+    }
   })
 
   app.post("/api/local-engine/history/:key/truncate", async (request, reply) => {
@@ -666,6 +864,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     if (!safeKey(id)) return bad(reply, "Invalid id")
     const child = activeRuns.get(id)
     if (child) stopChild(child)
+    supervisor.forget(id)
     return { deleted: store.deleteSession(id) }
   })
 
