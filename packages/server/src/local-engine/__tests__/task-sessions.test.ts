@@ -332,3 +332,22 @@ describe("a workflow session (orchestrator) from the real agent", () => {
     expect(toOpencodeTool("nomadworks_validate", { mode: "phase0" }).tool).toBe("nomadworks_validate")
   })
 })
+
+describe("task sessions left running by a server that stopped", () => {
+  test("are marked failed at startup; finished ones and ordinary sessions are left alone", () => {
+    const { store, dir } = tmpStore()
+    const parent = store.createSession({ folder: "/work" })
+    const base = { parentId: parent.id, parentCallId: "c", folder: "/work", title: "t", agent: "a" }
+    store.upsertTaskSession({ ...base, taskId: "task_cut" })
+    store.upsertTaskSession({ ...base, taskId: "task_done" })
+    store.setTaskStatus(taskSessionId("task_done"), "completed")
+
+    expect(store.reconcileInterruptedTasks()).toBe(1)
+    expect(store.getSession(taskSessionId("task_cut"))?.taskStatus).toBe("failed")
+    expect(store.getSession(taskSessionId("task_done"))?.taskStatus).toBe("completed")
+    expect(store.getSession(parent.id)?.taskStatus).toBeUndefined()
+    // Nothing left to do the second time, and it survives a restart of the store.
+    expect(store.reconcileInterruptedTasks()).toBe(0)
+    expect(new LocalEngineStore(dir).getSession(taskSessionId("task_cut"))?.taskStatus).toBe("failed")
+  })
+})

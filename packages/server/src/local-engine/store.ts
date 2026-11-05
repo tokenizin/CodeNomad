@@ -168,6 +168,23 @@ export class LocalEngineStore {
     return { session, created: !existing }
   }
 
+  /**
+   * Task sessions still marked running when the server starts did not finish: the server that was
+   * running them stopped first. Marks them failed. Returns how many it changed.
+   */
+  reconcileInterruptedTasks(): number {
+    const sessions = this.readSessions()
+    const next = { ...sessions }
+    let changed = 0
+    for (const session of Object.values(sessions)) {
+      if (session.kind !== "task" || session.taskStatus !== "running") continue
+      next[session.id] = { ...session, taskStatus: "failed", updatedAt: Date.now() }
+      changed += 1
+    }
+    if (changed > 0) this.writeSessions(next)
+    return changed
+  }
+
   setTaskStatus(id: string, status: TaskRunStatus): void {
     const current = this.readSessions()[id]
     if (!current || current.kind !== "task") return

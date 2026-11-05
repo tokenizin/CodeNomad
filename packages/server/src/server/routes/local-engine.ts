@@ -346,6 +346,9 @@ function saveUploads(
 
 export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
   const store = deps.store ?? new LocalEngineStore(deps.settings.getDataDir())
+  // No run is alive yet, so a task session still marked running was cut off by the last shutdown.
+  const interrupted = store.reconcileInterruptedTasks()
+  if (interrupted > 0) app.log?.warn?.({ interrupted }, "local engine: marked task sessions left running by the last shutdown as failed")
   /** Lets /abort tell a run it was stopped on purpose (for the saved "(stopped)" note). */
   const abortListeners = new Map<string, () => void>()
 
