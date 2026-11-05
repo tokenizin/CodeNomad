@@ -5,7 +5,7 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { addInstance } from "./instances.ts"
 import { attachLocalRuns } from "./local-run-attach.ts"
 import { attachedLocalSessions } from "./local-run-attacher.ts"
-import { upsertLocalSessions } from "./session-api.ts"
+import { localRecordIsBusy, upsertLocalSessions } from "./session-api.ts"
 import { sessions } from "./session-state.ts"
 
 const INSTANCE = "inst-attach"
@@ -95,6 +95,52 @@ describe("following a run this tab did not start", () => {
       assert.equal(attachCalls.length, 2)
       assert.ok(attachCalls[0].includes(`sessionKey=${SESSION}`) && attachCalls[0].includes("wait=1"))
       assert.ok(calls.some((u) => u.includes("/api/local-engine/history")))
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("after a reload the list marks busy sessions working and follows them; the mark comes down when they are done", async () => {
+    const instanceId = "inst-attach-reload"
+    addInstance({ id: instanceId, folder: "/work" } as never)
+    assert.equal(localRecordIsBusy({ id: "a", folder: "/work", title: "", agent: "", createdAt: 1, updatedAt: 1 }), false)
+    assert.equal(localRecordIsBusy({ id: "a", folder: "/work", title: "", agent: "", createdAt: 1, updatedAt: 1, running: true }), true)
+    assert.equal(localRecordIsBusy({ id: "a", folder: "/work", title: "", agent: "", createdAt: 1, updatedAt: 1, taskStatus: "running" }), true)
+    assert.equal(
+      localRecordIsBusy({ id: "a", folder: "/work", title: "", agent: "", createdAt: 1, updatedAt: 1, workflow: { workflowId: "w", managerSessionId: "m", taskPath: "t", track: "implementation", status: "running" } }),
+      true,
+    )
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const { calls, fetchImpl } = fakeServer(
+      [
+        async (c) => {
+          c.enqueue(line({ type: "attach", sessionKey: "ses_lcl_busy", startedAt: 1, user: { id: "msg_lu_b", text: "go", createdAt: 1 }, assistantId: "msg_la_b" }) as never)
+          await gate
+          c.enqueue(line({ type: "final", text: "ok" }) as never)
+          c.enqueue(line({ type: "exit", code: 0 }) as never)
+        },
+      ],
+      [],
+    )
+    const realFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+    try {
+      const base = { folder: "/work", agent: "", createdAt: 1, updatedAt: 1 }
+      upsertLocalSessions(instanceId, [
+        { id: "ses_lcl_busy", title: "Busy", running: true, ...base },
+        { id: "ses_lcl_calm", title: "Calm", ...base },
+        { id: "ses_lcl_t_kid", title: "Kid", parentId: "ses_lcl_busy", kind: "task", taskStatus: "running", ...base },
+      ])
+      assert.equal(sessions().get(instanceId)?.get("ses_lcl_busy")?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get("ses_lcl_t_kid")?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get("ses_lcl_calm")?.status, "idle")
+      await sleep(100)
+      // Only the busy one is followed.
+      assert.deepEqual([...new Set(calls.filter((u) => u.includes("/attach")).map((u) => new URL(u, "http://x").searchParams.get("sessionKey")))], ["ses_lcl_busy"])
+      release()
+      await sleep(300)
+      assert.equal(sessions().get(instanceId)?.get("ses_lcl_busy")?.status, "idle")
     } finally {
       globalThis.fetch = realFetch
     }

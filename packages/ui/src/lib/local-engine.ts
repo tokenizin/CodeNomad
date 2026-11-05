@@ -147,6 +147,10 @@ export type LocalSessionRecord = {
   /** The parent's Task tool-call id, i.e. the card this session belongs to. */
   parentCallId?: string
   taskStatus?: "running" | "completed" | "failed" | "aborted"
+  /** Set by the session list: a turn is going in this session on the server now. */
+  running?: boolean
+  /** Set by the session list: a background workflow of this session is working, or its notification is not yet delivered. */
+  watching?: boolean
   /** Workflow sessions: the workflow it runs and where it stands. */
   workflow?: { workflowId: string; managerSessionId: string; taskPath: string; track: string; status: "running" | "idle" | "failed" | "aborted" }
 }

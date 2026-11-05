@@ -821,7 +821,12 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const sessions = folder
       ? [...new Map([...store.listSessions(folder, listed), ...(real ? store.listSessions(real, listed) : [])].map((s) => [s.id, s])).values()]
       : store.listSessions(undefined, listed)
-    return { sessions: sessions.sort((a, b) => b.updatedAt - a.updatedAt) }
+    // `running`: a turn is going in this session now; `watching`: a background workflow of it is still working or its
+    // notification is undelivered. A page that has just (re)loaded uses them to show what is busy and to follow it.
+    const listedSessions = sessions
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((s) => ({ ...s, running: activeRuns.has(s.id), watching: supervisor.watching(s.id) }))
+    return { sessions: listedSessions }
   })
 
   app.post("/api/local-engine/sessions", async (request, reply) => {

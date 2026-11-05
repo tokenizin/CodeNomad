@@ -115,6 +115,9 @@ describe("a background workflow through the HTTP route", () => {
     expect(session).toMatchObject({ kind: "workflow", agent: "workflow_runner", folder })
     const listed = (await app.inject({ method: "GET", url: `/api/local-engine/sessions?folder=${folder}` })).json() as any
     expect(listed.sessions.map((s: any) => s.id)).toContain("ses_lcl_wf_run1")
+    // The list says what is busy, so a page that has just reloaded can show it and follow it.
+    expect(listed.sessions.find((s: any) => s.id === manager.id)).toMatchObject({ running: false, watching: true })
+    expect(listed.sessions.find((s: any) => s.id === "ses_lcl_wf_run1")).toMatchObject({ workflow: { status: "running" } })
 
     // 3. When the runner is done, a notification arrives in the manager's session and gets a turn.
     await until(() => store.readHistory(manager.id).length === 4)

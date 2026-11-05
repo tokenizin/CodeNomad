@@ -60,7 +60,11 @@ export async function attachLocalRuns(instanceId: string, sessionId: string): Pr
         continue
       }
       const ran = await showRun(instanceId, sessionId, response)
-      if (!ran) return // idle: nothing pending
+      if (!ran) {
+        // Idle: nothing pending. A badge the session list put up (a run that ended while the page was away) comes down.
+        if (!localEngineRuns.has(key)) setSessionStatus(instanceId, sessionId, "idle")
+        return
+      }
     }
   } finally {
     attaching.delete(key)

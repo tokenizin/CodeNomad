@@ -226,6 +226,11 @@ const pendingLocalRefresh = new Set<string>()
 // Sessions made while the local engine (Claude Code CLI / Rust) is on live in
 // CodeNomad's server, not OpenCode, so they work without an OpenCode instance.
 
+/** True when the server says work is going on in the session: a turn, a delegated task, or a workflow runner. */
+export function localRecordIsBusy(record: LocalSessionRecord): boolean {
+  return record.running === true || record.taskStatus === "running" || record.workflow?.status === "running"
+}
+
 function localRecordToSession(instanceId: string, record: LocalSessionRecord, existing?: Session): Session {
   return {
     id: record.id,
@@ -235,7 +240,7 @@ function localRecordToSession(instanceId: string, record: LocalSessionRecord, ex
     parentId: record.parentId ?? null,
     agent: existing?.agent || record.agent || "",
     model: existing?.model?.modelId ? existing.model : record.model ?? { providerId: "", modelId: "" },
-    status: existing?.status ?? "idle",
+    status: existing?.status ?? (localRecordIsBusy(record) ? "working" : "idle"),
     retry: existing?.retry ?? null,
     idleSince: existing?.idleSince ?? null,
     version: existing?.version || "0",
@@ -259,6 +264,11 @@ export function upsertLocalSessions(instanceId: string, records: LocalSessionRec
     prependSessionListId(instanceId, record.id)
   }
   syncInstanceSessionIndicator(instanceId)
+  // After a reload the page is not streaming anything: follow each session the server says is busy, so its
+  // output appears and its badge clears when it ends. (Declared below; called only after the module has loaded.)
+  for (const record of records) {
+    if (record.running || record.watching) followLocalRuns(instanceId, record.id)
+  }
 }
 
 // ---------------------------------------------------------------- background workflows
