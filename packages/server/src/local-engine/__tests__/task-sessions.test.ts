@@ -351,3 +351,55 @@ describe("task sessions left running by a server that stopped", () => {
     expect(new LocalEngineStore(dir).getSession(taskSessionId("task_cut"))?.taskStatus).toBe("failed")
   })
 })
+
+describe("OpenCode's tool surface from the real agent", () => {
+  const parts = () => {
+    const t = new RustStreamTranslator()
+    const reply = new ReplyParts()
+    for (const l of fixture("rust-protocol1-tools.ndjson")) for (const e of t.feed(l)) reply.apply(e)
+    return reply.parts.flatMap((p) => (p.type === "tool" ? [p] : []))
+  }
+
+  test("each tool is shown as the OpenCode tool whose card draws it", () => {
+    expect(parts().map((p) => p.tool)).toEqual(["todowrite", "edit", "grep", "glob", "webfetch", "todoread"])
+  })
+
+  test("a todo list reaches the UI in canonical form", () => {
+    const todo = parts()[0]
+    expect(todo.status).toBe("completed")
+    const todos = todo.input.todos as Array<Record<string, unknown>>
+    expect(todos.map((t) => [t.content, t.status, t.priority])).toEqual([
+      ["Fix the answer", "in_progress", "medium"],
+      ["Check it", "pending", "high"],
+    ])
+  })
+
+  test("an edit has the input names the edit card reads, and its output is a unified diff", () => {
+    const edit = parts()[1]
+    expect(edit.input.filePath).toMatch(/src\/app\.ts$/)
+    expect(edit.input.oldString).toBe("answer = 41")
+    expect(edit.input.newString).toBe("answer = 42")
+    expect("old_string" in edit.input).toBe(false)
+    expect(edit.output).toMatch(/^--- .*app\.ts\n\+\+\+ .*app\.ts\n@@ -1,2 \+1,2 @@\n-export const answer = 41\n\+export const answer = 42\n/)
+  })
+
+  test("search and fetch results come through as text", () => {
+    const [, , grep, glob, fetch] = parts()
+    expect(grep.output).toContain("Line 1: export const answer = 42")
+    expect(glob.output).toMatch(/app\.ts\n$/)
+    expect(fetch.input.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/doc$/)
+    expect(fetch.output).toBe("# Docs\n\nSee [more](/more).")
+  })
+
+  test("the mapping, case by case", () => {
+    expect(toOpencodeTool("Edit", { file_path: "/a", old_string: "x", new_string: "y", replace_all: true })).toEqual({
+      tool: "edit",
+      input: { filePath: "/a", oldString: "x", newString: "y", replaceAll: true },
+    })
+    expect(toOpencodeTool("Grep", { pattern: "p" })).toEqual({ tool: "grep", input: { pattern: "p" } })
+    expect(toOpencodeTool("Glob", { pattern: "*.ts" }).tool).toBe("glob")
+    expect(toOpencodeTool("WebFetch", { url: "https://x" }).tool).toBe("webfetch")
+    expect(toOpencodeTool("TodoWrite", { todos: [] }).tool).toBe("todowrite")
+    expect(toOpencodeTool("TodoRead", {}).tool).toBe("todoread")
+  })
+})

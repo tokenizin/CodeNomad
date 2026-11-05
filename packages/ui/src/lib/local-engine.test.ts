@@ -3,6 +3,7 @@ import { describe, it as test } from "node:test"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { isRenderableDiffText } from "./diff-utils.ts"
 
 import {
   buildLocalEnginePrompt,
@@ -397,5 +398,47 @@ describe("a workflow session (orchestrator) in the live reply", () => {
     const part = toOpencodePart("ses_parent", "msg_a", tool(reply.result().parts)[0], 0)
     assert.equal(part.tool, "task")
     assert.equal(part.state.metadata.sessionId, reply.tasks[0].sessionId)
+  })
+})
+
+describe("OpenCode's tools in the live reply (real agent output)", () => {
+  const cards = () => {
+    const { reply } = replay(envelopes("task-envelopes-tools.ndjson"))
+    return tool(reply.result().parts)
+  }
+
+  test("the run shows each tool as the card OpenCode would draw", () => {
+    assert.deepEqual(cards().map((c) => c.tool), ["todowrite", "edit", "grep", "glob", "webfetch", "todoread"])
+    assert.ok(cards().every((c) => c.status === "completed"))
+  })
+
+  test("a todo list is put where the todo card and the plan panel read it", () => {
+    const part = toOpencodePart("ses", "msg", cards()[0], 0)
+    assert.equal(part.tool, "todowrite")
+    assert.equal(part.state.status, "completed")
+    assert.deepEqual(part.state.metadata.todos.map((t: any) => [t.content, t.status]), [["Fix the answer", "in_progress"], ["Check it", "pending"]])
+  })
+
+  test("a todo list is there while the call is running or failed too", () => {
+    const todos = [{ id: "1", content: "x", status: "pending", priority: "low" }]
+    for (const status of ["running", "error"] as const) {
+      const part = toOpencodePart("s", "m", { type: "tool", id: "c", tool: "todowrite", input: { todos }, status, output: "no", startedAt: 1 }, 0)
+      assert.deepEqual(part.state.metadata.todos, todos, status)
+    }
+  })
+
+  test("an edit's output is a diff the edit card can draw, with the input names it reads", () => {
+    const edit = cards()[1]
+    assert.match(String(edit.input.filePath), /app\.ts$/)
+    const part = toOpencodePart("ses", "msg", edit, 0)
+    assert.equal(isRenderableDiffText(part.state.output), true)
+    assert.equal(part.state.input.oldString, "answer = 41")
+  })
+
+  test("other tools get no todo metadata", () => {
+    for (const card of cards().slice(1)) assert.equal("todos" in toOpencodePart("s", "m", card, 0).state.metadata, false, card.tool)
+    // A todowrite whose input is not a list is not treated as one.
+    const odd = toOpencodePart("s", "m", { type: "tool", id: "c", tool: "todowrite", input: { todos: "nope" }, status: "completed", output: "", startedAt: 1 }, 0)
+    assert.deepEqual(odd.state.metadata, {})
   })
 })

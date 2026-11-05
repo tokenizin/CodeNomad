@@ -169,7 +169,10 @@ export function toOpencodePart(sessionId: string, messageId: string, part: Histo
   const time = { start: part.startedAt, ...(part.endedAt ? { end: part.endedAt } : {}) }
   // A Task card names its child session in metadata.sessionId — that is how the task
   // renderer finds the delegated task's own steps (it does the same for OpenCode).
-  const link = part.childSessionId ? { metadata: { sessionId: part.childSessionId } } : {}
+  // The todo card and the Status tab's plan read the list from metadata, not from the input.
+  const todos = part.tool === "todowrite" && Array.isArray(part.input.todos) ? part.input.todos : undefined
+  const meta = { ...(part.childSessionId ? { sessionId: part.childSessionId } : {}), ...(todos ? { todos } : {}) }
+  const link = Object.keys(meta).length ? { metadata: meta } : {}
   const state =
     part.status === "running"
       ? { status: "running", input: part.input, time, ...link }
@@ -180,7 +183,7 @@ export function toOpencodePart(sessionId: string, messageId: string, part: Histo
             input: part.input,
             output: part.output ?? "",
             title: part.tool,
-            metadata: part.childSessionId ? { sessionId: part.childSessionId } : {},
+            metadata: meta,
             time: { ...time, end: part.endedAt ?? part.startedAt },
           }
   return { id, sessionID: sessionId, messageID: messageId, type: "tool", callID: part.id, tool: part.tool, state }

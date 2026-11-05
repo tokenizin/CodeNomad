@@ -123,6 +123,30 @@ export function toOpencodeTool(name: string, input: Record<string, unknown>): { 
     // Subagent delegation: same card as OpenCode's task tool ([subagent] description).
     case "Task":
       return { tool: "task", input }
+    // OpenCode's own tools: same names and input shapes, so the existing cards draw them. An Edit's
+    // output is a unified diff (the edit card renders it); a TodoWrite's list is shown as the plan.
+    case "Edit": {
+      const input_ = input as Record<string, unknown>
+      return {
+        tool: "edit",
+        input: {
+          ...(filePath ? { filePath } : {}),
+          oldString: input_.old_string,
+          newString: input_.new_string,
+          ...(input_.replace_all === true ? { replaceAll: true } : {}),
+        },
+      }
+    }
+    case "Grep":
+      return { tool: "grep", input }
+    case "Glob":
+      return { tool: "glob", input }
+    case "WebFetch":
+      return { tool: "webfetch", input }
+    case "TodoWrite":
+      return { tool: "todowrite", input }
+    case "TodoRead":
+      return { tool: "todoread", input }
     // A workflow session (an orchestrator with a handover) opens its session from the same card.
     case "nomadflow_run_workflow":
     case "nomadflow_prompt_workflow": {
@@ -147,7 +171,7 @@ export function toOpencodeTool(name: string, input: Record<string, unknown>): { 
 
 function summarize(input: Record<string, unknown>): string | undefined {
   const pick =
-    input.command ?? input.filePath ?? input.file_path ?? input.name ?? input.path ?? input.task_path ??
+    input.command ?? input.filePath ?? input.file_path ?? input.name ?? input.path ?? input.task_path ?? input.pattern ?? input.url ??
     (typeof input.subagent_type === "string" ? `${input.subagent_type}: ${input.description ?? ""}` : undefined)
   if (typeof pick !== "string" || !pick.trim()) return undefined
   const line = pick.replace(/\s+/g, " ").trim()
