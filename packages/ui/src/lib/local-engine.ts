@@ -81,6 +81,18 @@ export function parseUsage(raw: unknown): LocalEngineUsage | undefined {
 
 /** A `question` event, checked. */
 export function parseQuestion(ev: Record<string, unknown>, taskId?: string): LocalQuestionView | undefined {
+  if (ev.type === "permission") {
+    if (typeof ev.id !== "string" || !ev.id || typeof ev.permission !== "string") return undefined
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+    return {
+      id: ev.id,
+      callId: typeof ev.callId === "string" ? ev.callId : "",
+      ...(taskId ? { taskId } : {}),
+      kind: "permission",
+      questions: [],
+      permission: { permission: ev.permission, patterns: strings(ev.patterns), always: strings(ev.always) },
+    }
+  }
   if (typeof ev.id !== "string" || !ev.id || !Array.isArray(ev.questions) || ev.questions.length === 0) return undefined
   return {
     id: ev.id,
@@ -334,7 +346,10 @@ export type LocalQuestionView = {
   id: string
   callId: string
   taskId?: string
+  /** `permission`: the agent asks leave to run the tool call `callId` (a permission rule says `ask`). */
+  kind?: "question" | "permission"
   questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }>
+  permission?: { permission: string; patterns: string[]; always: string[] }
 }
 
 /**
@@ -576,7 +591,7 @@ export class LocalEngineReply {
       case "task_event": {
         const task = this.tasks.find((t) => t.taskId === taskId)
         const inner = ev.event && typeof ev.event === "object" ? (ev.event as LocalEngineEvent) : undefined
-        if (inner?.type === "question") {
+        if (inner?.type === "question" || inner?.type === "permission") {
           const question = parseQuestion(inner, taskId)
           if (question) this.noteQuestion(question)
         } else if (inner?.type === "tool_result" && typeof inner.id === "string") {
@@ -634,7 +649,8 @@ export class LocalEngineReply {
         if (typeof text !== "string" || !text) return false
         return applyPlainEvent(this.parts, { type: "delta", text })
       }
-      case "question": {
+      case "question":
+      case "permission": {
         const question = parseQuestion(ev)
         if (question) this.noteQuestion(question)
         return false

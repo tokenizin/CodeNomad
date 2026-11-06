@@ -1,7 +1,8 @@
 import type { PermissionV2Reply, PermissionV2Request, EventPermissionV2Replied } from "@opencode-ai/sdk/v2"
 
 export type PermissionReply = PermissionV2Reply
-export type PermissionSource = "legacy" | "v2"
+/** `local`: requested by the Claude Code (Rust) agent; answered through CodeNomad's server. */
+export type PermissionSource = "legacy" | "v2" | "local"
 
 export interface LegacyPermissionRequest {
   id: string

@@ -69,6 +69,8 @@ export type AskedQuestion = { question: string; header: string; options: Array<{
 
 /** The events a delegated task shares with the top-level run. */
 export type PlainEvent =
+  /** The agent asks leave to run the tool call `callId` (a permission rule says `ask`); `POST /api/local-engine/permission` answers. */
+  | { type: "permission"; id: string; callId: string; permission: string; patterns: string[]; always: string[] }
   /** The agent asks the user something and waits (`POST /api/local-engine/question` answers). `callId` is the tool call it belongs to. */
   | { type: "question"; id: string; callId: string; questions: AskedQuestion[] }
   /** Usage of the latest model call: the context in use after it. */
@@ -252,6 +254,11 @@ function translatePlain(ev: any, options: { asyncWorkflows?: boolean } = {}): Pl
         isError: ev.isError === true,
       }
     }
+    case "permission": {
+      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+      if (typeof ev.id !== "string" || !ev.id || typeof ev.permission !== "string" || !ev.permission) return undefined
+      return { type: "permission", id: ev.id, callId: typeof ev.call_id === "string" ? ev.call_id : "", permission: ev.permission, patterns: strings(ev.patterns), always: strings(ev.always) }
+    }
     case "question": {
       const questions = Array.isArray(ev.questions)
         ? (ev.questions as any[])
@@ -323,6 +330,7 @@ export class RustStreamTranslator {
       case "tool":
       case "tool_result":
       case "question":
+      case "permission":
       case "usage": {
         const plain = translatePlain(ev, this.options)
         if (plain?.type === "usage") this.usage = plain.usage

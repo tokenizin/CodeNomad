@@ -110,6 +110,11 @@ const QuestionReplySchema = z.object({
   answers: z.array(z.array(z.string().max(2000)).max(50)).max(50).optional(),
   dismissed: z.boolean().optional(),
 })
+const PermissionReplySchema = z.object({
+  sessionKey: z.string().trim().min(1).max(200),
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+  reply: z.enum(["once", "always", "reject"]),
+})
 const SessionKeySchema = z.object({ sessionKey: z.string().trim().min(1).max(200) })
 const CreateSessionSchema = z.object({
   folder: z.string().trim().min(1),
@@ -831,15 +836,27 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
   app.post("/api/local-engine/question", async (request, reply) => {
     const parsed = QuestionReplySchema.safeParse(request.body ?? {})
     if (!parsed.success || !safeKey(parsed.data.sessionKey)) return bad(reply, "sessionKey and requestId are required")
-    const dir = runControlDir(parsed.data.sessionKey)
-    if (!dir) return bad(reply, "Nothing is waiting for an answer in this session", 409)
     const doc = parsed.data.dismissed ? { dismissed: true } : { answers: parsed.data.answers ?? [] }
-    const target = path.join(dir, `answer-${parsed.data.requestId}.json`)
+    return answerWaitingAgent(reply, parsed.data.sessionKey, parsed.data.requestId, doc)
+  })
+
+  /** The user's reply to a permission the agent asked for (a rule says `ask`): once, always, or reject. */
+  app.post("/api/local-engine/permission", async (request, reply) => {
+    const parsed = PermissionReplySchema.safeParse(request.body ?? {})
+    if (!parsed.success || !safeKey(parsed.data.sessionKey)) return bad(reply, "sessionKey, requestId and reply are required")
+    return answerWaitingAgent(reply, parsed.data.sessionKey, parsed.data.requestId, { reply: parsed.data.reply })
+  })
+
+  /** Puts the user's answer where the waiting agent looks (the control directory of the run the session belongs to). */
+  const answerWaitingAgent = (reply: FastifyReply, sessionKey: string, requestId: string, doc: object) => {
+    const dir = runControlDir(sessionKey)
+    if (!dir) return bad(reply, "Nothing is waiting for an answer in this session", 409)
+    const target = path.join(dir, `answer-${requestId}.json`)
     const temp = `${target}.tmp`
     fs.writeFileSync(temp, JSON.stringify(doc))
     fs.renameSync(temp, target)
     return { answered: true }
-  })
+  }
 
   app.get("/api/local-engine/history", async (request, reply) => {
     const parsed = SessionKeySchema.safeParse(request.query ?? {})

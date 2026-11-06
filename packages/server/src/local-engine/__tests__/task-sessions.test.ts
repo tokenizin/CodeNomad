@@ -450,3 +450,16 @@ describe("questions the agent asks", () => {
     expect(t.feed(line({ type: "question", questions: asked.questions }))).toEqual([])
   })
 })
+
+describe("permissions the agent asks for", () => {
+  const line = (o: object) => JSON.stringify(o)
+  test("forwarded for the run and for a task; malformed ones are dropped", () => {
+    const t = new RustStreamTranslator()
+    const ask = { id: "per_1", call_id: "b1", permission: "bash", patterns: ["rm x", 5], always: ["rm *"] }
+    expect(t.feed(line({ type: "permission", ...ask }))).toEqual([{ type: "permission", id: "per_1", callId: "b1", permission: "bash", patterns: ["rm x"], always: ["rm *"] }])
+    const [inTask] = t.feed(line({ type: "permission", task_id: "tk", parent_call_id: "p", ...ask }))
+    expect(inTask.type === "task_event" && inTask.event.type).toBe("permission")
+    expect(t.feed(line({ type: "permission", id: "per_2" }))).toEqual([])
+    expect(t.feed(line({ type: "permission", permission: "bash" }))).toEqual([])
+  })
+})

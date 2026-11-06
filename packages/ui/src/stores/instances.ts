@@ -353,8 +353,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
-      // A question the Claude Code (Rust) agent asked is not OpenCode's to know about.
-      if (!remoteIds.has(entry.id) && getQuestionSource(instanceId, entry.id) !== "local") {
+      // A permission the Claude Code (Rust) agent asked for is not OpenCode's to know about.
+      if (!remoteIds.has(entry.id) && getPermissionSource(instanceId, entry.id) !== "local") {
         removePermissionFromQueue(instanceId, entry.id)
         removePermissionV2(instanceId, entry.id)
       }
@@ -406,7 +406,8 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
 
     // Remove any stale local requests missing from server.
     for (const entry of local) {
-      if (!remoteIds.has(entry.id)) {
+      // A question the Claude Code (Rust) agent asked is not OpenCode's to know about.
+      if (!remoteIds.has(entry.id) && getQuestionSource(instanceId, entry.id) !== "local") {
         removeQuestionFromQueue(instanceId, entry.id)
         removeQuestionV2(instanceId, entry.id)
       }
@@ -1378,6 +1379,14 @@ async function sendPermissionResponse(
   reply: PermissionReply,
   message?: string,
 ): Promise<void> {
+  // Asked by the Claude Code (Rust) agent: CodeNomad's server passes the reply on to it.
+  if (getPermissionSource(instanceId, requestId) === "local") {
+    await serverApi.answerLocalPermission(sessionId, requestId, reply)
+    markPermissionReplied(instanceId, requestId)
+    removePermissionFromQueue(instanceId, requestId)
+    removePermissionV2(instanceId, requestId)
+    return
+  }
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")

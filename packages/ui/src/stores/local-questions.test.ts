@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it as test } from "node:test"
 
 import { LocalEngineReply } from "../lib/local-engine.ts"
-import { addInstance, getQuestionQueue, sendQuestionReject, sendQuestionReply } from "./instances.ts"
+import { addInstance, getPermissionQueue, getQuestionQueue, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "./instances.ts"
 import { settleLocalQuestions, syncLocalQuestions } from "./local-questions.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { upsertLocalSessions } from "./session-api.ts"
@@ -84,5 +84,40 @@ describe("questions the Claude Code (Rust) agent asks", () => {
     reply.apply({ type: "task_end", taskId: "t1", parentCallId: "p1", status: "aborted" })
     syncLocalQuestions(instance, reply, manager)
     assert.equal(getQuestionQueue(instance).length, 0, "a stopped task's question is withdrawn")
+  })
+
+  test("a permission request is shown in the permission UI and the reply goes to this server", async () => {
+    const instance = "inst-permissions"
+    addInstance({ id: instance, folder: "/work" } as never)
+    const reply = new LocalEngineReply()
+    reply.apply({ type: "permission", id: "per_1", callId: "b1", permission: "bash", patterns: ["rm -rf build"], always: ["rm *"] })
+    syncLocalQuestions(instance, reply, manager)
+    const [request] = getPermissionQueue(instance) as any[]
+    assert.equal(request.id, "per_1")
+    assert.equal(request.permission, "bash")
+    assert.deepEqual(request.patterns, ["rm -rf build"])
+    assert.deepEqual(request.tool, { messageID: "msg_la_m", callID: "b1" })
+
+    const calls: Array<{ url: string; body: any }> = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) })
+      return new Response(JSON.stringify({ answered: true }), { headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+    try {
+      await sendPermissionResponse(instance, "ses_lcl_m", "per_1", "always")
+      assert.ok(calls[0].url.endsWith("/api/local-engine/permission"))
+      assert.deepEqual(calls[0].body, { sessionKey: "ses_lcl_m", requestId: "per_1", reply: "always" })
+      assert.equal(getPermissionQueue(instance).length, 0, "answered: taken down")
+    } finally {
+      globalThis.fetch = realFetch
+    }
+    // When the tool call returns on its own, the request goes.
+    reply.apply({ type: "permission", id: "per_2", callId: "b2", permission: "edit", patterns: ["a.txt"], always: ["a.txt"] })
+    syncLocalQuestions(instance, reply, manager)
+    assert.equal(getPermissionQueue(instance).length, 1)
+    reply.apply({ type: "tool_result", id: "b2", name: "edit", output: "x", isError: false })
+    syncLocalQuestions(instance, reply, manager)
+    assert.equal(getPermissionQueue(instance).length, 0)
   })
 })

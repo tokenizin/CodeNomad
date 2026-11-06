@@ -727,6 +727,11 @@ export const serverApi = {
     return request("/api/local-engine/question", { method: "POST", body: JSON.stringify({ sessionKey, requestId, ...reply }) })
   },
 
+  /** The user's reply (`once`, `always`, `reject`) to a permission the Claude Code (Rust) agent asked for. */
+  answerLocalPermission(sessionKey: string, requestId: string, reply: "once" | "always" | "reject"): Promise<{ answered: boolean }> {
+    return request("/api/local-engine/permission", { method: "POST", body: JSON.stringify({ sessionKey, requestId, reply }) })
+  },
+
   fetchLocalEngineHistory(
     sessionKey: string,
   ): Promise<{ messages: import("./local-engine").LocalHistoryMessage[]; running?: boolean; watching?: boolean }> {

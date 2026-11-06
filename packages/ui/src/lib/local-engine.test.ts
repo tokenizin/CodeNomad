@@ -498,3 +498,15 @@ test("a question the agent asks is tracked until its tool call returns, for the 
   reply.apply({ type: "question", id: "q", callId: "x", questions: [] })
   assert.equal(reply.hasQuestionChanges(), false)
 })
+
+test("a permission the agent asks for is tracked like a question, until its tool call returns", () => {
+  const reply = new LocalEngineReply()
+  reply.apply({ type: "permission", id: "per_1", callId: "b1", permission: "bash", patterns: ["rm x"], always: ["rm *"] })
+  const { asked } = reply.takeQuestionChanges()
+  assert.deepEqual(asked, [{ id: "per_1", callId: "b1", kind: "permission", questions: [], permission: { permission: "bash", patterns: ["rm x"], always: ["rm *"] } }])
+  reply.apply({ type: "tool_result", id: "b1", name: "bash", output: "ran", isError: false })
+  assert.deepEqual(reply.takeQuestionChanges().settled, ["per_1"])
+  reply.apply({ type: "permission", id: "", callId: "b2", permission: "bash" })
+  reply.apply({ type: "permission", id: "per_2", callId: "b2" })
+  assert.equal(reply.hasQuestionChanges(), false)
+})

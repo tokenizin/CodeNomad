@@ -11,8 +11,24 @@ import { registerLocalEngineRoutes } from "../../server/routes/local-engine"
 import { LocalEngineStore } from "../store"
 
 const AGENT = String.raw`#!/bin/bash
+PROMPT=""
+while [ $# -gt 0 ]; do case "$1" in -p) PROMPT="$2"; shift 2;; *) shift;; esac; done
 emit() { printf '%s\n' "$1"; }
 emit '{"type":"meta","model":"fake","agent":"product_manager","protocol":2}'
+if [[ "$PROMPT" == *"needs permission"* ]]; then
+  emit '{"type":"tool","id":"b1","name":"bash","input":{"command":"rm -rf build"}}'
+  emit '{"type":"permission","id":"per_1","call_id":"b1","permission":"bash","patterns":["rm -rf build"],"always":["rm *"]}'
+  for i in $(seq 1 200); do
+    if [ -e "$NOMAD_CONTROL_DIR/answer-per_1.json" ]; then
+      GOT=$(cat "$NOMAD_CONTROL_DIR/answer-per_1.json"); rm -f "$NOMAD_CONTROL_DIR/answer-per_1.json"
+      emit '{"type":"tool_result","id":"b1","name":"bash","output":"ran","isError":false}'
+      emit "{\"type\":\"final\",\"text\":\"got $(echo "$GOT" | sed 's/"/\\"/g')\"}"
+      exit 0
+    fi
+    sleep 0.05
+  done
+  emit '{"type":"final","text":"nobody answered"}'; exit 0
+fi
 emit '{"type":"tool","id":"c1","name":"question","input":{"questions":[{"question":"Which format?","header":"Format","options":[{"label":"CSV","description":"plain"},{"label":"JSON","description":"typed"}]}]}}'
 emit '{"type":"question","id":"que_1","call_id":"c1","questions":[{"question":"Which format?","header":"Format","options":[{"label":"CSV","description":"plain"},{"label":"JSON","description":"typed"}]}]}'
 for i in $(seq 1 200); do
@@ -96,6 +112,27 @@ describe("a question the agent asks", () => {
     await answerWhenAsked(session.id, { dismissed: true })
     const events = (await running).body.split("\n").filter(Boolean).map((l) => JSON.parse(l))
     expect(events.find((e) => e.type === "final").text).toContain('"dismissed":true')
+  })
+
+  test("a permission the agent asks for is answered once, always or reject", async () => {
+    for (const reply of ["once", "always", "reject"] as const) {
+      const session = store.createSession({ folder, agent: "product_manager" })
+      const running = app.inject({ method: "POST", url: "/api/local-engine/run", payload: { prompt: "this needs permission", sessionKey: session.id, cwd: folder, agent: "product_manager" } })
+      let answered = 0
+      for (let i = 0; i < 200 && answered !== 200; i += 1) {
+        const res = await app.inject({ method: "POST", url: "/api/local-engine/permission", payload: { sessionKey: session.id, requestId: "per_1", reply } })
+        answered = res.statusCode
+        if (answered !== 200) await sleep(25)
+      }
+      expect(answered).toBe(200)
+      const events = (await running).body.split("\n").filter(Boolean).map((l) => JSON.parse(l))
+      expect(events.find((e) => e.type === "permission")).toMatchObject({ id: "per_1", callId: "b1", permission: "bash", patterns: ["rm -rf build"], always: ["rm *"] })
+      expect(events.find((e) => e.type === "final").text).toContain(`"reply":"${reply}"`)
+    }
+    // A reply that is not one of OpenCode's three is refused.
+    const idle = store.createSession({ folder, agent: "product_manager" })
+    expect((await app.inject({ method: "POST", url: "/api/local-engine/permission", payload: { sessionKey: idle.id, requestId: "per_1", reply: "maybe" } })).statusCode).toBe(400)
+    expect((await app.inject({ method: "POST", url: "/api/local-engine/permission", payload: { sessionKey: idle.id, requestId: "per_1", reply: "once" } })).statusCode).toBe(409)
   })
 
   test("no run, or a bad request id, is refused", async () => {
