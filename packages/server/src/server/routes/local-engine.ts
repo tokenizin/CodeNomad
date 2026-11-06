@@ -236,6 +236,8 @@ export function checkCwd(cwd: string, roots: string[]): string | null {
 // ---------------------------------------------------------------- process helpers
 
 const activeRuns = new Map<string, ChildProcess>()
+/** Per running session: the directory the agent watches for `stop-<task_id>` markers (stopping one delegated task). */
+const controlDirs = new Map<string, string>()
 
 function stopChild(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return
@@ -523,9 +525,14 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     env.NOMAD_WORKFLOW_MODE = process.env.NOMAD_WORKFLOW_MODE?.trim() || "async"
     // Subagents the agent delegates to (Task tool) keep their conversations per
     // session, so "resume task_id …" works on later messages.
+    let controlDir: string | undefined
     if (sessionKey) {
       env.CODENOMAD_TASK_STORE = store.tasksDir(sessionKey)
       env.CODENOMAD_SESSION_KEY = sessionKey
+      // The agent looks here for a marker that asks it to stop one task of the run (POST /abort for a task session).
+      controlDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-control-"))
+      controlDirs.set(sessionKey, controlDir)
+      env.NOMAD_CONTROL_DIR = controlDir
     }
     Object.assign(env, params.extraEnv)
     let code = 1
@@ -563,6 +570,10 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
       send({ type: "exit", code: 1, error: finalText })
     } finally {
       if (historyFile) fs.rmSync(historyFile, { force: true })
+      if (controlDir) {
+        controlDirs.delete(sessionKey!)
+        fs.rmSync(controlDir, { recursive: true, force: true })
+      }
       if (sessionKey) {
         activeRuns.delete(sessionKey)
         abortListeners.delete(sessionKey)
@@ -772,11 +783,37 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const parsed = SessionKeySchema.safeParse(request.body ?? {})
     if (!parsed.success) return bad(reply, "sessionKey is required")
     const child = activeRuns.get(parsed.data.sessionKey)
-    if (!child) return { aborted: false }
+    if (!child) {
+      // A delegated task's own session: Stop ends that task only; the run it belongs to goes on.
+      const stopped = stopTask(parsed.data.sessionKey)
+      return stopped ? { aborted: true, task: true } : { aborted: false }
+    }
     abortListeners.get(parsed.data.sessionKey)?.()
     stopChild(child)
     return { aborted: true }
   })
+
+  /**
+   * Asks the run a task belongs to to stop just that task. The task's session is a child of the session that
+   * dispatched it (or of another task); the run is the nearest ancestor that is going. False when the session
+   * is not a running task, or none of its ancestors has a run.
+   */
+  const stopTask = (sessionId: string): boolean => {
+    const session = store.getSession(sessionId)
+    if (!session || session.kind !== "task" || session.taskStatus !== "running" || !session.taskId) return false
+    let ancestor = session.parentId ? store.getSession(session.parentId) : undefined
+    let root = session.parentId
+    for (let depth = 0; root && depth < 16; depth += 1) {
+      const dir = controlDirs.get(root)
+      if (dir && activeRuns.has(root)) {
+        fs.writeFileSync(path.join(dir, `stop-${session.taskId}`), "")
+        return true
+      }
+      root = ancestor?.parentId
+      ancestor = root ? store.getSession(root) : undefined
+    }
+    return false
+  }
 
   app.get("/api/local-engine/history", async (request, reply) => {
     const parsed = SessionKeySchema.safeParse(request.query ?? {})

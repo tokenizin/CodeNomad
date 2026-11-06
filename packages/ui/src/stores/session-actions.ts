@@ -751,7 +751,9 @@ async function abortSessionOnce(instanceId: string, sessionId: string): Promise<
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {
   log.info("abortSession", { instanceId, sessionId })
 
-  if (hasLocalEngineRun(instanceId, sessionId)) {
+  // A local session is stopped on the server: its own run (this tab's, or one a reloaded page is only watching), or,
+  // for a delegated task's session, that task alone; the run it belongs to goes on.
+  if (hasLocalEngineRun(instanceId, sessionId) || isLocalSessionId(sessionId)) {
     await abortLocalEngineRun(instanceId, sessionId)
     return
   }
