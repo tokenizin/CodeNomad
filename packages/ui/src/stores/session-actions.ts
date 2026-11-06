@@ -22,6 +22,7 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { OpencodeApiError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { recordLocalUsage } from "./local-usage"
 import { serverApi } from "../lib/api-client"
 import {
   buildLocalEnginePrompt,
@@ -184,22 +185,6 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       isEphemeral: true,
     })
   }
-  // Token usage of the latest model call, recorded on the assistant message the
-  // way OpenCode does, so the context meter (Used / Avail) follows the run.
-  const recordUsage = (usage: LocalEngineUsage | undefined, usedModel: string | undefined) => {
-    if (!usage) return
-    store.setMessageInfo(assistantId, {
-      id: assistantId,
-      sessionID: sessionId,
-      role: "assistant",
-      providerID: RUST_PROVIDER_ID,
-      modelID: usedModel || model || session.model.modelId,
-      tokens: usageToTokens(usage),
-      cost: 0,
-      time: { created: userMessage.createdAt },
-    } as any)
-    updateSessionInfo(instanceId, sessionId)
-  }
   const textOnly = (text: string): HistoryPart[] => [{ type: "text", text }]
   // OpenCode would echo the prompt back as real parts; the local engine doesn't,
   // so the optimistic (synthetic, partly hidden) parts become the real ones.
@@ -268,8 +253,8 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     // The server has the message now; it's saved even if this page goes away.
     upsertUser("complete")
     const result = await readLocalEngineStream(response, (ev, reply, changed) => {
-      if (ev.type === "usage") recordUsage(reply.usage, reply.model)
       liveReply = reply
+      if (ev.type === "usage") recordLocalUsage(instanceId, sessionId, assistantId, reply.usage, reply.model || model || session.model.modelId, userMessage.createdAt + 1)
       for (const task of reply.takeChangedTasks()) pendingTasks.set(task.taskId, task)
       // A workflow the manager started runs in a session of its own: list it now, and keep looking for its notification.
       const started = reply.takeNewWorkflows()
@@ -288,7 +273,7 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     pendingTasks.clear()
     upsertUser("complete")
     upsertAssistant(result.parts, result.isError ? "error" : "complete")
-    recordUsage(result.usage, result.model)
+    recordLocalUsage(instanceId, sessionId, assistantId, result.usage, result.model || model || session.model.modelId, userMessage.createdAt + 1)
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
     // Tasks still running when the stream broke did not finish: stopped by the user, or cut off.

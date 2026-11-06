@@ -442,3 +442,29 @@ describe("OpenCode's tools in the live reply (real agent output)", () => {
     assert.deepEqual(odd.state.metadata, {})
   })
 })
+
+test("a model's context window becomes its limit, so the meter can show what is left", () => {
+  const provider = catalogProvider({ version: 1, model: "m", models: [{ id: "m", context: 32768 }, { id: "n" }], agents: [], commands: [] })
+  assert.deepEqual(provider.models.map((m) => m.limit), [{ context: 32768 }, undefined])
+})
+
+test("usage reaches the reply, the saved history and a task's own view (context meter)", () => {
+  const reply = new LocalEngineReply()
+  reply.apply({ type: "usage", usage: { input: 900, output: 40, reasoning: 0, cacheRead: 100 }, model: "qwen2.5:14b" })
+  reply.apply({ type: "usage", usage: { input: 1500, output: 60, reasoning: 5, cacheRead: 0 } })
+  assert.deepEqual(reply.result().usage, { input: 1500, output: 60, reasoning: 5, cacheRead: 0 })
+  assert.equal(reply.model, "qwen2.5:14b")
+
+  // A task's usage is the task's, not the run's.
+  reply.apply({ type: "task_start", taskId: "t1", sessionId: "ses_lcl_t_t1", parentSessionId: "ses_lcl_1", parentCallId: "c1", agent: "qa_engineer", description: "d", prompt: "p" })
+  reply.apply({ type: "task_event", taskId: "t1", parentCallId: "c1", event: { type: "usage", usage: { input: 300, output: 9, reasoning: 0, cacheRead: 20 } } })
+  assert.deepEqual(reply.result().usage, { input: 1500, output: 60, reasoning: 5, cacheRead: 0 })
+  assert.deepEqual(reply.result().tasks[0].usage, { input: 300, output: 9, reasoning: 0, cacheRead: 20 })
+  assert.equal(reply.takeChangedTasks().length, 1)
+
+  const [, assistant] = historyToApiMessages("ses_lcl_1", [
+    { id: "u", role: "user", text: "hi", createdAt: 1 },
+    { id: "a", role: "assistant", text: "ok", createdAt: 2, model: "qwen2.5:14b", usage: { input: 1500, output: 60, reasoning: 5, cacheRead: 0 } },
+  ])
+  assert.deepEqual((assistant.info as any).tokens, { input: 1500, output: 60, reasoning: 5, cache: { read: 0, write: 0 } })
+})

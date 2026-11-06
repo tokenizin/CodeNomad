@@ -20,6 +20,7 @@ import { syncLocalTaskSessions } from "./local-task-sessions"
 import { attachedLocalSessions as attachedSessions, setLocalRunAttacher } from "./local-run-attacher"
 import { loadMessages, registerLocalWorkflows, watchLocalWorkflows } from "./session-api"
 import { setSessionStatus } from "./session-state"
+import { recordLocalUsage } from "./local-usage"
 
 const log = getLogger("api")
 
@@ -131,6 +132,7 @@ async function showRun(instanceId: string, sessionId: string, response: Response
         return
       }
       if (!header) return
+      if (ev.type === "usage") recordLocalUsage(instanceId, sessionId, header.assistantId, reply.usage, reply.model, header.startedAt + 1)
       for (const task of reply.takeChangedTasks()) pendingTasks.set(task.taskId, task)
       const started = reply.takeNewWorkflows()
       if (started.length > 0) registerLocalWorkflows(instanceId, folder, sessionId, started)

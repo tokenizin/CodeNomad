@@ -59,13 +59,15 @@ export function extractPartialEventText(tail: string): { type: "delta" | "final"
   return { type: isDelta ? "delta" : "final", text }
 }
 
-/** Token counts of one model call. */
+/** Tokens one model call used. `input` excludes cached prompt tokens (OpenCode's convention, so the meter adds them once). */
 export type TokenUsage = { input: number; output: number; reasoning: number; cacheRead: number }
 
 const tokenCount = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0)
 
 /** The events a delegated task shares with the top-level run. */
 export type PlainEvent =
+  /** Usage of the latest model call: the context in use after it. */
+  | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "delta"; text: string }
   | { type: "tool"; id: string; name: string; input: Record<string, unknown>; summary?: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
@@ -81,8 +83,6 @@ export type EngineEvent =
   | PlainEvent
   | { type: "stderr"; line: string }
   | { type: "final"; text: string; isError: boolean; model?: string }
-  /** Token usage of the latest model call (input excludes cached prompt tokens). */
-  | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "exit"; code: number; error?: string }
   // Protocol 2 — delegated tasks.
   | ({
@@ -247,6 +247,11 @@ function translatePlain(ev: any, options: { asyncWorkflows?: boolean } = {}): Pl
         isError: ev.isError === true,
       }
     }
+    case "usage": {
+      const usage: TokenUsage = { input: tokenCount(ev.input), output: tokenCount(ev.output), reasoning: tokenCount(ev.reasoning), cacheRead: tokenCount(ev.cacheRead) }
+      if (usage.input + usage.output + usage.cacheRead === 0) return undefined
+      return { type: "usage", usage, ...(typeof ev.model === "string" ? { model: ev.model } : {}) }
+    }
     default:
       return undefined
   }
@@ -260,7 +265,7 @@ export class RustStreamTranslator {
   isError = false
   finalText = ""
   model: string | undefined
-  /** Usage of the latest model call; the context in use after it. */
+  /** Usage of the run's latest own model call (a delegated task's usage goes to its task). */
   usage: TokenUsage | undefined
   /** Wire protocol the agent announced in `meta` (1 when it didn't). */
   protocol = 1
@@ -295,21 +300,11 @@ export class RustStreamTranslator {
         ]
       case "delta":
       case "tool":
-      case "tool_result": {
-        const plain = translatePlain(ev, this.options)
-        return plain ? [plain] : []
-      }
+      case "tool_result":
       case "usage": {
-        const usage: TokenUsage = {
-          input: tokenCount(ev.input),
-          output: tokenCount(ev.output),
-          reasoning: tokenCount(ev.reasoning),
-          cacheRead: tokenCount(ev.cacheRead),
-        }
-        if (usage.input + usage.output + usage.cacheRead === 0) return []
-        this.usage = usage
-        if (typeof ev.model === "string") this.model = ev.model
-        return [{ type: "usage", usage, model: this.model }]
+        const plain = translatePlain(ev, this.options)
+        if (plain?.type === "usage") this.usage = plain.usage
+        return plain ? [plain] : []
       }
       case "workflow.start":
         return this.workflowStart(ev)
@@ -332,7 +327,7 @@ export class RustStreamTranslator {
     }
   }
 
-  /** Protocol 2: events stamped with `task_id`. Unknown kinds (usage, …) are dropped. */
+  /** Protocol 2: events stamped with `task_id`. Unknown kinds are dropped. */
   private feedTask(ev: any): EngineEvent[] {
     const ref: TaskRef = {
       taskId: ev.task_id,

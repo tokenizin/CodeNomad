@@ -19,6 +19,7 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertLocalSessions } from "./session-api"
 import { setSessionStatus } from "./session-state"
+import { recordLocalUsage } from "./local-usage"
 
 /** The status each task session was last given, so the session list is only touched on a change. */
 const lastStatus = new Map<string, LocalTaskStatus>()
@@ -68,6 +69,8 @@ export function syncLocalTaskSessions(instanceId: string, folder: string, tasks:
       updatedAt: Date.now(),
       isEphemeral: true,
     })
+
+    recordLocalUsage(instanceId, task.sessionId, task.assistantMessageId, task.usage, task.model, task.startedAt + 1)
 
     const key = statusKey(instanceId, task.sessionId)
     if (lastStatus.get(key) !== task.status) {

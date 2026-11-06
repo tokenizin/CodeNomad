@@ -166,8 +166,11 @@ describe("translator edge cases", () => {
     expect(t.isError).toBe(false)
   })
 
-  test("usage and unknown stamped events are dropped; nesting is kept", () => {
-    expect(feed({ type: "usage", input: 1, task_id: "task_a" })).toEqual([])
+  test("a task's usage is its own, empty usage and unknown stamped events are dropped; nesting is kept", () => {
+    const [u] = feed({ type: "usage", input: 1, output: 2, task_id: "task_a", parent_call_id: "c" })
+    expect(u.type === "task_event" && u.event).toEqual({ type: "usage", usage: { input: 1, output: 2, reasoning: 0, cacheRead: 0 } })
+    expect(feed({ type: "usage", input: 0, output: 0, task_id: "task_a" })).toEqual([])
+    expect(feed({ type: "weird", task_id: "task_a" })).toEqual([])
     const [e] = feed({ type: "delta", text: "x", task_id: "task_b", parent_task_id: "task_a", parent_call_id: "c9" })
     expect(e.type === "task_event" && e.parentTaskId).toBe("task_a")
   })
@@ -401,5 +404,32 @@ describe("OpenCode's tool surface from the real agent", () => {
     expect(toOpencodeTool("WebFetch", { url: "https://x" }).tool).toBe("webfetch")
     expect(toOpencodeTool("TodoWrite", { todos: [] }).tool).toBe("todowrite")
     expect(toOpencodeTool("TodoRead", {}).tool).toBe("todoread")
+  })
+})
+
+describe("token usage (the context meter)", () => {
+  const line = (o: object) => JSON.stringify(o)
+  test("a run's own usage is kept by the translator; a task's goes to the task's saved reply", () => {
+    const lines = [
+      line({ type: "meta", model: "m", protocol: 2 }),
+      line({ type: "usage", model: "m", input: 900, output: 40, reasoning: 0, cacheRead: 100 }),
+      line({ type: "task.start", task_id: "tk_u", parent_call_id: "c1", agent: "qa_engineer", description: "d", mode: "subagent", resumed: false }),
+      line({ type: "usage", task_id: "tk_u", parent_call_id: "c1", model: "m", input: 300, output: 10, reasoning: 0, cacheRead: 0 }),
+      line({ type: "delta", task_id: "tk_u", parent_call_id: "c1", text: "done" }),
+      line({ type: "usage", task_id: "tk_u", parent_call_id: "c1", model: "m", input: 450, output: 12, reasoning: 3, cacheRead: 50 }),
+      line({ type: "task.end", task_id: "tk_u", parent_call_id: "c1", status: "completed", summary: "done" }),
+      line({ type: "usage", model: "m", input: 1500, output: 60, reasoning: 0, cacheRead: 0 }),
+      line({ type: "usage", input: 0, output: 0 }),
+      line({ type: "final", text: "ok" }),
+    ]
+    const { store, translator, forwarded } = replay(lines)
+    // The manager's latest call, not the task's.
+    expect(translator.usage).toEqual({ input: 1500, output: 60, reasoning: 0, cacheRead: 0 })
+    expect(forwarded.filter((e) => e.type === "usage").length).toBe(2)
+    expect(forwarded.filter((e) => e.type === "task_event" && (e as any).event.type === "usage").length).toBe(2)
+    // The task's session shows its own latest call.
+    const saved = store.readHistory("ses_lcl_t_tk_u")
+    expect(saved[1].usage).toEqual({ input: 450, output: 12, reasoning: 3, cacheRead: 50 })
+    expect(saved[1].text).toBe("done")
   })
 })

@@ -79,7 +79,7 @@ export type HistoryMessage = {
   attachments?: HistoryAttachment[]
   /** Assistant replies: text and tool-call parts in order, for display. */
   parts?: ReplyPart[]
-  /** Assistant replies: token usage of the last model call (context in use). */
+  /** Assistant replies: tokens of the last model call (the context in use), for the context meter. */
   usage?: { input: number; output: number; reasoning: number; cacheRead: number }
 }
 

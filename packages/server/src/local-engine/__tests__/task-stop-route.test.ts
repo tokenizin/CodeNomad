@@ -24,6 +24,7 @@ for i in $(seq 1 200); do
   if [ -e "$NOMAD_CONTROL_DIR/stop-tk_a" ]; then
     rm -f "$NOMAD_CONTROL_DIR/stop-tk_a"
     emit '{"type":"task.end","task_id":"tk_a","parent_call_id":"c1","status":"aborted","summary":"Stopped by the user"}'
+    emit '{"type":"usage","model":"fake","input":700,"output":20,"reasoning":0,"cacheRead":50}'
     emit '{"type":"delta","text":"One task was stopped; the other finished."}'
     emit '{"type":"final","text":"One task was stopped; the other finished."}'
     exit 0
@@ -107,6 +108,9 @@ describe("stopping one task of a run", () => {
     const history = store.readHistory(manager.id)
     expect(history.map((m) => m.role)).toEqual(["user", "assistant"])
     expect(history[1].text).toContain("One task was stopped")
+    // The reply keeps the tokens of its last model call, for the context meter after a reload.
+    expect(history[1].usage).toEqual({ input: 700, output: 20, reasoning: 0, cacheRead: 50 })
+    expect(events.find((e) => e.type === "usage")).toMatchObject({ usage: { input: 700 } })
     // Its control directory is gone with the run, and a later stop finds nothing to do.
     expect(fs.existsSync(fs.readFileSync(log, "utf8").trim())).toBe(false)
     expect(await abort("ses_lcl_t_tk_a")).toEqual({ aborted: false })

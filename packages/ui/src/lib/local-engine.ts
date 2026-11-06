@@ -48,6 +48,8 @@ export type RustCatalogModel = {
   errorDetails?: string
   /** The model-sync provider the details came from, e.g. "ollama". */
   detailsFrom?: string
+  /** Context window in tokens, when the agent's catalog reports it (Ollama). */
+  context?: number
 }
 
 /** What the agent reports with --catalog. */
@@ -62,19 +64,22 @@ export type RustCatalog = {
   commands: Array<{ name: string; description?: string; agent?: boolean }>
 }
 
-/** Server-side settings, stored in the server config under `localEngine`. */
-/** Token usage of the latest model call, as the server reports it. */
+/** Tokens of one model call, as the server reports them (`input` excludes cached prompt tokens). */
 export type LocalEngineUsage = { input: number; output: number; reasoning: number; cacheRead: number }
 
 /** OpenCode-shaped `tokens` for a message info, so the context meter reads it. */
 export function usageToTokens(usage: LocalEngineUsage) {
-  return {
-    input: usage.input,
-    output: usage.output,
-    reasoning: usage.reasoning,
-    cache: { read: usage.cacheRead, write: 0 },
-  }
+  return { input: usage.input, output: usage.output, reasoning: usage.reasoning, cache: { read: usage.cacheRead, write: 0 } }
 }
+
+/** `usage` of a stream event (`{ usage: {…} }`), checked. */
+export function parseUsage(raw: unknown): LocalEngineUsage | undefined {
+  const usage = raw as Partial<LocalEngineUsage> | undefined
+  if (!usage || typeof usage.input !== "number") return undefined
+  return { input: usage.input, output: usage.output ?? 0, reasoning: usage.reasoning ?? 0, cacheRead: usage.cacheRead ?? 0 }
+}
+
+/** Server-side settings, stored in the server config under `localEngine`. */
 
 export type LocalEngineServerSettings = {
   playgroundRoot?: string
@@ -261,7 +266,8 @@ export function catalogProvider(catalog: RustCatalog) {
       id: model.id,
       name: model.name || model.id,
       providerId: RUST_PROVIDER_ID,
-      limit: model.limit,
+      // Model sync's limits when it has them, else the context window the agent's catalog reports (Ollama /api/show).
+      limit: model.limit ?? (typeof model.context === "number" && model.context > 0 ? { context: model.context } : undefined),
       cost: model.cost,
       capabilities: model.capabilities,
       status: model.status,
@@ -308,6 +314,8 @@ export type LocalTaskView = {
   endedAt?: number
   status: LocalTaskStatus
   parts: HistoryPart[]
+  /** Tokens of its latest model call. */
+  usage?: LocalEngineUsage
 }
 
 /**
@@ -512,7 +520,13 @@ export class LocalEngineReply {
       case "task_event": {
         const task = this.tasks.find((t) => t.taskId === taskId)
         const inner = ev.event && typeof ev.event === "object" ? (ev.event as LocalEngineEvent) : undefined
-        if (task && inner && applyPlainEvent(task.parts, inner)) this.changedTasks.add(taskId)
+        if (task && inner?.type === "usage") {
+          const usage = parseUsage(inner.usage)
+          if (usage) {
+            task.usage = usage
+            this.changedTasks.add(taskId)
+          }
+        } else if (task && inner && applyPlainEvent(task.parts, inner)) this.changedTasks.add(taskId)
         return false
       }
       case "task_end": {
@@ -564,22 +578,17 @@ export class LocalEngineReply {
         if (typeof ev.model === "string") this.model = ev.model
         if (typeof ev.note === "string" && ev.note) this.notes.push(ev.note)
         return false
+      case "usage": {
+        const usage = parseUsage(ev.usage)
+        if (!usage) return false
+        this.usage = usage
+        if (typeof ev.model === "string") this.model = ev.model
+        return false
+      }
       case "stderr":
       case "bridge_stderr":
         if (typeof ev.line === "string") this.stderrLines.push(ev.line)
         return false
-      case "usage": {
-        const usage = ev.usage as Partial<LocalEngineUsage> | undefined
-        if (!usage || typeof usage.input !== "number") return false
-        this.usage = {
-          input: usage.input,
-          output: usage.output ?? 0,
-          reasoning: usage.reasoning ?? 0,
-          cacheRead: usage.cacheRead ?? 0,
-        }
-        if (typeof ev.model === "string") this.model = ev.model
-        return false
-      }
       case "final":
         if (typeof ev.text === "string") this.finalText = ev.text
         if (ev.isError === true) this.isError = true

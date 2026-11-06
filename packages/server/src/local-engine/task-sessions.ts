@@ -22,6 +22,8 @@ type TaskRun = {
   model?: string
   startedAt: number
   parts: ReplyParts
+  /** Tokens of the task's latest model call. */
+  usage?: { input: number; output: number; reasoning: number; cacheRead: number }
   ended: boolean
 }
 
@@ -50,7 +52,11 @@ export class TaskSessions {
       case "task_start":
         return this.start(event)
       case "task_event":
-        this.runs.get(event.taskId)?.parts.apply(event.event)
+        {
+          const run = this.runs.get(event.taskId)
+          if (run && event.event.type === "usage") run.usage = event.event.usage
+          run?.parts.apply(event.event)
+        }
         break
       case "task_end":
         this.end(event.taskId, event.status, event.error)
@@ -131,6 +137,7 @@ export class TaskSessions {
         engine: "claude-code-rust",
         agent: run.agent,
         ...(run.model ? { model: run.model } : {}),
+        ...(run.usage ? { usage: run.usage } : {}),
         ...(failed ? { isError: true } : {}),
       },
     ]
