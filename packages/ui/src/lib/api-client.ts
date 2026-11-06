@@ -722,6 +722,11 @@ export const serverApi = {
     return request("/api/local-engine/abort", { method: "POST", body: JSON.stringify({ sessionKey }) })
   },
 
+  /** The user's answer to (or dismissal of) a question the Claude Code (Rust) agent asked in this session. */
+  answerLocalQuestion(sessionKey: string, requestId: string, reply: { answers?: string[][]; dismissed?: boolean }): Promise<{ answered: boolean }> {
+    return request("/api/local-engine/question", { method: "POST", body: JSON.stringify({ sessionKey, requestId, ...reply }) })
+  },
+
   fetchLocalEngineHistory(
     sessionKey: string,
   ): Promise<{ messages: import("./local-engine").LocalHistoryMessage[]; running?: boolean; watching?: boolean }> {

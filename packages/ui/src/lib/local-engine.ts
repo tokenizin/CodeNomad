@@ -79,6 +79,17 @@ export function parseUsage(raw: unknown): LocalEngineUsage | undefined {
   return { input: usage.input, output: usage.output ?? 0, reasoning: usage.reasoning ?? 0, cacheRead: usage.cacheRead ?? 0 }
 }
 
+/** A `question` event, checked. */
+export function parseQuestion(ev: Record<string, unknown>, taskId?: string): LocalQuestionView | undefined {
+  if (typeof ev.id !== "string" || !ev.id || !Array.isArray(ev.questions) || ev.questions.length === 0) return undefined
+  return {
+    id: ev.id,
+    callId: typeof ev.callId === "string" ? ev.callId : "",
+    ...(taskId ? { taskId } : {}),
+    questions: ev.questions as LocalQuestionView["questions"],
+  }
+}
+
 /** Server-side settings, stored in the server config under `localEngine`. */
 
 export type LocalEngineServerSettings = {
@@ -318,6 +329,14 @@ export type LocalTaskView = {
   usage?: LocalEngineUsage
 }
 
+/** A question the agent asked (the `question` tool) and is waiting on. `taskId`: a delegated task asked it. */
+export type LocalQuestionView = {
+  id: string
+  callId: string
+  taskId?: string
+  questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }>
+}
+
 /**
  * A background workflow the Product Manager started in this run: the Workflow Runner works in
  * a session of its own, which is listed like any other (the manager is told when it is done).
@@ -428,6 +447,10 @@ export class LocalEngineReply {
   model: string | undefined
   /** Usage of the latest model call (updated on every step of the run). */
   usage: LocalEngineUsage | undefined
+  /** Questions the agent asked and is still waiting on, and ones that were settled since the last look. */
+  readonly openQuestions: LocalQuestionView[] = []
+  private askedQuestions: LocalQuestionView[] = []
+  private settledQuestions: string[] = []
   readonly events: LocalEngineEvent[] = []
   readonly stderrLines: string[] = []
   readonly notes: string[] = []
@@ -452,6 +475,38 @@ export class LocalEngineReply {
       .join("\n\n")
   }
 
+  private noteQuestion(question: LocalQuestionView) {
+    if (this.openQuestions.some((q) => q.id === question.id)) return
+    this.openQuestions.push(question)
+    this.askedQuestions.push(question)
+  }
+
+  /** The tool call returned (answered, dismissed, or the task stopped): its question is settled. */
+  private settleQuestions(match: (q: LocalQuestionView) => boolean) {
+    for (let i = this.openQuestions.length - 1; i >= 0; i -= 1) {
+      if (!match(this.openQuestions[i])) continue
+      this.settledQuestions.push(this.openQuestions[i].id)
+      this.openQuestions.splice(i, 1)
+    }
+  }
+
+  hasQuestionChanges(): boolean {
+    return this.askedQuestions.length > 0 || this.settledQuestions.length > 0
+  }
+
+  /** Questions asked and questions settled since the last call (and forgets them). */
+  takeQuestionChanges(): { asked: LocalQuestionView[]; settled: string[] } {
+    const changes = { asked: this.askedQuestions, settled: this.settledQuestions }
+    this.askedQuestions = []
+    this.settledQuestions = []
+    return changes
+  }
+
+  /** The run is over: nothing is waiting any more. */
+  settleAllQuestions() {
+    this.settleQuestions(() => true)
+  }
+
   /** Tasks that changed since the last call (and forgets them). */
   takeChangedTasks(): LocalTaskView[] {
     const changed = this.tasks.filter((t) => this.changedTasks.has(t.taskId))
@@ -469,6 +524,7 @@ export class LocalEngineReply {
       if (task.status !== "running") continue
       task.status = status
       task.endedAt = Date.now()
+      this.settleQuestions((q) => q.taskId === task.taskId)
       task.parts = closeRunningTools(task.parts, status === "aborted" ? "Stopped" : "Did not finish")
       this.changedTasks.add(task.taskId)
       closed.push(task)
@@ -520,6 +576,12 @@ export class LocalEngineReply {
       case "task_event": {
         const task = this.tasks.find((t) => t.taskId === taskId)
         const inner = ev.event && typeof ev.event === "object" ? (ev.event as LocalEngineEvent) : undefined
+        if (inner?.type === "question") {
+          const question = parseQuestion(inner, taskId)
+          if (question) this.noteQuestion(question)
+        } else if (inner?.type === "tool_result" && typeof inner.id === "string") {
+          this.settleQuestions((q) => q.taskId === taskId && q.callId === inner.id)
+        }
         if (task && inner?.type === "usage") {
           const usage = parseUsage(inner.usage)
           if (usage) {
@@ -535,6 +597,7 @@ export class LocalEngineReply {
         const status: LocalTaskStatus = ev.status === "completed" || ev.status === "aborted" ? ev.status : "failed"
         task.status = status
         task.endedAt = Date.now()
+        this.settleQuestions((q) => q.taskId === taskId)
         task.parts = closeRunningTools(task.parts, status === "aborted" ? "Stopped" : "Did not finish")
         if (status === "failed" && typeof ev.error === "string" && ev.error) task.parts.push({ type: "text", text: ev.error })
         this.changedTasks.add(taskId)
@@ -571,8 +634,14 @@ export class LocalEngineReply {
         if (typeof text !== "string" || !text) return false
         return applyPlainEvent(this.parts, { type: "delta", text })
       }
+      case "question": {
+        const question = parseQuestion(ev)
+        if (question) this.noteQuestion(question)
+        return false
+      }
       case "tool":
       case "tool_result":
+        if (ev.type === "tool_result" && typeof ev.id === "string") this.settleQuestions((q) => !q.taskId && q.callId === ev.id)
         return applyPlainEvent(this.parts, ev)
       case "meta":
         if (typeof ev.model === "string") this.model = ev.model

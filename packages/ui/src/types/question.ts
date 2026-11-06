@@ -4,7 +4,8 @@ import type {
   EventQuestionV2Rejected,
 } from "@opencode-ai/sdk/v2"
 
-export type QuestionSource = "legacy" | "v2"
+/** `local`: asked by the Claude Code (Rust) agent; answered through CodeNomad's server. */
+export type QuestionSource = "legacy" | "v2" | "local"
 
 export type QuestionRequest = QuestionV2Request & {
   version?: string

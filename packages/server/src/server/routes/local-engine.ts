@@ -104,6 +104,12 @@ const RunSchema = z
   })
   .refine((body) => body.prompt.trim().length > 0 || body.uploads.length > 0, { message: "prompt is required" })
 
+const QuestionReplySchema = z.object({
+  sessionKey: z.string().trim().min(1).max(200),
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+  answers: z.array(z.array(z.string().max(2000)).max(50)).max(50).optional(),
+  dismissed: z.boolean().optional(),
+})
 const SessionKeySchema = z.object({ sessionKey: z.string().trim().min(1).max(200) })
 const CreateSessionSchema = z.object({
   folder: z.string().trim().min(1),
@@ -801,19 +807,39 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
   const stopTask = (sessionId: string): boolean => {
     const session = store.getSession(sessionId)
     if (!session || session.kind !== "task" || session.taskStatus !== "running" || !session.taskId) return false
-    let ancestor = session.parentId ? store.getSession(session.parentId) : undefined
-    let root = session.parentId
-    for (let depth = 0; root && depth < 16; depth += 1) {
-      const dir = controlDirs.get(root)
-      if (dir && activeRuns.has(root)) {
-        fs.writeFileSync(path.join(dir, `stop-${session.taskId}`), "")
-        return true
-      }
-      root = ancestor?.parentId
-      ancestor = root ? store.getSession(root) : undefined
-    }
-    return false
+    const dir = runControlDir(sessionId)
+    if (!dir) return false
+    fs.writeFileSync(path.join(dir, `stop-${session.taskId}`), "")
+    return true
   }
+
+  /** The control directory of the run a session belongs to: its own, or that of the nearest ancestor that is going. */
+  const runControlDir = (sessionId: string): string | undefined => {
+    let id: string | undefined = sessionId
+    for (let depth = 0; id && depth < 16; depth += 1) {
+      const dir = controlDirs.get(id)
+      if (dir && activeRuns.has(id)) return dir
+      id = store.getSession(id)?.parentId
+    }
+    return undefined
+  }
+
+  /**
+   * The user's answer to a question the agent asked (the `question` tool), or their dismissal. `sessionKey` is the session
+   * the question was shown in (a task's own session for a task's question). Written where the waiting agent looks.
+   */
+  app.post("/api/local-engine/question", async (request, reply) => {
+    const parsed = QuestionReplySchema.safeParse(request.body ?? {})
+    if (!parsed.success || !safeKey(parsed.data.sessionKey)) return bad(reply, "sessionKey and requestId are required")
+    const dir = runControlDir(parsed.data.sessionKey)
+    if (!dir) return bad(reply, "Nothing is waiting for an answer in this session", 409)
+    const doc = parsed.data.dismissed ? { dismissed: true } : { answers: parsed.data.answers ?? [] }
+    const target = path.join(dir, `answer-${parsed.data.requestId}.json`)
+    const temp = `${target}.tmp`
+    fs.writeFileSync(temp, JSON.stringify(doc))
+    fs.renameSync(temp, target)
+    return { answered: true }
+  })
 
   app.get("/api/local-engine/history", async (request, reply) => {
     const parsed = SessionKeySchema.safeParse(request.query ?? {})

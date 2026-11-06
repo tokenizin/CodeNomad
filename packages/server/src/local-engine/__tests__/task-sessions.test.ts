@@ -433,3 +433,20 @@ describe("token usage (the context meter)", () => {
     expect(saved[1].text).toBe("done")
   })
 })
+
+describe("questions the agent asks", () => {
+  const line = (o: object) => JSON.stringify(o)
+  const asked = { id: "que_1", call_id: "c1", questions: [{ question: "Which?", header: "H", options: [{ label: "A", description: "a" }, { label: 5 }], multiple: true }] }
+
+  test("a run's question is forwarded; a task's goes inside its task_event; malformed ones are dropped", () => {
+    const t = new RustStreamTranslator()
+    expect(t.feed(line({ type: "question", ...asked }))).toEqual([
+      { type: "question", id: "que_1", callId: "c1", questions: [{ question: "Which?", header: "H", options: [{ label: "A", description: "a" }], multiple: true }] },
+    ])
+    const [inTask] = t.feed(line({ type: "question", task_id: "tk", parent_call_id: "p1", ...asked }))
+    expect(inTask.type === "task_event" && inTask.taskId).toBe("tk")
+    expect(inTask.type === "task_event" && inTask.event.type).toBe("question")
+    expect(t.feed(line({ type: "question", id: "q", questions: [] }))).toEqual([])
+    expect(t.feed(line({ type: "question", questions: asked.questions }))).toEqual([])
+  })
+})

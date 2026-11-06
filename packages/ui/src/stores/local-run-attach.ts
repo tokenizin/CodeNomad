@@ -21,6 +21,7 @@ import { attachedLocalSessions as attachedSessions, setLocalRunAttacher } from "
 import { loadMessages, registerLocalWorkflows, watchLocalWorkflows } from "./session-api"
 import { setSessionStatus } from "./session-state"
 import { recordLocalUsage } from "./local-usage"
+import { settleLocalQuestions, syncLocalQuestions } from "./local-questions"
 
 const log = getLogger("api")
 
@@ -110,6 +111,7 @@ async function showRun(instanceId: string, sessionId: string, response: Response
   let pending: HistoryPart[] | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const pendingTasks = new Map<string, LocalTaskView>()
+  let liveReply = null as import("../lib/local-engine").LocalEngineReply | null
   const flush = () => {
     flushTimer = null
     if (pendingTasks.size) {
@@ -119,6 +121,8 @@ async function showRun(instanceId: string, sessionId: string, response: Response
     }
     if (pending) upsertAssistant(pending, "streaming")
     pending = null
+    // After the reply's parts, so a question finds the tool card it belongs to.
+    if (header && liveReply) syncLocalQuestions(instanceId, liveReply, { sessionId, assistantId: header.assistantId })
   }
 
   try {
@@ -132,11 +136,12 @@ async function showRun(instanceId: string, sessionId: string, response: Response
         return
       }
       if (!header) return
+      liveReply = reply
       if (ev.type === "usage") recordLocalUsage(instanceId, sessionId, header.assistantId, reply.usage, reply.model, header.startedAt + 1)
       for (const task of reply.takeChangedTasks()) pendingTasks.set(task.taskId, task)
       const started = reply.takeNewWorkflows()
       if (started.length > 0) registerLocalWorkflows(instanceId, folder, sessionId, started)
-      if (!changed && pendingTasks.size === 0) return
+      if (!changed && pendingTasks.size === 0 && !reply.hasQuestionChanges()) return
       if (changed) pending = reply.parts.map((p) => ({ ...p }))
       if (!flushTimer) flushTimer = setTimeout(flush, 60)
     })
@@ -145,9 +150,11 @@ async function showRun(instanceId: string, sessionId: string, response: Response
     syncLocalTaskSessions(instanceId, folder, result.tasks)
     pendingTasks.clear()
     upsertAssistant(result.parts, result.isError ? "error" : "complete")
+    if (liveReply) settleLocalQuestions(instanceId, liveReply, { sessionId, assistantId: header.assistantId })
     return true
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
+    if (header && liveReply) settleLocalQuestions(instanceId, liveReply, { sessionId, assistantId: header.assistantId })
     log.warn("attach: stream broke", error)
     return header !== undefined
   } finally {

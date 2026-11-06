@@ -64,8 +64,13 @@ export type TokenUsage = { input: number; output: number; reasoning: number; cac
 
 const tokenCount = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0)
 
+/** One question of the `question` tool, as the agent asks it (OpenCode's shape). */
+export type AskedQuestion = { question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }
+
 /** The events a delegated task shares with the top-level run. */
 export type PlainEvent =
+  /** The agent asks the user something and waits (`POST /api/local-engine/question` answers). `callId` is the tool call it belongs to. */
+  | { type: "question"; id: string; callId: string; questions: AskedQuestion[] }
   /** Usage of the latest model call: the context in use after it. */
   | { type: "usage"; usage: TokenUsage; model?: string }
   | { type: "delta"; text: string }
@@ -247,6 +252,22 @@ function translatePlain(ev: any, options: { asyncWorkflows?: boolean } = {}): Pl
         isError: ev.isError === true,
       }
     }
+    case "question": {
+      const questions = Array.isArray(ev.questions)
+        ? (ev.questions as any[])
+            .filter((q) => q && typeof q.question === "string")
+            .map((q) => ({
+              question: String(q.question),
+              header: typeof q.header === "string" ? q.header : String(q.question).slice(0, 30),
+              options: Array.isArray(q.options)
+                ? q.options.filter((o: any) => o && typeof o.label === "string").map((o: any) => ({ label: String(o.label), description: typeof o.description === "string" ? o.description : "" }))
+                : [],
+              ...(q.multiple === true ? { multiple: true } : {}),
+            }))
+        : []
+      if (typeof ev.id !== "string" || !ev.id || questions.length === 0) return undefined
+      return { type: "question", id: ev.id, callId: typeof ev.call_id === "string" ? ev.call_id : "", questions }
+    }
     case "usage": {
       const usage: TokenUsage = { input: tokenCount(ev.input), output: tokenCount(ev.output), reasoning: tokenCount(ev.reasoning), cacheRead: tokenCount(ev.cacheRead) }
       if (usage.input + usage.output + usage.cacheRead === 0) return undefined
@@ -301,6 +322,7 @@ export class RustStreamTranslator {
       case "delta":
       case "tool":
       case "tool_result":
+      case "question":
       case "usage": {
         const plain = translatePlain(ev, this.options)
         if (plain?.type === "usage") this.usage = plain.usage

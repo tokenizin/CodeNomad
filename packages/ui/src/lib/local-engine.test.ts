@@ -468,3 +468,33 @@ test("usage reaches the reply, the saved history and a task's own view (context 
   ])
   assert.deepEqual((assistant.info as any).tokens, { input: 1500, output: 60, reasoning: 5, cache: { read: 0, write: 0 } })
 })
+
+test("a question the agent asks is tracked until its tool call returns, for the run and for a task", () => {
+  const reply = new LocalEngineReply()
+  const questions = [{ question: "Which?", header: "H", options: [{ label: "A", description: "" }] }]
+  reply.apply({ type: "question", id: "que_1", callId: "c1", questions })
+  reply.apply({ type: "question", id: "que_1", callId: "c1", questions }) // a replay adds nothing
+  assert.deepEqual(reply.takeQuestionChanges(), { asked: [{ id: "que_1", callId: "c1", questions }], settled: [] })
+  assert.equal(reply.openQuestions.length, 1)
+  reply.apply({ type: "tool_result", id: "other", name: "bash", output: "", isError: false })
+  assert.equal(reply.hasQuestionChanges(), false, "another call's result settles nothing")
+  reply.apply({ type: "tool_result", id: "c1", name: "question", output: "answered", isError: false })
+  assert.deepEqual(reply.takeQuestionChanges(), { asked: [], settled: ["que_1"] })
+
+  // A delegated task's question belongs to the task, and goes when the task ends.
+  reply.apply({ type: "task_start", taskId: "t1", sessionId: "ses_lcl_t_t1", parentSessionId: "ses_lcl_1", parentCallId: "p1", agent: "qa_engineer", description: "d", prompt: "p" })
+  reply.apply({ type: "task_event", taskId: "t1", parentCallId: "p1", event: { type: "question", id: "que_2", callId: "c9", questions } })
+  assert.deepEqual(reply.takeQuestionChanges().asked.map((q) => [q.id, q.taskId]), [["que_2", "t1"]])
+  reply.apply({ type: "task_end", taskId: "t1", parentCallId: "p1", status: "aborted" })
+  assert.deepEqual(reply.takeQuestionChanges().settled, ["que_2"])
+
+  // When the run ends, whatever is still open is settled.
+  reply.apply({ type: "question", id: "que_3", callId: "c3", questions })
+  reply.takeQuestionChanges()
+  reply.settleAllQuestions()
+  assert.deepEqual(reply.takeQuestionChanges().settled, ["que_3"])
+  // Malformed ones are ignored.
+  reply.apply({ type: "question", id: "", callId: "x", questions })
+  reply.apply({ type: "question", id: "q", callId: "x", questions: [] })
+  assert.equal(reply.hasQuestionChanges(), false)
+})

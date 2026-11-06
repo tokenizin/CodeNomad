@@ -353,7 +353,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
-      if (!remoteIds.has(entry.id)) {
+      // A question the Claude Code (Rust) agent asked is not OpenCode's to know about.
+      if (!remoteIds.has(entry.id) && getQuestionSource(instanceId, entry.id) !== "local") {
         removePermissionFromQueue(instanceId, entry.id)
         removePermissionV2(instanceId, entry.id)
       }
@@ -1286,6 +1287,12 @@ async function sendQuestionReply(
   requestId: string,
   answers: string[][],
 ): Promise<void> {
+  // Asked by the Claude Code (Rust) agent: CodeNomad's server passes the answer on to it.
+  if (getQuestionSource(instanceId, requestId) === "local") {
+    await serverApi.answerLocalQuestion(sessionId, requestId, { answers })
+    removeQuestionFromQueue(instanceId, requestId)
+    return
+  }
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")
@@ -1324,6 +1331,11 @@ async function sendQuestionReply(
 }
 
 async function sendQuestionReject(instanceId: string, sessionId: string, requestId: string): Promise<void> {
+  if (getQuestionSource(instanceId, requestId) === "local") {
+    await serverApi.answerLocalQuestion(sessionId, requestId, { dismissed: true })
+    removeQuestionFromQueue(instanceId, requestId)
+    return
+  }
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")

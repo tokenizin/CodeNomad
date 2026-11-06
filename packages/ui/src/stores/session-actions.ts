@@ -23,6 +23,7 @@ import { getLogger } from "../lib/logger"
 import { OpencodeApiError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { recordLocalUsage } from "./local-usage"
+import { settleLocalQuestions, syncLocalQuestions } from "./local-questions"
 import { serverApi } from "../lib/api-client"
 import {
   buildLocalEnginePrompt,
@@ -229,6 +230,8 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     }
     if (pending) upsertAssistant(pending, "streaming")
     pending = null
+    // After the reply's parts, so a question finds the tool card it belongs to.
+    if (liveReply) syncLocalQuestions(instanceId, liveReply, { sessionId, assistantId })
   }
   let lastParts: HistoryPart[] = []
 
@@ -259,7 +262,8 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
       // A workflow the manager started runs in a session of its own: list it now, and keep looking for its notification.
       const started = reply.takeNewWorkflows()
       if (started.length > 0) registerLocalWorkflows(instanceId, folder, sessionId, started)
-      if (!changed && pendingTasks.size === 0) return
+      const questionsChanged = reply.hasQuestionChanges()
+      if (!changed && pendingTasks.size === 0 && !questionsChanged) return
       if (changed) {
         // Copy: the reply keeps mutating its parts as events arrive.
         lastParts = reply.parts.map((p) => ({ ...p }))
@@ -273,12 +277,14 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
     pendingTasks.clear()
     upsertUser("complete")
     upsertAssistant(result.parts, result.isError ? "error" : "complete")
+    if (liveReply) settleLocalQuestions(instanceId, liveReply, { sessionId, assistantId })
     recordLocalUsage(instanceId, sessionId, assistantId, result.usage, result.model || model || session.model.modelId, userMessage.createdAt + 1)
   } catch (error) {
     if (flushTimer) clearTimeout(flushTimer)
     // Tasks still running when the stream broke did not finish: stopped by the user, or cut off.
     if (liveReply) {
       liveReply.closeOpenTasks(controller.signal.aborted ? "aborted" : "failed")
+      settleLocalQuestions(instanceId, liveReply, { sessionId, assistantId })
       syncTasks(liveReply.tasks)
       pendingTasks.clear()
     }
