@@ -104,6 +104,22 @@
             ]
           }
         },
+        "qwen3.8-flash-next:125b-a6b-q4_K_M": {
+          "id": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+          "name": "Qwen3.8 Flash Next 125B A6B Q4_K_M (local)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
         "ornith:latest": {
           "id": "ornith:latest",
           "name": "Ornith 1.0 (vision fallback)",
