@@ -11,7 +11,8 @@
       "Bash(uname *)",
       "Bash(rustup *)",
       "Bash(stop *)",
-      "Bash(tee *)"
+      "Bash(tee *)",
+      "Bash(bun *)"
     ]
   },
   "$version": 4
