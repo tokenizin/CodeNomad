@@ -91,7 +91,7 @@ describe("a Task card opening a task session while the task is still running", (
     // The server has nothing saved for a task that has not ended: an empty history, no run of its own.
     const realFetch = globalThis.fetch
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ messages: [], running: false }), { headers: { "content-type": "application/json" } })) as typeof fetch
+      new Response(JSON.stringify({ messages: [], running: false }), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch
     try {
       await loadMessages(instanceId, "ses_lcl_t_task_live")
     } finally {
