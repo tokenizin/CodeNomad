@@ -5,7 +5,11 @@
       "Bash(printf *)",
       "Bash(diff *)",
       "Bash(comm *)",
-      "Bash(echo *)"
+      "Bash(echo *)",
+      "Bash(rustc *)",
+      "Bash(cargo *)",
+      "Bash(uname *)",
+      "Bash(rustup *)"
     ]
   },
   "$version": 4
