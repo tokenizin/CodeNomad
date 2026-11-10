@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(else *)",
+      "Bash(printf *)",
+      "Bash(diff *)",
+      "Bash(comm *)",
+      "Bash(echo *)"
+    ]
+  },
+  "$version": 4
+}
