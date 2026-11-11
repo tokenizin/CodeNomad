@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySuccess": "Ошибка удаления скопирована",
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Обезличенная ошибка удаления скопирована",
   "instanceShell.worktree.delete.error.copyFailure": "Не удалось скопировать ошибку удаления",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Открыть панель графа знаний Understand-Anything",
 
   "versionPill.appWithVersion": "Приложение {version}",
   "versionPill.ui": "UI",

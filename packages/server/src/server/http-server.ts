@@ -44,7 +44,7 @@ import { registerNotificationRoutes } from "./routes/notifications.js"
 import { registerChoiceRoutes } from "./routes/choices.js"
 import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
-import { registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
+import { DASHBOARD_PATH, registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
 import { registerModelSyncRoutes } from "./routes/model-sync.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
@@ -345,7 +345,11 @@ export function createHttpServer(deps: HttpServerDeps) {
       session = deps.authManager.getSessionFromRequest(request)
     }
 
-    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
+    // The Understand-Anything dashboard page and the graph JSON it fetches from the root path
+    // live outside /api/ but expose project data, so they need a session like API routes do.
+    const isUnderstandAnythingPath =
+      pathname === DASHBOARD_PATH || pathname.startsWith(`${DASHBOARD_PATH}/`) || pathname === "/knowledge-graph.json"
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/") || isUnderstandAnythingPath
     if (requiresAuthForApi && !session) {
       // Allow StarGuard JWT (Authorization: Bearer <token>).
       if (await checkStarGuardJwt(request)) {

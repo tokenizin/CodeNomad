@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySuccess": "Error de eliminacion copiado",
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Error de eliminacion saneado copiado",
   "instanceShell.worktree.delete.error.copyFailure": "No se pudo copiar el error de eliminacion",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Abrir el panel del grafo de conocimiento de Understand-Anything",
 
   "versionPill.appWithVersion": "App {version}",
   "versionPill.ui": "UI",

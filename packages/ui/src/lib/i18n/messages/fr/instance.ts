@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySuccess": "Erreur de suppression copiee",
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Erreur de suppression nettoyee copiee",
   "instanceShell.worktree.delete.error.copyFailure": "Impossible de copier l'erreur de suppression",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Ouvrir le tableau de bord du graphe de connaissances Understand-Anything",
 
   "versionPill.appWithVersion": "Appli {version}",
   "versionPill.ui": "UI",

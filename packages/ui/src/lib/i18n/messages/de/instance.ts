@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.actions.output": "Ausgabe",
   "instanceShell.backgroundProcesses.actions.stop": "Stoppen",
   "instanceShell.backgroundProcesses.actions.terminate": "Beenden",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Understand-Anything-Wissensgraph-Dashboard öffnen",
 
   "versionPill.appWithVersion": "App {version}",
   "versionPill.ui": "UI",

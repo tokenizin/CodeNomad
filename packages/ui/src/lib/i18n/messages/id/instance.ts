@@ -217,6 +217,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.actions.output": "Output",
   "instanceShell.backgroundProcesses.actions.stop": "Hentikan",
   "instanceShell.backgroundProcesses.actions.terminate": "Hentikan Paksa",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Buka dasbor grafik pengetahuan Understand-Anything",
 
   "versionPill.appWithVersion": "App {version}",
   "versionPill.ui": "UI",

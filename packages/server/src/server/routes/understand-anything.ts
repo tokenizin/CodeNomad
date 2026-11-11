@@ -12,7 +12,11 @@
  *   POST /api/understand/onboard  — Generate onboarding guide
  *   GET  /api/understand/status   — Check knowledge-graph availability
  *   GET  /knowledge-graph.json    — Serve the knowledge graph for the dashboard
- *   GET  /api/understand/dashboard — Serve the Understand-Anything dashboard UI
+ *                                   (root path is hardcoded by the dashboard bundle; auth-gated
+ *                                   in http-server.ts)
+ *   GET  /understand              — Serve the Understand-Anything dashboard UI (a page, so it
+ *                                   lives outside /api/; /understand/assets/* serves its bundle)
+ *   GET  /api/understand/dashboard — Legacy alias, redirects to /understand
  *
  * @module understand-anything-routes
  */
@@ -22,6 +26,9 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+
+/** Browser-facing path of the dashboard page (keep in sync with the UI button and auth gate). */
+export const DASHBOARD_PATH = '/understand'
 
 // ── Helpers ─────────────────────────────────────
 
@@ -155,8 +162,11 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
     }
   })
 
-  // GET /api/understand/dashboard — serve the Understand-Anything dashboard UI
-  app.get('/api/understand/dashboard', async (_request, reply) => {
+  // GET /understand — serve the Understand-Anything dashboard UI.
+  // This is a page, not a JSON endpoint, so it lives outside /api/: unauthenticated
+  // browser requests get the normal /login redirect instead of a raw 401 JSON body.
+  app.get(DASHBOARD_PATH, async (_request, reply) => {
+    reply.header('Content-Type', 'text/html; charset=utf-8')
     if (!pluginRoot || !dashboardDir) {
       return reply.code(503).send('<h1>Understand-Anything not installed</h1><p>Run: npx @understand-anything/init</p>')
     }
@@ -164,19 +174,27 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
     if (!fs.existsSync(indexHtml)) {
       return reply.code(503).send('<h1>Dashboard not built</h1><p>Run: cd packages/dashboard && npm run build</p>')
     }
-    // Rewrite asset paths from /assets/ to /api/understand/dashboard/assets/
+    // Rewrite asset paths from /assets/ to /understand/assets/
     let html = fs.readFileSync(indexHtml, 'utf-8')
-    html = html.replace(/src="\/assets\//g, 'src="/api/understand/dashboard/assets/')
-    html = html.replace(/href="\/assets\//g, 'href="/api/understand/dashboard/assets/')
-    reply.header('Content-Type', 'text/html; charset=utf-8')
-    reply.send(html)
+    html = html.replace(/src="\/assets\//g, `src="${DASHBOARD_PATH}/assets/`)
+    html = html.replace(/href="\/assets\//g, `href="${DASHBOARD_PATH}/assets/`)
+    return reply.send(html)
   })
 
+  // Legacy location of the dashboard page (the sparkle icon used to open it).
+  app.get('/api/understand/dashboard', async (_request, reply) => reply.redirect(DASHBOARD_PATH))
+
   // Serve dashboard static assets
-  app.get('/api/understand/dashboard/assets/*', async (request, reply) => {
+  app.get(`${DASHBOARD_PATH}/assets/*`, async (request, reply) => {
     if (!dashboardDir) return reply.code(404).send('Not found')
-    const assetPath = path.join(dashboardDir, (request.params as any)['*'])
-    if (!fs.existsSync(assetPath)) return reply.code(404).send('Not found')
+    // The wildcard excludes the "assets/" segment, but the bundle keeps files in dist/assets/.
+    const assetRoot = path.resolve(dashboardDir, 'assets')
+    const assetPath = path.resolve(assetRoot, (request.params as any)['*'] ?? '')
+    // Reject ../ traversal out of the dashboard bundle.
+    if (assetPath !== assetRoot && !assetPath.startsWith(assetRoot + path.sep)) {
+      return reply.code(404).send('Not found')
+    }
+    if (!fs.existsSync(assetPath) || !fs.statSync(assetPath).isFile()) return reply.code(404).send('Not found')
     const ext = path.extname(assetPath)
     const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.png' ? 'image/png' : ext === '.svg' ? 'image/svg+xml' : ext === '.ico' ? 'image/x-icon' : 'application/octet-stream'
     reply.header('Content-Type', contentType)

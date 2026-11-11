@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySuccess": "已复制删除错误",
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "已复制脱敏后的删除错误",
   "instanceShell.worktree.delete.error.copyFailure": "复制删除错误失败",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "打开 Understand-Anything 知识图谱仪表板",
 
   "versionPill.appWithVersion": "应用 {version}",
   "versionPill.ui": "UI",

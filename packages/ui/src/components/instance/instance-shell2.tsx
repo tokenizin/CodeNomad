@@ -1076,10 +1076,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         {/* Understand-Anything dashboard trigger */}
                         <IconButton
                           color="inherit"
-                          onClick={() => window.open("/api/understand/dashboard", "_blank")}
-                          aria-label="Open Understand-Anything knowledge graph dashboard"
+                          onClick={() => window.open("/understand", "_blank")}
+                          aria-label={t("instanceShell.understandAnything.open")}
                           size="small"
-                          title="Understand-Anything"
+                          title={t("instanceShell.understandAnything.title")}
                         >
                           <AutoAwesome fontSize="small" />
                         </IconButton>

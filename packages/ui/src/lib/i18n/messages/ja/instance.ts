@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySuccess": "削除エラーをコピーしました",
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "サニタイズ済みの削除エラーをコピーしました",
   "instanceShell.worktree.delete.error.copyFailure": "削除エラーをコピーできませんでした",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Understand-Anything ナレッジグラフのダッシュボードを開く",
 
   "versionPill.appWithVersion": "アプリ {version}",
   "versionPill.ui": "UI",

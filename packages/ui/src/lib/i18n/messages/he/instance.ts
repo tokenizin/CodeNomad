@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.actions.output": "פלט",
   "instanceShell.backgroundProcesses.actions.stop": "עצור",
   "instanceShell.backgroundProcesses.actions.terminate": "סיים",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "פתח את לוח הבקרה של גרף הידע Understand-Anything",
 
   "versionPill.appWithVersion": "אפליקציה {version}",
   "versionPill.ui": "ממשק",

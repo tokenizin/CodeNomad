@@ -206,6 +206,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.actions.output": "आउटपुट",
   "instanceShell.backgroundProcesses.actions.stop": "रोक्नुहोस्",
   "instanceShell.backgroundProcesses.actions.terminate": "अन्त्य गर्नुहोस्",
+  "instanceShell.understandAnything.title": "Understand-Anything",
+  "instanceShell.understandAnything.open": "Understand-Anything ज्ञान ग्राफ ड्यासबोर्ड खोल्नुहोस्",
 
   "versionPill.appWithVersion": "एप {version}",
   "versionPill.ui": "UI",
