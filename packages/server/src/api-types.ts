@@ -163,6 +163,8 @@ export interface FileSystemEntry {
   size?: number
   /** ISO timestamp of last modification when available. */
   modifiedAt?: string
+  /** Optional breadcrumb from the initial browsing directory to this entry (populated during recursive search). */
+  crumbPath?: string
 }
 
 export type FileSystemScope = "restricted" | "unrestricted"
