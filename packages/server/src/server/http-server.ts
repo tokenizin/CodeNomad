@@ -44,7 +44,8 @@ import { registerNotificationRoutes } from "./routes/notifications.js"
 import { registerChoiceRoutes } from "./routes/choices.js"
 import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
-import { DASHBOARD_PATH, registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
+import { registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
+import { DASHBOARD_PATH, KNOWLEDGE_GRAPH_PATH, registerUnderstandDashboardRoutes } from "./routes/understand-dashboard.js"
 import { registerModelSyncRoutes } from "./routes/model-sync.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
@@ -348,7 +349,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     // The Understand-Anything dashboard page and the graph JSON it fetches from the root path
     // live outside /api/ but expose project data, so they need a session like API routes do.
     const isUnderstandAnythingPath =
-      pathname === DASHBOARD_PATH || pathname.startsWith(`${DASHBOARD_PATH}/`) || pathname === "/knowledge-graph.json"
+      pathname === DASHBOARD_PATH || pathname.startsWith(`${DASHBOARD_PATH}/`) || pathname === KNOWLEDGE_GRAPH_PATH
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/") || isUnderstandAnythingPath
     if (requiresAuthForApi && !session) {
       // Allow StarGuard JWT (Authorization: Bearer <token>).
@@ -477,6 +478,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerWikiLintRoutes(app)
   registerRefreshModelsRoutes(app)
   registerUnderstandAnythingRoutes(app)
+  registerUnderstandDashboardRoutes(app)
   registerModelSyncRoutes(app)
   registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerLocalEngineRoutes(app, { settings: deps.settings, workspaceManager: deps.workspaceManager })

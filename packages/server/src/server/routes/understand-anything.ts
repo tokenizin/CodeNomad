@@ -11,12 +11,8 @@
  *   POST /api/understand/diff     — Impact analysis of changes
  *   POST /api/understand/onboard  — Generate onboarding guide
  *   GET  /api/understand/status   — Check knowledge-graph availability
- *   GET  /knowledge-graph.json    — Serve the knowledge graph for the dashboard
- *                                   (root path is hardcoded by the dashboard bundle; auth-gated
- *                                   in http-server.ts)
- *   GET  /understand              — Serve the Understand-Anything dashboard UI (a page, so it
- *                                   lives outside /api/; /understand/assets/* serves its bundle)
- *   GET  /api/understand/dashboard — Legacy alias, redirects to /understand
+ *
+ * The dashboard page, its assets and /knowledge-graph.json live in understand-dashboard.ts.
  *
  * @module understand-anything-routes
  */
@@ -27,9 +23,6 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-/** Browser-facing path of the dashboard page (keep in sync with the UI button and auth gate). */
-export const DASHBOARD_PATH = '/understand'
-
 // ── Helpers ─────────────────────────────────────
 
 function resolveUADir(projectRoot: string): string {
@@ -39,7 +32,7 @@ function resolveUADir(projectRoot: string): string {
   return modern
 }
 
-function resolvePluginRoot(): string {
+export function resolvePluginRoot(): string {
   const candidates = [
     process.env.UNDERSTAND_PLUGIN_ROOT ?? '',
     path.join(os.homedir(), '.understand-anything', 'repo', 'understand-anything-plugin'),
@@ -67,7 +60,7 @@ async function runUnderstandAnalyzer(projectRoot: string, args: string[]): Promi
   }
 }
 
-async function readKnowledgeGraph(projectRoot: string): Promise<any> {
+export async function readKnowledgeGraph(projectRoot: string): Promise<any> {
   const uaDir = resolveUADir(projectRoot)
   const graphPath = path.join(uaDir, 'knowledge-graph.json')
   if (!fs.existsSync(graphPath)) {
@@ -81,9 +74,6 @@ async function readKnowledgeGraph(projectRoot: string): Promise<any> {
 // ── Route Registration ──────────────────────────────────
 
 export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
-  const pluginRoot = resolvePluginRoot()
-  const dashboardDir = pluginRoot ? path.join(pluginRoot, 'packages/dashboard/dist') : ''
-
   // POST /api/understand/analyze
   app.post('/api/understand/analyze', async (request, reply) => {
     const body = request.body as { projectRoot?: string; args?: string[] }
@@ -113,18 +103,6 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
     }
   })
 
-  // GET /knowledge-graph.json — serve the knowledge graph for the dashboard
-  app.get('/knowledge-graph.json', async (request, reply) => {
-    const projectRoot = (request.query as { projectRoot?: string })?.projectRoot ?? process.cwd()
-    try {
-      const graph = await readKnowledgeGraph(projectRoot)
-      reply.header('Content-Type', 'application/json')
-      return reply.send(graph)
-    } catch (err: any) {
-      return reply.code(404).send({ error: err.message })
-    }
-  })
-
   // POST /api/understand/chat
   app.post('/api/understand/chat', async (request, reply) => {
     const body = request.body as { projectRoot?: string; query: string }
@@ -137,7 +115,7 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
 
     try {
       const graph = await readKnowledgeGraph(projectRoot)
-      const corePath = path.join(pluginRoot, 'packages/core/dist/index.js')
+      const corePath = path.join(resolvePluginRoot(), 'packages/core/dist/index.js')
       const { SearchEngine } = await import(corePath)
       const engine = new SearchEngine(graph)
       const results = engine.search(query, 5)
@@ -160,45 +138,6 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
     } catch (err: any) {
       return reply.code(500).send({ error: err.message })
     }
-  })
-
-  // GET /understand — serve the Understand-Anything dashboard UI.
-  // This is a page, not a JSON endpoint, so it lives outside /api/: unauthenticated
-  // browser requests get the normal /login redirect instead of a raw 401 JSON body.
-  app.get(DASHBOARD_PATH, async (_request, reply) => {
-    reply.header('Content-Type', 'text/html; charset=utf-8')
-    if (!pluginRoot || !dashboardDir) {
-      return reply.code(503).send('<h1>Understand-Anything not installed</h1><p>Run: npx @understand-anything/init</p>')
-    }
-    const indexHtml = path.join(dashboardDir, 'index.html')
-    if (!fs.existsSync(indexHtml)) {
-      return reply.code(503).send('<h1>Dashboard not built</h1><p>Run: cd packages/dashboard && npm run build</p>')
-    }
-    // Rewrite asset paths from /assets/ to /understand/assets/
-    let html = fs.readFileSync(indexHtml, 'utf-8')
-    html = html.replace(/src="\/assets\//g, `src="${DASHBOARD_PATH}/assets/`)
-    html = html.replace(/href="\/assets\//g, `href="${DASHBOARD_PATH}/assets/`)
-    return reply.send(html)
-  })
-
-  // Legacy location of the dashboard page (the sparkle icon used to open it).
-  app.get('/api/understand/dashboard', async (_request, reply) => reply.redirect(DASHBOARD_PATH))
-
-  // Serve dashboard static assets
-  app.get(`${DASHBOARD_PATH}/assets/*`, async (request, reply) => {
-    if (!dashboardDir) return reply.code(404).send('Not found')
-    // The wildcard excludes the "assets/" segment, but the bundle keeps files in dist/assets/.
-    const assetRoot = path.resolve(dashboardDir, 'assets')
-    const assetPath = path.resolve(assetRoot, (request.params as any)['*'] ?? '')
-    // Reject ../ traversal out of the dashboard bundle.
-    if (assetPath !== assetRoot && !assetPath.startsWith(assetRoot + path.sep)) {
-      return reply.code(404).send('Not found')
-    }
-    if (!fs.existsSync(assetPath) || !fs.statSync(assetPath).isFile()) return reply.code(404).send('Not found')
-    const ext = path.extname(assetPath)
-    const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.png' ? 'image/png' : ext === '.svg' ? 'image/svg+xml' : ext === '.ico' ? 'image/x-icon' : 'application/octet-stream'
-    reply.header('Content-Type', contentType)
-    reply.send(fs.readFileSync(assetPath))
   })
 
   // POST /api/understand/explain
@@ -258,7 +197,7 @@ export function registerUnderstandAnythingRoutes(app: FastifyInstance): void {
     const uaDir = resolveUADir(projectRoot)
     const graphPath = path.join(uaDir, 'knowledge-graph.json')
     const exists = fs.existsSync(graphPath)
-    const pluginAvailable = !!pluginRoot
+    const pluginAvailable = !!resolvePluginRoot()
 
     if (exists) {
       const graph = JSON.parse(fs.readFileSync(graphPath, 'utf-8'))

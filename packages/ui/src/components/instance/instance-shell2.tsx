@@ -10,7 +10,6 @@ import {
   type Component,
 } from "solid-js"
 import AppBar from "@suid/material/AppBar"
-import AutoAwesome from "@suid/icons-material/AutoAwesome"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
@@ -37,6 +36,7 @@ import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
+import { UnderstandDashboardButton } from "./understand-dashboard-button"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import PromptInput from "../prompt-input"
@@ -1073,16 +1073,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           </IconButton>
                         </Show>
 
-                        {/* Understand-Anything dashboard trigger */}
-                        <IconButton
-                          color="inherit"
-                          onClick={() => window.open("/understand", "_blank")}
-                          aria-label={t("instanceShell.understandAnything.open")}
-                          size="small"
-                          title={t("instanceShell.understandAnything.title")}
-                        >
-                          <AutoAwesome fontSize="small" />
-                        </IconButton>
+                        <UnderstandDashboardButton projectRoot={props.instance.folder} />
                       </div>
                     </div>
 

@@ -90,7 +90,8 @@ function buildEventsUrl(base: string | undefined, path: string): string {
   return path
 }
 
-function buildAbsoluteUrl(path: string): string {
+/** Resolve a server-relative path against the API base (the UI origin may differ, e.g. desktop/remote). */
+export function buildAbsoluteUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path
   }
@@ -216,6 +217,10 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchUnderstandDashboardStatus(): Promise<{ available: boolean; reason?: "not-installed" | "not-built" }> {
+    return request<{ available: boolean; reason?: "not-installed" | "not-built" }>("/api/understand/dashboard-status")
+  },
+
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },
