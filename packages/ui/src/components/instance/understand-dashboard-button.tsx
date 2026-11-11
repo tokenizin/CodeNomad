@@ -3,7 +3,6 @@ import IconButton from "@suid/material/IconButton"
 import AutoAwesome from "@suid/icons-material/AutoAwesome"
 import { useI18n } from "../../lib/i18n"
 import { buildAbsoluteUrl, serverApi } from "../../lib/api-client"
-import { openExternalUrl } from "../../lib/external-url"
 import { getLogger } from "../../lib/logger"
 
 const log = getLogger("api")
@@ -41,11 +40,21 @@ export const UnderstandDashboardButton: Component<{ projectRoot?: string }> = (p
   const { t } = useI18n()
   const [available] = createResource(probeDashboardAvailability)
 
+  // window.open (not the system opener) so the desktop webview keeps its session cookie;
+  // the system browser would land on /login.
+  const openDashboard = () => {
+    try {
+      window.open(buildUnderstandDashboardUrl(props.projectRoot), "_blank", "noopener,noreferrer")
+    } catch (error) {
+      log.error("Failed to open Understand-Anything dashboard", error)
+    }
+  }
+
   return (
     <Show when={available() === true}>
       <IconButton
         color="inherit"
-        onClick={() => void openExternalUrl(buildUnderstandDashboardUrl(props.projectRoot), "understand-dashboard")}
+        onClick={openDashboard}
         aria-label={t("instanceShell.understandAnything.open")}
         size="small"
         title={t("instanceShell.understandAnything.title")}
