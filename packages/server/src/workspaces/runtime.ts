@@ -27,6 +27,8 @@ interface LaunchOptions {
   binaryPath: string
   environment?: Record<string, string>
   logLevel?: string
+  /** Pass `logLevel` to OpenCode exactly as given (no upper-casing). Set by the retry for OpenCode builds that want lower case. */
+  exactLogLevel?: boolean
   onExit?: (info: ProcessExitInfo) => void
 }
 
@@ -46,15 +48,41 @@ interface ManagedProcess {
   }
 }
 
+/**
+ * The level to retry with when OpenCode exited because it did not accept the `--log-level` spelling, else null.
+ * Only for the first try (upper case): a lower-case try that fails again is a different problem and is not retried.
+ */
+export function logLevelRetry(error: unknown, options: { logLevel?: string; exactLogLevel?: boolean }): string | null {
+  if (options.exactLogLevel) return null
+  const message = error instanceof Error ? error.message : String(error ?? "")
+  if (!/Invalid value for flag --log-level/i.test(message)) return null
+  return (typeof options.logLevel === "string" && options.logLevel ? options.logLevel : "debug").toLowerCase()
+}
+
 export class WorkspaceRuntime {
   private processes = new Map<string, ManagedProcess>()
 
   constructor(private readonly eventBus: EventBus, private readonly logger: Logger) {}
 
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
+    try {
+      return await this.launchOnce(options)
+    } catch (error) {
+      // Newer OpenCode builds refuse the upper-case level CodeNomad always passed ("Invalid value for flag --log-level: "DEBUG"")
+      // and then every workspace fails to start. Say it again once in the spelling they accept.
+      const retry = logLevelRetry(error, options)
+      if (!retry) throw error
+      this.logger.warn({ workspaceId: options.workspaceId, logLevel: retry }, "OpenCode refused the --log-level spelling; retrying once")
+      return await this.launchOnce({ ...options, logLevel: retry, exactLogLevel: true })
+    }
+  }
+
+  private async launchOnce(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
 
-    const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
+    const logLevel = options.exactLogLevel && typeof options.logLevel === "string"
+      ? options.logLevel
+      : typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
