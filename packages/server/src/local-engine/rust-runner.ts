@@ -559,7 +559,8 @@ export type RustCatalog = {
   version: number
   model: string
   baseUrl?: string
-  models: Array<{ id: string; name?: string }>
+  /** `context`: window in tokens (Ollama /api/show); `thinking`: the "Thinking" options the model offers (absent = only the default). */
+  models: Array<{ id: string; name?: string; context?: number; thinking?: string[] }>
   modelsError?: string | null
   agents: Array<{ name: string; description?: string; model?: string | null }>
   commands: Array<{ name: string; description?: string; agent?: boolean }>

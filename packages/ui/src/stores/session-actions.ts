@@ -244,6 +244,7 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
         sessionKey: sessionId,
         agent,
         model,
+        variant: getThinkingVariantToSend(instanceId, session.model),
         persist: ui.rustPlaygroundPersist,
         uploads: built.uploads,
         attachmentNames: built.attachmentNames,

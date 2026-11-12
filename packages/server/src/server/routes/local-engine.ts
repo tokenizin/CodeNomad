@@ -56,6 +56,7 @@ import {
   type EngineEvent,
   type WorkflowDoneEvent,
 } from "../../local-engine/rust-runner.js"
+import { thinkingEnv } from "../../local-engine/thinking.js"
 import { LocalEngineStore, safeKey, type HistoryAttachment, type HistoryMessage } from "../../local-engine/store.js"
 
 type LocalEngineConfig = {
@@ -91,6 +92,8 @@ const RunSchema = z
     agent: z.string().trim().min(1).max(64).optional(),
     /** Model id from the agent's catalog. */
     model: z.string().trim().min(1).max(200).optional(),
+    /** The "Thinking" option picked for the model (off, on, low, medium, high); nothing = the model's default. */
+    variant: z.string().trim().min(1).max(32).optional(),
     /** Pasted files (images, etc.) sent inline. */
     uploads: z.array(UploadSchema).max(20).optional().default([]),
     /** Ids the UI already shows, so saved history lines up with them on reload. */
@@ -696,6 +699,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
         messageIds: body.messageIds,
         persist: body.persist,
         history: true,
+        extraEnv: thinkingEnv(body.variant),
         playgroundRoot,
         runner,
         opencodeConfig,

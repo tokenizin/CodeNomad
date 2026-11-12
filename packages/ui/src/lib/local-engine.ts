@@ -50,6 +50,8 @@ export type RustCatalogModel = {
   detailsFrom?: string
   /** Context window in tokens, when the agent's catalog reports it (Ollama). */
   context?: number
+  /** The "Thinking" options this model offers (`off`, `on`, or `low`/`medium`/`high`); absent = only the default. */
+  thinking?: string[]
 }
 
 /** What the agent reports with --catalog. */
@@ -126,6 +128,8 @@ export type LocalEngineRunRequest = {
   /** The user's text as shown (without attachment lines). */
   displayText?: string
   attachmentNames?: string[]
+  /** The Thinking option picked for the model; omitted for the default. */
+  variant?: string
 }
 
 export type HistoryPart =
@@ -296,7 +300,8 @@ export function catalogProvider(catalog: RustCatalog) {
       status: model.status,
       lastTested: model.lastTested,
       errorDetails: model.errorDetails,
-      variantKeys: [] as string[],
+      // The Thinking selector lists these after "Default" (none for a model without a thinking mode).
+      variantKeys: Array.isArray(model.thinking) ? model.thinking : ([] as string[]),
     })),
   }
 }
