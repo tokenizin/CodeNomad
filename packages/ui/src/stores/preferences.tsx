@@ -297,6 +297,15 @@ function normalizeVoxCpmSettings(input: unknown): VoxCpmSpeechSettings {
   }
 }
 
+/**
+ * A fresh install (nothing saved yet) starts on Claude Code (Rust): without it a workspace whose OpenCode cannot start is unusable
+ * ("Workspace instance failed"), with it the sessions run through CodeNomad. An install that already has saved settings but never
+ * chose keeps what it had (OpenCode); choosing either way is saved and then always wins.
+ */
+export function defaultUseRustPlaygroundEngine(saved: Partial<UiSettings> | null | undefined): boolean {
+  return !saved || Object.keys(saved).length === 0
+}
+
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   return {
@@ -327,7 +336,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
     notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
     notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
-    useRustPlaygroundEngine: sanitized.useRustPlaygroundEngine ?? defaultUiSettings.useRustPlaygroundEngine,
+    useRustPlaygroundEngine: sanitized.useRustPlaygroundEngine ?? defaultUseRustPlaygroundEngine(input),
     rustPlaygroundPersist: sanitized.rustPlaygroundPersist ?? defaultUiSettings.rustPlaygroundPersist,
     rustPlaygroundDefaultAgent:
       typeof sanitized.rustPlaygroundDefaultAgent === "string"
@@ -682,7 +691,12 @@ async function updateLocalEngineServerSettings(patch: Partial<Record<keyof Local
 
 function updateUiSettings(updates: Partial<UiSettings>) {
   const current = uiConfigBucket()
-  const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
+  // The first save on a fresh install must not turn the (default) engine choice off: carry the resolved value forward.
+  const nextSettings = normalizeUiSettings({
+    useRustPlaygroundEngine: uiSettings().useRustPlaygroundEngine,
+    ...(current.settings ?? {}),
+    ...updates,
+  })
   const patch = { settings: nextSettings }
   void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
 }
