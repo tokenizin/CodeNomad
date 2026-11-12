@@ -398,10 +398,17 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
     )
   },
-  readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
+  readWorkspaceFile(
+    id: string,
+    relativePath: string,
+    options?: { encoding?: "utf-8" | "base64"; worktree?: string },
+  ): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
     if (options?.encoding) {
       params.set("encoding", options.encoding)
+    }
+    if (options?.worktree && options.worktree !== "root") {
+      params.set("worktree", options.worktree)
     }
     return request<WorkspaceFileResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,

@@ -413,6 +413,39 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return workspace ? { workspace } : {}
   }
 
+  // The workspace's OpenCode instance can be down (it failed to start, or Claude Code (Rust) runs without one) and then every
+  // call through it answers "Workspace instance failed". The server can still list and read the workspace folder itself,
+  // confined to that folder, so the tab falls back to that instead of showing an empty list.
+  const listViaServer = async (path: string): Promise<BrowserFileNode[]> => {
+    const entries = await serverApi.listWorkspaceFiles(props.instanceId, path, { worktree: worktreeSlugForViewer() })
+    return entries.map((entry) => ({
+      name: entry.name,
+      path: entry.path,
+      absolute: entry.absolutePath ?? "",
+      type: entry.type,
+      ignored: false,
+      modifiedAt: entry.modifiedAt,
+    }))
+  }
+  const readBrowserFileContent = async (path: string): Promise<FileContent> => {
+    try {
+      return await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
+    } catch (instanceError) {
+      try {
+        const image = isImagePath(path)
+        const result = await serverApi.readWorkspaceFile(props.instanceId, path, {
+          encoding: image ? "base64" : "utf-8",
+          worktree: worktreeSlugForViewer(),
+        })
+        return (image
+          ? { type: "binary", content: result.contents, encoding: "base64" }
+          : { type: "text", content: result.contents }) as unknown as FileContent
+      } catch {
+        throw instanceError
+      }
+    }
+  }
+
   const {
     gitStatusEntries,
     gitStatusLoading,
@@ -483,18 +516,28 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setBrowserError(null)
     }
     try {
-      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
-      setBrowserPath(normalized)
-      const listed = Array.isArray(nodes) ? nodes : []
-      let entries: BrowserFileNode[] = listed
+      let entries: BrowserFileNode[]
       try {
-        const withTimes = await serverApi.listWorkspaceFiles(props.instanceId, normalized, {
-          worktree: worktreeSlugForViewer(),
-        })
-        entries = mergeFileModifiedAt(listed, withTimes)
-      } catch {
+        const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
+        const listed = Array.isArray(nodes) ? nodes : []
         entries = listed
+        try {
+          const withTimes = await serverApi.listWorkspaceFiles(props.instanceId, normalized, {
+            worktree: worktreeSlugForViewer(),
+          })
+          entries = mergeFileModifiedAt(listed, withTimes)
+        } catch {
+          entries = listed
+        }
+      } catch (instanceError) {
+        // The instance is down: list the workspace folder through the server (the original error is shown if that fails too).
+        try {
+          entries = await listViaServer(normalized)
+        } catch {
+          throw instanceError
+        }
       }
+      setBrowserPath(normalized)
       setBrowserEntries(entries)
       if (normalized === ".") {
         setCachedFileList(props.instanceId, normalized, entries)
@@ -523,7 +566,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setFilesListOpen(false)
     }
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
+      const content = await readBrowserFileContent(path)
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
       if (type && type !== "text") {
@@ -579,10 +622,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const originalContent = browserSelectedOriginalContent()
     if (originalContent !== null) {
       try {
-        const currentDiskContent = await requestData<FileContent>(
-          browserClient().file.read({ path, ...(await fileWorkspacePayload()) }),
-          "file.read",
-        )
+        const currentDiskContent = await readBrowserFileContent(path)
         const diskContent = (currentDiskContent as any)?.content
 
         // If disk content differs from what we originally loaded (agent edit)
@@ -748,7 +788,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setBrowserSelectedLoading(true)
       setBrowserSelectedError(null)
       try {
-        const content = await requestData<FileContent>(browserClient().file.read({ path: selected, ...(await fileWorkspacePayload()) }), "file.read")
+        const content = await readBrowserFileContent(selected)
         const type = (content as any)?.type
         const encoding = (content as any)?.encoding
         if (type && type !== "text") {
