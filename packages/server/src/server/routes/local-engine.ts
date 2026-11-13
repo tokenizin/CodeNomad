@@ -166,7 +166,10 @@ export function readLocalEngineConfig(settings: SettingsService): LocalEngineCon
   const extraRoots = Array.isArray(raw.extraRoots) ? raw.extraRoots.map(str).filter((v): v is string => Boolean(v)) : []
   return {
     playgroundRoot: str(raw.playgroundRoot) ?? str(process.env.CLAUDE_CODE_PLAYGROUND),
-    opencodeConfig: str(raw.opencodeConfig) ?? str(process.env.OPENCODE_CONFIG),
+    // CLAUDE_CODE_ROSTER names the agent roster for this engine alone. OPENCODE_CONFIG is what OpenCode itself is
+    // started with, and on the tunnel hosts that is a profile with no agents in it: used as the roster it left
+    // Claude Code (Rust) without the Product Manager and every subagent.
+    opencodeConfig: str(raw.opencodeConfig) ?? str(process.env.CLAUDE_CODE_ROSTER) ?? str(process.env.OPENCODE_CONFIG),
     extraRoots,
   }
 }
