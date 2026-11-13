@@ -230,3 +230,27 @@ export function describeFallback(from: VoiceEngine, to: VoiceEngine, reason?: st
   const because = trimmed ? ` (${trimmed.slice(0, 120)})` : ""
   return `${describeEngine(from)} unavailable${because} — switched to ${describeEngine(to)}.`
 }
+
+/**
+ * Engine each voice session's mic audio is routed to.
+ *
+ * Kept here rather than as a per-socket variable because the engine changes
+ * outside the socket handler: when a tier fails, the descent starts the next
+ * engine from an error callback. A socket-local variable stayed on the engine
+ * named in `voice_start`, so after a fallback audio kept going to the failed
+ * engine and nothing was transcribed.
+ */
+const activeVoiceEngines = new Map<string, VoiceEngine>()
+
+export function setActiveVoiceEngine(sessionId: string, engine: VoiceEngine): void {
+  activeVoiceEngines.set(sessionId, engine)
+}
+
+/** Defaults to `openai`, the engine a session uses before any `voice_start`. */
+export function getActiveVoiceEngine(sessionId: string): VoiceEngine {
+  return activeVoiceEngines.get(sessionId) ?? "openai"
+}
+
+export function clearActiveVoiceEngine(sessionId: string): void {
+  activeVoiceEngines.delete(sessionId)
+}

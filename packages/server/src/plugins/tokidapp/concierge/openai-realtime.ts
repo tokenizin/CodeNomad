@@ -135,6 +135,53 @@ const REALTIME_VAD_SILENCE_DURATION_MS = (() => {
   return Number.isFinite(val) && val > 0 ? val : 500
 })()
 
+/**
+ * Input noise reduction applied by OpenAI before VAD and transcription.
+ * Default `far_field` (laptop / phone mic at a distance); `near_field` for
+ * headsets, `off` to disable. Override with OPENAI_REALTIME_NOISE_REDUCTION.
+ *
+ * This is where noise is handled. Clients must send every mic frame, silence
+ * included: server VAD ends a turn by hearing silence, so a client-side noise
+ * gate stops turns from ever ending.
+ */
+export function resolveRealtimeNoiseReduction(
+  raw: string | undefined = process.env.OPENAI_REALTIME_NOISE_REDUCTION,
+): { type: "far_field" | "near_field" } | null {
+  const value = raw?.trim().toLowerCase()
+  if (value === "off" || value === "none") return null
+  if (value === "near_field") return { type: "near_field" }
+  return { type: "far_field" }
+}
+
+/**
+ * Transcription language (ISO-639-1) for a client locale. `auto`, unknown or
+ * missing values return undefined so the model detects the language itself.
+ */
+export function resolveTranscriptionLanguage(locale: unknown): "en" | "id" | undefined {
+  return locale === "en" || locale === "id" ? locale : undefined
+}
+
+/** `audio.input` block of the Realtime `session.update`. */
+export function buildRealtimeInputAudioConfig(opts: { transcriptionLanguage?: string } = {}) {
+  const noiseReduction = resolveRealtimeNoiseReduction()
+  return {
+    format: { type: "audio/pcm", rate: 24000 },
+    transcription: {
+      model: "gpt-4o-mini-transcribe",
+      ...(opts.transcriptionLanguage ? { language: opts.transcriptionLanguage } : {}),
+    },
+    ...(noiseReduction ? { noise_reduction: noiseReduction } : {}),
+    // Server-side VAD for continuous voice — auto-detects when user stops speaking.
+    // Calibrate via OPENAI_REALTIME_VAD_* env vars (threshold, prefix_padding_ms, silence_duration_ms).
+    turn_detection: {
+      type: "server_vad",
+      threshold: REALTIME_VAD_THRESHOLD,
+      prefix_padding_ms: REALTIME_VAD_PREFIX_PADDING_MS,
+      silence_duration_ms: REALTIME_VAD_SILENCE_DURATION_MS,
+    },
+  }
+}
+
 const WORKSPACE_ROOT = process.env.CLI_WORKSPACE_ROOT || process.cwd()
 const STARGUARD_BASE = process.env.STARGUARD_BASE_URL || "https://tokenizin.com"
 
@@ -1636,6 +1683,8 @@ export function createRealtimeSession(
   chatSessionId?: string,
   /** Send a message to the frontend client WebSocket (not the OpenAI WS). */
   sendToClient?: (msg: string) => void,
+  /** ISO-639-1 language the user speaks; omit to let the model detect it. */
+  transcriptionLanguage?: string,
 ): RealtimeSession {
   console.log("[openai-realtime] createRealtimeSession sessionId:", sessionId, "hasKey:", !!OPENAI_API_KEY, "keyPrefix:", OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 8) + "..." : "none")
   if (!OPENAI_API_KEY) {
@@ -1761,18 +1810,7 @@ export function createRealtimeSession(
         instructions,
         ...(SUPPORTS_REASONING ? { reasoning: { effort: REALTIME_REASONING_EFFORT } } : {}),
         audio: {
-          input: {
-            format: { type: "audio/pcm", rate: 24000 },
-            transcription: { model: "gpt-4o-mini-transcribe" },
-            // Server-side VAD for continuous voice — auto-detects when user stops speaking.
-            // Calibrate via OPENAI_REALTIME_VAD_* env vars (threshold, prefix_padding_ms, silence_duration_ms).
-            turn_detection: {
-              type: "server_vad",
-              threshold: REALTIME_VAD_THRESHOLD,
-              prefix_padding_ms: REALTIME_VAD_PREFIX_PADDING_MS,
-              silence_duration_ms: REALTIME_VAD_SILENCE_DURATION_MS,
-            },
-          },
+          input: buildRealtimeInputAudioConfig({ transcriptionLanguage }),
           output: {
             format: { type: "audio/pcm", rate: 24000 },
             voice,
