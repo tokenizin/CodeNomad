@@ -19,6 +19,7 @@ import {
   getRealtimeSessionVoice,
   ensureSingleUserSession,
   getRealtimeSessionForUser,
+  resolveTranscriptionLanguage,
 } from "../../plugins/tokidapp/concierge/openai-realtime"
 import {
   createDeepgramSession,
@@ -45,6 +46,9 @@ import {
   isVoiceFallbackError,
   LOCAL_VOICE_FALLBACK_ENGINE,
   TERMINAL_VOICE_ENGINE,
+  clearActiveVoiceEngine,
+  getActiveVoiceEngine,
+  setActiveVoiceEngine,
 } from "../../plugins/tokidapp/concierge/voice-fallback"
 import { normalizeRealtimeVoice } from "../../plugins/tokidapp/concierge/realtime-voices"
 import { buildAgentPersonaInstructions } from "../../plugins/tokidapp/concierge/agent-personas"
@@ -599,6 +603,8 @@ function descendVoiceEngine(
   const notice = describeFallback(from, next, reason)
   console.warn(`[voice-ws] ${from} → ${next}: ${reason.slice(0, 160)}`)
   markEngineAttempted(sessionId, next)
+  // Route mic audio to the tier we are about to start, not the one that failed.
+  setActiveVoiceEngine(sessionId, next)
 
   // Tear down the failed engine before starting the next one.
   teardownAllVoiceEngines(sessionId, "fallback")
@@ -907,6 +913,8 @@ async function startVoiceRealtimeSession(
   socketRef: { send: (msg: string) => void },
   chatSessionId?: string,
   agentId?: string,
+  /** Client voice locale; `en` / `id` pin the transcription language. */
+  locale?: unknown,
 ) {
   const voice = normalizeRealtimeVoice(requestedVoice)
   const existingVoice = getRealtimeSessionVoice(sessionId)
@@ -964,6 +972,7 @@ async function startVoiceRealtimeSession(
       enrichedInstructions || undefined,
       chatSessionId,
       (msg: string) => socketRef.send(msg),
+      resolveTranscriptionLanguage(locale),
     )
   } else {
     console.log("[voice-ws] existing session found, calling notifyReady directly")
@@ -1045,7 +1054,6 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
-  let activeEngine: VoiceEngine = "openai"
   const watcherAbortController = new AbortController()
 
   const cleanup = () => {
@@ -1061,6 +1069,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
     clearAudioBuffer(sessionId)
     teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
+    clearActiveVoiceEngine(sessionId)
     // Clear injection debounce timers and pending payloads for this session
     const timer = injectionDebounceTimers.get(sessionId)
     if (timer) {
@@ -1086,7 +1095,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
       if (msg.type === "cancel") {
         // Cancel the in-progress response on the active engine
-        if (activeEngine === "deepgram") {
+        if (getActiveVoiceEngine(sessionId) === "deepgram") {
           const dgSession = getDeepgramSession(sessionId)
           if (dgSession?.connected && dgSession.responseInProgress) {
             dgSession.responseInProgress = false
@@ -1108,7 +1117,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       if (msg.type === "voice_start") {
         const engine = parseVoiceEngine(msg.engine)
         console.log("[voice-ws] voice_start received, engine:", engine, "REALTIME_ENABLED:", REALTIME_ENABLED)
-        activeEngine = engine
+        setActiveVoiceEngine(sessionId, engine)
         // A fresh voice_start restarts the descent from the requested tier.
         clearEngineAttempts(sessionId)
         markEngineAttempted(sessionId, engine)
@@ -1179,6 +1188,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
               socketRef,
               typeof msg.tokidappSessionId === "string" ? msg.tokidappSessionId : undefined,
               typeof msg.agentId === "string" ? msg.agentId : undefined,
+              msg.locale,
             )
           } else {
             console.log("[voice-ws] REALTIME_ENABLED is false — descending the fallback chain")
@@ -1208,17 +1218,17 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
         // Barge-in: cancel the current assistant response so the user can
         // interrupt mid-speech. Clear the audio buffer to discard any
         // residual playback capture.
-        if (activeEngine === "deepgram") {
+        if (getActiveVoiceEngine(sessionId) === "deepgram") {
           const dgSession = getDeepgramSession(sessionId)
           if (dgSession?.connected && dgSession.responseInProgress) {
             dgSession.responseInProgress = false
           }
-        } else if (activeEngine === "local") {
+        } else if (getActiveVoiceEngine(sessionId) === "local") {
           const localSession = getVoiceSession(sessionId)
           if (localSession?.connected) {
             localSession.stop()
           }
-        } else if (activeEngine === "ornith") {
+        } else if (getActiveVoiceEngine(sessionId) === "ornith") {
           const ornithSess = getOrnithSession(sessionId)
           if (ornithSess?.connected && ornithSess.responseInProgress) {
             ornithSess.responseInProgress = false
@@ -1242,7 +1252,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "voice_stop") {
-        if (activeEngine === "deepgram") {
+        if (getActiveVoiceEngine(sessionId) === "deepgram") {
           // Deepgram: send audio via pre-session buffer or direct session
           const dgSession = getDeepgramSession(sessionId)
           if (dgSession?.connected) {
@@ -1254,7 +1264,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
           }
           // Deepgram STT auto-commits on utterance end, so we just acknowledge
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
-        } else if (activeEngine === "local") {
+        } else if (getActiveVoiceEngine(sessionId) === "local") {
           const localSess = getVoiceSession(sessionId)
           try {
             localSess?.stop?.()
@@ -1262,7 +1272,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             /* non-critical */
           }
           socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
-        } else if (activeEngine === "ornith") {
+        } else if (getActiveVoiceEngine(sessionId) === "ornith") {
           // Ornith: commit buffered audio for processing
           const ornithSess = getOrnithSession(sessionId)
           if (ornithSess?.connected) {
@@ -1300,7 +1310,9 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
       }
 
       if (msg.type === "audio" && msg.data) {
-        if (activeEngine === "deepgram") {
+        // Browser tier has no server session — nothing to route audio to.
+        if (getActiveVoiceEngine(sessionId) === TERMINAL_VOICE_ENGINE) return
+        if (getActiveVoiceEngine(sessionId) === "deepgram") {
           // Deepgram: route audio directly to the STT connection
           const dgSession = getDeepgramSession(sessionId)
           if (dgSession?.connected) {
@@ -1309,13 +1321,13 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
             // Queue in pre-session buffer until session is live
             deepgramPreSessionAudio.enqueue(sessionId, msg.data)
           }
-        } else if (activeEngine === "local") {
+        } else if (getActiveVoiceEngine(sessionId) === "local") {
           // Local engine: route audio to the orchestrator session
           const localSession = getVoiceSession(sessionId)
           if (localSession) {
             localSession.sendAudio(msg.data)
           }
-        } else if (activeEngine === "ornith") {
+        } else if (getActiveVoiceEngine(sessionId) === "ornith") {
           // Ornith: route audio to the ornith session
           const ornithSess = getOrnithSession(sessionId)
           if (ornithSess?.connected) {
@@ -1356,7 +1368,7 @@ function attachVoiceSocket(ws: WebSocket, userId: string) {
 
         // Inject the text into the active voice session so the AI can see
         // what the user typed (e.g. file attachments, follow-ups).
-        if (activeEngine === "deepgram") {
+        if (getActiveVoiceEngine(sessionId) === "deepgram") {
           const dgSession = getDeepgramSession(sessionId)
           if (dgSession?.connected) {
             ;(dgSession as any).sendMessage?.(enrichedContent)
@@ -3458,7 +3470,6 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
   const orchestratorSessions = new Map<string, string>()
   const taskWatchers = new Map<string, () => void>()
   let dbSessionId: string | null = null
-  let activeEngine: VoiceEngine = "openai"
   const watcherAbortController = new AbortController()
 
   const cleanup = () => {
@@ -3474,6 +3485,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
     clearAudioBuffer(sessionId)
     teardownAllVoiceEngines(sessionId, "socket-close")
     clearEngineAttempts(sessionId)
+    clearActiveVoiceEngine(sessionId)
     // Clear injection debounce timers and pending payloads for this session
     const timer = injectionDebounceTimers.get(sessionId)
     if (timer) {
@@ -3507,7 +3519,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           if (msg.type === "voice_start") {
             const engine = parseVoiceEngine(msg.engine)
             console.log("[tokidapp-ws] voice_start received, engine:", engine, "REALTIME_ENABLED:", REALTIME_ENABLED)
-            activeEngine = engine
+            setActiveVoiceEngine(sessionId, engine)
 
             if (engine === "deepgram") {
               startDeepgramVoiceSession(
@@ -3582,9 +3594,11 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                     ? msg.tokidappSessionId
                     : dbSessionId ?? undefined,
                   typeof msg.agentId === "string" ? msg.agentId : undefined,
+                  msg.locale,
                 )
               } else {
                 console.log("[tokidapp-ws] REALTIME_ENABLED is false — falling back to local voice")
+                setActiveVoiceEngine(sessionId, "local")
                 startLocalVoiceSession(
                   sessionId,
                   msg.voice || "local",
@@ -3603,14 +3617,14 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_interrupt") {
-            if (activeEngine === "deepgram") {
+            if (getActiveVoiceEngine(sessionId) === "deepgram") {
               const dgSession = getDeepgramSession(sessionId)
               if (dgSession?.connected && dgSession.responseInProgress) {
                 dgSession.responseInProgress = false
               }
-            } else if (activeEngine === "local") {
+            } else if (getActiveVoiceEngine(sessionId) === "local") {
               // Local engine: no response cancellation needed (LLM-based)
-            } else if (activeEngine === "ornith") {
+            } else if (getActiveVoiceEngine(sessionId) === "ornith") {
               const ornithSess = getOrnithSession(sessionId)
               if (ornithSess?.connected && ornithSess.responseInProgress) {
                 ornithSess.responseInProgress = false
@@ -3637,7 +3651,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "voice_stop") {
-            if (activeEngine === "deepgram") {
+            if (getActiveVoiceEngine(sessionId) === "deepgram") {
               const dgSession = getDeepgramSession(sessionId)
               if (dgSession?.connected) {
                 const pending = deepgramPreSessionAudio.drain(sessionId)
@@ -3646,7 +3660,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 }
               }
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
-            } else if (activeEngine === "local") {
+            } else if (getActiveVoiceEngine(sessionId) === "local") {
               // Flush STT buffer + commit any pending utterance before ack
               const localSess = getVoiceSession(sessionId)
               try {
@@ -3655,7 +3669,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
                 /* non-critical */
               }
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
-            } else if (activeEngine === "ornith") {
+            } else if (getActiveVoiceEngine(sessionId) === "ornith") {
               // Ornith: VAD-based auto-commit, just acknowledge
               socketRef.send(JSON.stringify({ type: "voice_stream_complete" }))
             } else {
@@ -3680,20 +3694,22 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
           }
 
           if (msg.type === "audio" && msg.data) {
-            if (activeEngine === "deepgram") {
+            // Browser tier has no server session — nothing to route audio to.
+            if (getActiveVoiceEngine(sessionId) === TERMINAL_VOICE_ENGINE) return
+            if (getActiveVoiceEngine(sessionId) === "deepgram") {
               const dgSession = getDeepgramSession(sessionId)
               if (dgSession?.connected) {
                 ;(dgSession as any).sendAudio?.(msg.data)
               } else {
                 deepgramPreSessionAudio.enqueue(sessionId, msg.data)
               }
-            } else if (activeEngine === "local") {
+            } else if (getActiveVoiceEngine(sessionId) === "local") {
               // Local engine: route audio to the orchestrator session
               const localSession = getVoiceSession(sessionId)
               if (localSession) {
                 localSession.sendAudio(msg.data)
               }
-            } else if (activeEngine === "ornith") {
+            } else if (getActiveVoiceEngine(sessionId) === "ornith") {
               // Ornith: route audio to the ornith session
               const ornithSess = getOrnithSession(sessionId)
               if (ornithSess?.connected) {
@@ -3777,7 +3793,7 @@ function attachTokidappSocket(ws: WebSocket, token: string) {
             // natively via input_image — GPT-4o-mini pre-analysis is only needed
             // for the routeMessage() fallback and would add 1-3s latency before
             // the realtime injection, creating race conditions with live voice.
-            if (activeEngine === "deepgram") {
+            if (getActiveVoiceEngine(sessionId) === "deepgram") {
               const dgSession = getDeepgramSession(sessionId)
               if (dgSession?.connected) {
                 ;(dgSession as any).sendMessage?.(msg.content)
