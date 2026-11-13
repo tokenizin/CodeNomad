@@ -25,7 +25,7 @@ import os from 'os'
 
 // ── Helpers ─────────────────────────────────────
 
-function resolveUADir(projectRoot: string): string {
+export function resolveUADir(projectRoot: string): string {
   const legacy = path.join(projectRoot, '.understand-anything')
   const modern = path.join(projectRoot, '.ua')
   if (fs.existsSync(legacy)) return legacy

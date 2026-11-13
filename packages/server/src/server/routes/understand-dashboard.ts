@@ -5,15 +5,18 @@
  *   GET /understand                       — Dashboard page. `?projectRoot=<abs path>` selects the
  *                                           project it shows (remembered in a cookie, see below).
  *   GET /understand/assets/*              — Dashboard bundle (JS/CSS/images)
- *   GET /knowledge-graph.json             — Graph data the dashboard fetches. The root path is
- *                                           hardcoded by the dashboard bundle, so it cannot move
- *                                           under /api/.
+ *   GET /knowledge-graph.json, /domain-graph.json, /diff-overlay.json, /meta.json,
+ *       /config.json, /code-lessons.json, /file-content.json, /staleness.json
+ *                                         — Data the dashboard fetches (see
+ *                                           understand-dashboard-data.ts). The root paths are
+ *                                           hardcoded by the dashboard bundle, so they cannot
+ *                                           move under /api/.
  *   GET /api/understand/dashboard-status  — Cheap "can the dashboard be opened?" probe for the UI
  *   GET /api/understand/dashboard         — Legacy alias; redirects to /understand
  *
  * The page lives outside /api/ so browser navigations get the normal /login redirect. The
- * session gate for /understand* and /knowledge-graph.json is in http-server.ts and uses the
- * path constants exported here.
+ * session gate for /understand* and the data paths is in http-server.ts and uses
+ * isUnderstandDashboardPath() from here.
  *
  * The plugin's SPA shows an "Access Token Required" gate unless the URL carries `?token=` (or
  * sessionStorage already has one), because its standalone viewer protects a local port with a
@@ -23,7 +26,7 @@
  * it back on its data requests. The placeholder is deliberately NOT derived from the session
  * cookie, so nothing sensitive ends up in a URL or in the browser history.
  *
- * The bundle requests /knowledge-graph.json without a query string, so the project chosen via
+ * The bundle requests its data files without a projectRoot, so the project chosen via
  * /understand?projectRoot= is carried in a short-lived cookie. Two tabs showing different
  * projects therefore share it, and the most recently opened page wins.
  *
@@ -34,12 +37,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import fs from 'fs'
 import path from 'path'
 import { parseCookies } from '../../auth/http-auth.js'
-import { readKnowledgeGraph, resolvePluginRoot } from './understand-anything.js'
+import { resolvePluginRoot } from './understand-anything.js'
+import { DASHBOARD_DATA_PATHS, registerUnderstandDashboardDataRoutes } from './understand-dashboard-data.js'
 
 /** Browser-facing path of the dashboard page (keep in sync with the UI and auth gate). */
 export const DASHBOARD_PATH = '/understand'
-/** Path the dashboard bundle fetches its graph from. */
-export const KNOWLEDGE_GRAPH_PATH = '/knowledge-graph.json'
+
+/** True for the dashboard page, its assets and the data files it fetches; all need a session. */
+export function isUnderstandDashboardPath(pathname: string): boolean {
+  return pathname === DASHBOARD_PATH || pathname.startsWith(`${DASHBOARD_PATH}/`) || DASHBOARD_DATA_PATHS.has(pathname)
+}
 
 /**
  * Satisfies the dashboard SPA's token gate. Not a credential: access is enforced by the CodeNomad
@@ -94,6 +101,15 @@ function readProjectRootCookie(request: FastifyRequest): string | null {
   } catch {
     return null
   }
+}
+
+/** Project for a request: ?projectRoot= > cookie set by /understand > server cwd. */
+function resolveRequestProjectRoot(request: FastifyRequest): string {
+  return (
+    sanitizeProjectRoot((request.query as { projectRoot?: string })?.projectRoot) ??
+    readProjectRootCookie(request) ??
+    process.cwd()
+  )
 }
 
 function setProjectRootCookie(reply: FastifyReply, projectRoot: string): void {
@@ -160,17 +176,5 @@ export function registerUnderstandDashboardRoutes(app: FastifyInstance): void {
     return reply.send(fs.readFileSync(assetPath))
   })
 
-  app.get(KNOWLEDGE_GRAPH_PATH, async (request, reply) => {
-    const projectRoot =
-      sanitizeProjectRoot((request.query as { projectRoot?: string })?.projectRoot) ??
-      readProjectRootCookie(request) ??
-      process.cwd()
-    try {
-      const graph = await readKnowledgeGraph(projectRoot)
-      reply.header('Content-Type', 'application/json')
-      return reply.send(graph)
-    } catch (err: any) {
-      return reply.code(404).send({ error: err.message })
-    }
-  })
+  registerUnderstandDashboardDataRoutes(app, resolveRequestProjectRoot)
 }
