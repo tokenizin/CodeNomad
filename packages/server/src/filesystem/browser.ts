@@ -23,7 +23,8 @@ interface DirectoryReadOptions {
 }
 
 const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
-const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
+/** Largest file the server reads for an attachment. Search results over this size cannot be attached. */
+export const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
 
 export class FileSystemBrowser {
   private readonly root: string
@@ -129,6 +130,36 @@ export class FileSystemBrowser {
     }
     const contents = encoding === "base64" ? fs.readFileSync(resolved).toString("base64") : fs.readFileSync(resolved, "utf-8")
     return { path: targetPath, contents, encoding }
+  }
+
+  /**
+   * The directory a recursive search may start from, and how to name what it finds.
+   *
+   * Search is confined to the configured root in BOTH modes. Browsing with an unrestricted root may list any
+   * directory the user navigates to, one level at a time; a search walks whole trees and reads file contents,
+   * so letting it start anywhere would turn the dialog into a disk-wide crawler.
+   */
+  resolveSearchScope(targetPath?: string): { root: string; base: string; toEntryPath: (absolutePath: string) => string } {
+    let base: string
+    if (this.unrestricted) {
+      const resolved = this.resolveUnrestrictedPath(targetPath)
+      if (resolved === WINDOWS_DRIVES_ROOT) {
+        throw new Error("Search is limited to the workspace root")
+      }
+      base = path.resolve(resolved)
+    } else {
+      base = this.toRestrictedAbsolute(this.normalizeRelativePath(targetPath))
+    }
+    if (this.isOutsideRoot(path.relative(this.root, base))) {
+      throw new Error("Search is limited to the workspace root")
+    }
+    this.assertDirectoryExists(base)
+    const toEntryPath = (absolutePath: string) => {
+      if (this.unrestricted) return absolutePath
+      const relative = path.relative(this.root, absolutePath).replace(/\\+/g, "/")
+      return relative === "" ? "." : relative
+    }
+    return { root: this.root, base, toEntryPath }
   }
 
   private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {

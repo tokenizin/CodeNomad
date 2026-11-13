@@ -5,6 +5,8 @@ import { WINDOWS_DRIVES_ROOT } from '@codenomad/api-types'
 import { serverApi } from "../lib/api-client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
+import { isOverAttachLimit, sortDirectoryEntries, type DirectorySortMode } from "../lib/directory-browser-discovery"
+import { DirectoryBrowserSearchResults, DirectoryBrowserToolbar, createDirectorySearch, entryMetaLabel } from "./directory-browser-discovery"
 
 function normalizePathKey(input?: string | null) {
   if (!input || input === "." || input === "./") {
@@ -40,6 +42,8 @@ interface DirectoryBrowserDialogProps {
   title: string
   description?: string
   initialPath?: string
+  /** Files over this size cannot be picked (the attach limit). They stay listed, marked as too large. */
+  maxFileBytes?: number
   onSelect: (absolutePath: string, entry?: FileSystemEntry) => void
   onClose: () => void
 }
@@ -75,8 +79,10 @@ type FolderRow =
   | { type: "entry"; entry: FileSystemEntry }
 
 const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) => {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [rootPath, setRootPath] = createSignal("")
+  // Kept while the dialog is closed: a person who sorts by date usually wants that the next time too.
+  const [sortMode, setSortMode] = createSignal<DirectorySortMode>("name")
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [pathInput, setPathInput] = createSignal("")
@@ -86,6 +92,12 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
   const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
   const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
+
+  // Search covers the folder being browsed and everything below it; only offered when picking files.
+  const search = createDirectorySearch({
+    path: () => currentMetadata()?.currentPath,
+    enabled: () => props.open && props.mode === "files" && currentMetadata() !== null,
+  })
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
@@ -102,6 +114,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     metadataCache.clear()
     inFlightRequests.clear()
     setError(null)
+    search.reset()
   }
 
   createEffect(() => {
@@ -174,14 +187,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
       const response = await serverApi.listFileSystem(targetPath, { includeFiles: props.mode === "files" })
       const canonicalKey = normalizePathKey(response.metadata.currentPath)
-      const entries = response.entries
-        .filter((entry) => props.mode === "files" || entry.type === "directory")
-        .sort((a, b) => {
-          const aDirectory = a.type === "directory" ? 0 : 1
-          const bDirectory = b.type === "directory" ? 0 : 1
-          if (aDirectory !== bDirectory) return aDirectory - bDirectory
-          return a.name.localeCompare(b.name)
-        })
+      // Stored as listed; the order is applied when rendering, so changing the sort needs no reload.
+      const entries = response.entries.filter((entry) => props.mode === "files" || entry.type === "directory")
 
       setDirectoryChildren((prev) => {
         const next = new Map(prev)
@@ -255,7 +262,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     if (!key) {
       return rows
     }
-    const children = directoryChildren().get(key) ?? []
+    const children = sortDirectoryEntries(directoryChildren().get(key) ?? [], sortMode())
     for (const entry of children) {
       rows.push({ type: "entry", entry })
     }
@@ -449,6 +456,17 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                   </button>
                 </div>
               </Show>
+              <Show when={rootPath()}>
+                <DirectoryBrowserToolbar
+                  sortMode={sortMode()}
+                  onSortChange={setSortMode}
+                  search={props.mode === "files" ? search : undefined}
+                />
+              </Show>
+              <Show
+                when={!search.isActive()}
+                fallback={<DirectoryBrowserSearchResults search={search} onSelect={handleEntrySelect} maxFileBytes={props.maxFileBytes} />}
+              >
               <Show
                 when={!loading() && !error()}
                 fallback={
@@ -473,6 +491,10 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                         const isFolder = isEntry && item.entry.type === "directory"
                         const isSelectable = isEntry && (props.mode === "files" ? item.entry.type === "file" : item.entry.type === "directory")
                         const label = isEntry ? item.entry.name || item.entry.path : t("directoryBrowser.upOneLevel")
+                        const tooLarge = isEntry && item.entry.type === "file" && isOverAttachLimit(item.entry, props.maxFileBytes)
+                        const meta = isEntry
+                          ? [entryMetaLabel(item.entry, locale()), tooLarge ? t("directoryBrowser.tooLarge") : ""].filter(Boolean).join(" · ")
+                          : ""
                         const navigate = () => {
                           if (!isEntry) {
                             handleNavigateUp()
@@ -497,6 +519,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                 </div>
                                 <div class="directory-browser-row-text">
                                   <span class="directory-browser-row-name">{label}</span>
+                                  <Show when={meta}>
+                                    <span class="directory-browser-row-meta">{meta}</span>
+                                  </Show>
                                 </div>
                                 <Show when={isFolder && isEntry && isPathLoading(item.entry.path)}>
                                   <Loader2 class="directory-browser-row-spinner animate-spin" />
@@ -506,6 +531,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                 <button
                                   type="button"
                                   class="selector-button selector-button-secondary directory-browser-select"
+                                  disabled={tooLarge}
+                                  title={tooLarge ? t("directoryBrowser.tooLarge") : undefined}
                                   onClick={(event) => {
                                     event.stopPropagation()
                                     if (isEntry) handleEntrySelect(item.entry)
@@ -521,6 +548,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     </For>
                   </div>
                 </Show>
+              </Show>
               </Show>
             </div>
           </div>

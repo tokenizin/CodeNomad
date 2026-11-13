@@ -196,6 +196,36 @@ export interface FileSystemListResponse {
   metadata: FileSystemListingMetadata
 }
 
+/** Recursive file-name search under a directory of the configured root (`GET /api/filesystem/search`). */
+export interface FileSystemSearchResponse {
+  /** Best matches first. `crumbPath` is the folder of the entry, relative to the searched directory ("" = in it). */
+  entries: FileSystemEntry[]
+  /** True when more matched than were returned, or the walk stopped at its entry or time budget. */
+  truncated: boolean
+  /** Absolute path of the directory that was searched. */
+  basePath: string
+}
+
+export interface FileSystemContentSearchHit {
+  entry: FileSystemEntry
+  /** Number of matching lines in the file. */
+  matches: number
+  /** Matching lines, in file order. */
+  snippets: Array<{ line: number; text: string }>
+}
+
+/** Full-text search under a directory of the configured root (`GET /api/filesystem/content-search`). */
+export interface FileSystemContentSearchResponse {
+  hits: FileSystemContentSearchHit[]
+  /** The words that were searched for (short words are dropped). */
+  terms: string[]
+  truncated: boolean
+  /** Files that matched but are over the attach size limit, so they are not listed. */
+  skippedTooLarge: number
+  engine: "ripgrep" | "node"
+  basePath: string
+}
+
 export interface FileSystemCreateFolderRequest {
   /**
    * Path identifier for the currently browsed directory.

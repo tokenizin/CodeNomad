@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { FileSystemBrowser } from "../../filesystem/browser"
+import { searchFileContents, searchFileNames } from "../../filesystem/discovery"
 
 interface RouteDeps {
   fileSystemBrowser: FileSystemBrowser
@@ -20,6 +21,23 @@ const FilesystemFileContentQuerySchema = z.object({
   path: z.string(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
 })
+
+const FilesystemSearchQuerySchema = z.object({
+  q: z.string().trim().min(1).max(200),
+  /** Directory to search, in the form `/api/filesystem` returns it. Defaults to the root. */
+  path: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+  depth: z.coerce.number().int().min(0).optional(),
+})
+
+/** Aborts when the client goes away before the answer is sent (the person typed something else, or closed the dialog). */
+function abortOnDisconnect(raw: { on(event: "close", listener: () => void): unknown; writableEnded: boolean }): AbortSignal {
+  const controller = new AbortController()
+  raw.on("close", () => {
+    if (!raw.writableEnded) controller.abort()
+  })
+  return controller.signal
+}
 
 export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/filesystem", async (request, reply) => {
@@ -54,6 +72,45 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
       }
 
       reply.code(400).type("text/plain").send((error as Error).message)
+    }
+  })
+
+  // File-name search through nested folders, for the "Attach files" dialog. Confined to the configured root.
+  app.get("/api/filesystem/search", async (request, reply) => {
+    const query = FilesystemSearchQuerySchema.safeParse(request.query ?? {})
+    if (!query.success) {
+      reply.code(400)
+      return { error: "q is required (1 to 200 characters)" }
+    }
+    try {
+      return await searchFileNames(deps.fileSystemBrowser, query.data.q, {
+        path: query.data.path,
+        limit: query.data.limit,
+        depth: query.data.depth,
+        signal: abortOnDisconnect(reply.raw),
+      })
+    } catch (error) {
+      reply.code(400)
+      return { error: (error as Error).message }
+    }
+  })
+
+  // Full-text search (ranked, with matching lines). Confined to the configured root; files over the attach limit are left out.
+  app.get("/api/filesystem/content-search", async (request, reply) => {
+    const query = FilesystemSearchQuerySchema.safeParse(request.query ?? {})
+    if (!query.success) {
+      reply.code(400)
+      return { error: "q is required (1 to 200 characters)" }
+    }
+    try {
+      return await searchFileContents(deps.fileSystemBrowser, query.data.q, {
+        path: query.data.path,
+        limit: query.data.limit,
+        signal: abortOnDisconnect(reply.raw),
+      })
+    } catch (error) {
+      reply.code(400)
+      return { error: (error as Error).message }
     }
   })
 

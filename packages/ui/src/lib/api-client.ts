@@ -9,7 +9,9 @@ import type {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
   FileSystemFileContentResponse,
+  FileSystemContentSearchResponse,
   FileSystemListResponse,
+  FileSystemSearchResponse,
   InstanceData,
   LocalLlmModelsResponse,
   PreviewSession,
@@ -543,6 +545,28 @@ export const serverApi = {
     }
     const query = params.toString()
     return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
+  },
+
+  /** File-name search through the folders below `path` (default: the root). Pass a signal to cancel a superseded search. */
+  searchFileSystem(
+    query: string,
+    options?: { path?: string; limit?: number; depth?: number; signal?: AbortSignal },
+  ): Promise<FileSystemSearchResponse> {
+    const params = new URLSearchParams({ q: query })
+    if (options?.path && options.path !== ".") params.set("path", options.path)
+    if (options?.limit !== undefined) params.set("limit", String(options.limit))
+    if (options?.depth !== undefined) params.set("depth", String(options.depth))
+    return request<FileSystemSearchResponse>(`/api/filesystem/search?${params.toString()}`, { signal: options?.signal })
+  },
+  /** Full-text search below `path` (default: the root): ranked files with their matching lines. */
+  searchFileSystemContent(
+    query: string,
+    options?: { path?: string; limit?: number; signal?: AbortSignal },
+  ): Promise<FileSystemContentSearchResponse> {
+    const params = new URLSearchParams({ q: query })
+    if (options?.path && options.path !== ".") params.set("path", options.path)
+    if (options?.limit !== undefined) params.set("limit", String(options.limit))
+    return request<FileSystemContentSearchResponse>(`/api/filesystem/content-search?${params.toString()}`, { signal: options?.signal })
   },
 
   createFileSystemFolder(parentPath: string | undefined, name: string): Promise<FileSystemCreateFolderResponse> {

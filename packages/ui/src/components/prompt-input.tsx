@@ -1409,6 +1409,7 @@ export default function PromptInput(props: PromptInputProps) {
           textareaRef?.focus()
         }}
         onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
+        maxFileBytes={MAX_READABLE_PICKED_FILE_BYTES}
         initialPath={props.instanceFolder}
       />
 
