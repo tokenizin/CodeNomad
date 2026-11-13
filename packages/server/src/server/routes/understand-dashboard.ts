@@ -15,6 +15,14 @@
  * session gate for /understand* and /knowledge-graph.json is in http-server.ts and uses the
  * path constants exported here.
  *
+ * The plugin's SPA shows an "Access Token Required" gate unless the URL carries `?token=` (or
+ * sessionStorage already has one), because its standalone viewer protects a local port with a
+ * one-time secret. Here CodeNomad's session gate already protects the page and graph, and the
+ * graph route ignores `token`, so /understand redirects to itself with a fixed, non-secret
+ * placeholder token. The SPA stores it in sessionStorage, strips it from the address bar and sends
+ * it back on its data requests. The placeholder is deliberately NOT derived from the session
+ * cookie, so nothing sensitive ends up in a URL or in the browser history.
+ *
  * The bundle requests /knowledge-graph.json without a query string, so the project chosen via
  * /understand?projectRoot= is carried in a short-lived cookie. Two tabs showing different
  * projects therefore share it, and the most recently opened page wins.
@@ -32,6 +40,12 @@ import { readKnowledgeGraph, resolvePluginRoot } from './understand-anything.js'
 export const DASHBOARD_PATH = '/understand'
 /** Path the dashboard bundle fetches its graph from. */
 export const KNOWLEDGE_GRAPH_PATH = '/knowledge-graph.json'
+
+/**
+ * Satisfies the dashboard SPA's token gate. Not a credential: access is enforced by the CodeNomad
+ * session (see http-server.ts), which this value is never derived from or checked against.
+ */
+export const DASHBOARD_PLACEHOLDER_TOKEN = 'codenomad-session'
 
 const PROJECT_ROOT_COOKIE = 'ua_project_root'
 const PROJECT_ROOT_COOKIE_MAX_AGE_SECONDS = 8 * 60 * 60
@@ -98,18 +112,28 @@ export function registerUnderstandDashboardRoutes(app: FastifyInstance): void {
   })
 
   app.get(DASHBOARD_PATH, async (request, reply) => {
-    const projectRoot = sanitizeProjectRoot((request.query as { projectRoot?: string })?.projectRoot)
+    const query = request.query as { projectRoot?: string; token?: string }
+    const projectRoot = sanitizeProjectRoot(query?.projectRoot)
     if (projectRoot) setProjectRootCookie(reply, projectRoot)
 
-    reply.header('Content-Type', 'text/html; charset=utf-8')
     const dashboard = resolveDashboard()
     if (!dashboard.available) {
+      reply.header('Content-Type', 'text/html; charset=utf-8')
       return reply.code(503).send(unavailableHtml(dashboard.reason))
     }
+
+    // Skip the SPA's "Access Token Required" gate for users who already passed CodeNomad auth.
+    if (!query?.token) {
+      const params = new URLSearchParams(request.url.split('?')[1] ?? '')
+      params.set('token', DASHBOARD_PLACEHOLDER_TOKEN)
+      return reply.redirect(`${DASHBOARD_PATH}?${params.toString()}`)
+    }
+
     // Rewrite asset paths from /assets/ to /understand/assets/
     let html = fs.readFileSync(dashboard.indexHtml, 'utf-8')
     html = html.replace(/src="\/assets\//g, `src="${DASHBOARD_PATH}/assets/`)
     html = html.replace(/href="\/assets\//g, `href="${DASHBOARD_PATH}/assets/`)
+    reply.header('Content-Type', 'text/html; charset=utf-8')
     return reply.send(html)
   })
 
