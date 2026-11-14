@@ -2,7 +2,7 @@ import type { LocalLlmModelsResponse } from "../api-types"
 
 export const LOCAL_LLM_PROVIDER_ID = "ollama"
 export const DEFAULT_LOCAL_LLM_HOST = process.env.OLLAMA_BASE_URL?.trim() || "http://localhost:11434"
-export const DEFAULT_LOCAL_LLM_MODEL = process.env.OLLAMA_MODEL?.trim() || "hermes3:latest"
+export const DEFAULT_LOCAL_LLM_MODEL = process.env.OLLAMA_MODEL?.trim() || "qwen3.8:27b"
 
 interface OllamaTagsResponse {
   models?: Array<{
