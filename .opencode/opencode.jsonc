@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "openrouter-fallback/auto",
+  "model": "ollama/qwen3.8:27b",
   "instructions": [
     "../AGENTS.md",
     "agent/codenomad_agent_runner.md"
@@ -19,6 +19,47 @@
           "name": "Gemma 4 8B (local)",
           "tool_call": true,
           "reasoning": true
+        },
+        "gemma4:26b": {
+          "id": "gemma4:26b",
+          "name": "Gemma 4 26B (local · vision/creative_3d · 262K · multimodal)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144,
+            "input": 262144
+          }
+        },
+        "qwen3.8:27b": {
+          "id": "qwen3.8:27b",
+          "name": "Qwen 3.8 27B (local · code/text/orchestration · 262K)",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144,
+            "input": 262144
+          }
         },
         "hermes3:latest": {
           "id": "hermes3:latest",
