@@ -1,4 +1,4 @@
-export type RightPanelTab = "git-changes" | "files" | "status" | "wiki-lint" | "notify-history"
+export type RightPanelTab = "git-changes" | "files" | "status" | "wiki-lint" | "notify-history" | "git-graph"
 
 export type DiffViewMode = "split" | "unified"
 

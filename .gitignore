@@ -26,3 +26,9 @@ node_modules/
 models/
 .env.local
 .env.backup.1794344520
+
+# Vendored Git Graph extension deps (must be committed; loaded at runtime)
+!packages/server/resources/git-graph/node_modules/
+!packages/server/resources/git-graph/node_modules/**
+!packages/server/resources/git-graph/out/
+!packages/server/resources/git-graph/out/**

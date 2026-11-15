@@ -46,6 +46,7 @@ import { registerWikiLintRoutes } from "./routes/wiki-lint.js"
 import { registerRefreshModelsRoutes } from "./routes/refresh-models.js"
 import { registerUnderstandAnythingRoutes } from "./routes/understand-anything.js"
 import { isUnderstandDashboardPath, registerUnderstandDashboardRoutes } from "./routes/understand-dashboard.js"
+import { isGitGraphPath, registerGitGraphRoutes } from "./routes/git-graph.js"
 import { registerModelSyncRoutes } from "./routes/model-sync.js"
 import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
@@ -349,7 +350,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     // The Understand-Anything dashboard page and the data files it fetches from the site root live
     // outside /api/ but expose project data, so they need a session like API routes do.
     const isUnderstandAnythingPath = isUnderstandDashboardPath(pathname)
-    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/") || isUnderstandAnythingPath
+    // The Git Graph drawer pages/assets live outside /api/ but read repo data — same gate.
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/") || isUnderstandAnythingPath || isGitGraphPath(pathname)
     if (requiresAuthForApi && !session) {
       // Allow StarGuard JWT (Authorization: Bearer <token>).
       if (await checkStarGuardJwt(request)) {
@@ -478,6 +480,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerRefreshModelsRoutes(app)
   registerUnderstandAnythingRoutes(app)
   registerUnderstandDashboardRoutes(app)
+  registerGitGraphRoutes(app, { workspaceManager: deps.workspaceManager, logger: deps.logger.child({ component: "gitgraph" }) })
   registerModelSyncRoutes(app)
   registerAgentSessionRoutes(app, { dispatcher: agentSessionDispatcher, logger: deps.logger.child({ component: "agent-sessions" }) })
   registerLocalEngineRoutes(app, { settings: deps.settings, workspaceManager: deps.workspaceManager })
