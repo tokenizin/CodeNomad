@@ -21,6 +21,7 @@ import fs from "fs"
 import path from "path"
 import type { WorkflowDoneEvent, WorkflowPromptEvent, WorkflowStartEvent } from "./rust-runner.js"
 import { safeKey, type InboxEntry, type LocalEngineStore, type LocalSession, type WorkflowStatus } from "./store.js"
+import { workspaceProblem } from "./workspaces.js"
 
 /** The session that started a workflow and is told when it is done. */
 export type Manager = { key: string; folder: string; agent?: string; model?: string }
@@ -28,7 +29,10 @@ export type Manager = { key: string; folder: string; agent?: string; model?: str
 /** One agent run for a session, to the end, saved to its history. */
 export type ExecuteJob = {
   sessionKey: string
+  /** The session's folder: the manager's worktree, which also holds the workflow registry. */
   folder: string
+  /** Where the process runs, when that is not `folder`: a scope's own workspace. */
+  workspace?: string
   /** What the agent is given. */
   prompt: string
   /** What the session's history shows as the user message. */
@@ -62,7 +66,10 @@ type Job = { text: string; display: string; notify: boolean; identifier: string 
 type Runner = {
   key: string
   workflowId: string
+  /** The manager's worktree: the session's folder, and where the workflow registry is. */
   folder: string
+  /** Where the runner works, when that is a workspace of its own (a scope of a scope contract). */
+  workspace?: string
   taskPath: string
   manager?: Manager
   queue: Job[]
@@ -146,9 +153,21 @@ export class WorkflowSupervisor {
         managerModel: manager.model,
         taskPath: ev.taskPath,
         track: ev.track,
+        ...(ev.workspace ? { workspace: ev.workspace } : {}),
+        ...(ev.scopeId ? { scopeId: ev.scopeId } : {}),
+        ...(ev.contract ? { contract: ev.contract } : {}),
       },
     })
-    const runner: Runner = { key: ev.sessionId, workflowId: ev.workflowId, folder: manager.folder, taskPath: ev.taskPath, manager, queue: [], running: false }
+    const runner: Runner = {
+      key: ev.sessionId,
+      workflowId: ev.workflowId,
+      folder: manager.folder,
+      ...(ev.workspace ? { workspace: ev.workspace } : {}),
+      taskPath: ev.taskPath,
+      manager,
+      queue: [],
+      running: false,
+    }
     this.runners.set(runner.key, runner)
     runner.queue.push({ text: ev.instructions, display: ev.prompt, notify: true, identifier: ev.taskPath || ev.sessionId })
     this.track(this.drain(runner))
@@ -276,6 +295,7 @@ export class WorkflowSupervisor {
       key: session.id,
       workflowId: session.workflow.workflowId,
       folder: session.folder,
+      ...(session.workflow.workspace ? { workspace: session.workflow.workspace } : {}),
       taskPath: session.workflow.taskPath,
       manager,
       queue: [],
@@ -303,10 +323,14 @@ export class WorkflowSupervisor {
         this.syncQueue(runner)
         this.deps.store.setWorkflowStatus(runner.key, "running")
         let result: ExecuteResult
+        // A scope's workspace is looked at again before every run: a follow-up can come long after the start.
+        const problem = runner.workspace ? workspaceProblem(runner.folder, runner.workspace) : null
         try {
+          if (problem) throw new Error(`its workspace ${runner.workspace} cannot be used: ${problem}`)
           result = await this.deps.execute({
             sessionKey: runner.key,
             folder: runner.folder,
+            ...(runner.workspace ? { workspace: runner.workspace } : {}),
             prompt: job.text,
             displayText: job.display,
             agent: undefined,
@@ -316,6 +340,8 @@ export class WorkflowSupervisor {
               NOMAD_WORKFLOW_RUN: "1",
               NOMAD_WORKFLOW_SESSION: runner.workflowId,
               NOMAD_WORKFLOW_TASK_PATH: runner.taskPath,
+              // The runner works in its own workspace, but the agent's registry (and one-implementation rule) is the manager's.
+              ...(runner.workspace ? { NOMAD_WORKFLOW_REGISTRY: runner.folder } : {}),
             },
           })
         } catch (error) {

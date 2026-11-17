@@ -387,7 +387,9 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
       if (!playgroundRoot || !runner) throw new Error("Claude Code (Rust) not found")
       const outcome = await executeRun({
         sessionKey: job.sessionKey,
-        cwd: job.folder,
+        // A scope of a scope contract runs in its own workspace; its session stays with the manager's folder.
+        cwd: job.workspace ?? job.folder,
+        sessionFolder: job.folder,
         prompt: job.prompt,
         displayText: job.displayText,
         agent: job.agent && job.agent !== FULL_AGENT ? job.agent : undefined,
@@ -454,6 +456,8 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
   type RunParams = {
     sessionKey?: string
     cwd: string
+    /** The session's own folder, when the process runs somewhere else (a scope's workspace). Default: `cwd`. */
+    sessionFolder?: string
     /** What the agent is given (the message plus any uploaded files' paths). */
     prompt: string
     /** What the history shows as the user message. */
@@ -522,8 +526,9 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     const transcript: object[] = []
     // Protocol 2 (the agent runs with NOMAD_PROTOCOL=2): each delegated task gets
     // its own session. Needs a session to hang them on.
-    const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: cwd, parentParts: replyParts }) : undefined
-    const manager: Manager | undefined = sessionKey ? { key: sessionKey, folder: cwd, agent, model } : undefined
+    const sessionFolder = params.sessionFolder ?? cwd
+    const taskSessions = sessionKey ? new TaskSessions({ store, parentSessionId: sessionKey, folder: sessionFolder, parentParts: replyParts }) : undefined
+    const manager: Manager | undefined = sessionKey ? { key: sessionKey, folder: sessionFolder, agent, model } : undefined
     let workflowDone: WorkflowDoneEvent | undefined
     const write = (incoming: EngineEvent) => {
       replyParts.apply(incoming)

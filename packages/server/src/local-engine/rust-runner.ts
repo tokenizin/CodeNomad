@@ -131,6 +131,14 @@ export type WorkflowStartEvent = {
   prompt: string
   /** The Product Manager's tool call that started it. */
   callId: string
+  /**
+   * A scope of a scope contract: the folder its runner works in (a git worktree of the manager's repository; absent: the
+   * manager's own), the scope's id, and the contract (the parent task's id). The agent takes them from the contract, never
+   * from the model.
+   */
+  workspace?: string
+  scopeId?: string
+  contract?: string
 }
 
 /** The Product Manager sent text to a workflow's runner (`active`: it is still working, so the text is queued). */
@@ -410,6 +418,9 @@ export class RustStreamTranslator {
         instructions: str(ev.instructions),
         prompt: str(ev.prompt) || str(ev.instructions),
         callId: str(ev.call_id),
+        ...(str(ev.workspace) ? { workspace: str(ev.workspace) } : {}),
+        ...(str(ev.scope_id) ? { scopeId: str(ev.scope_id) } : {}),
+        ...(str(ev.contract) ? { contract: str(ev.contract) } : {}),
       },
     ]
   }

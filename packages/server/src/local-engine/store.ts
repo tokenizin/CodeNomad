@@ -56,6 +56,10 @@ export type WorkflowInfo = {
   managerModel?: string
   taskPath: string
   track: string
+  /** A scope of a scope contract: the folder its runner works in (absent: the manager's own), its id and its contract. */
+  workspace?: string
+  scopeId?: string
+  contract?: string
   status: WorkflowStatus
   /** Prompts waiting behind the run that is going (each owes its manager a notification); kept so a restart can say they were not run. */
   queued?: string[]

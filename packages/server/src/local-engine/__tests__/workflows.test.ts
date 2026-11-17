@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { execFileSync } from "child_process"
 import fs from "fs"
 import os from "os"
 import path from "path"
@@ -732,5 +733,159 @@ describe("workflow sessions in the store", () => {
   test("an unsafe session id is refused", () => {
     const store = new LocalEngineStore(fs.mkdtempSync(path.join(os.tmpdir(), "wf-store-")))
     expect(() => store.upsertWorkflowSession({ sessionId: "../evil", folder: "/w", title: "x", workflow: { workflowId: "w", managerSessionId: "m", taskPath: "t", track: "spec" } })).toThrow()
+  })
+})
+
+describe("scopes of a scope contract", () => {
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "-C", cwd, ...args], { stdio: "pipe" })
+
+  /** `setup()`, with the manager's folder made a git repository that has one worktree per name given. */
+  function withWorktrees(names: string[], behaviour?: Parameters<typeof setup>[0]) {
+    const env = setup(behaviour)
+    git(env.folder, "init", "-q")
+    fs.writeFileSync(path.join(env.folder, "README.md"), "# work\n")
+    git(env.folder, "add", ".")
+    git(env.folder, "commit", "-q", "-m", "init")
+    const workspaces: Record<string, string> = {}
+    for (const name of names) {
+      const target = path.join(env.dir, `ws-${name}`)
+      git(env.folder, "worktree", "add", "-q", target, "-b", name)
+      workspaces[name] = fs.realpathSync(target)
+    }
+    return { ...env, folder: fs.realpathSync(env.folder), workspaces }
+  }
+
+  const scopeEvent = (id: string, workspace: string | undefined, over: Partial<WorkflowStartEvent> = {}) =>
+    startEvent({ workflowId: `wf_${id}`, sessionId: `ses_lcl_wf_${id}`, ...(workspace ? { workspace } : {}), scopeId: id, contract: "TASK-P", ...over })
+
+  test("the workspace, scope and contract reach the supervisor from the agent's event", () => {
+    const [event] = new RustStreamTranslator().feed(
+      JSON.stringify({ type: "workflow.start", workflow_id: "wf_1", session_id: "ses_lcl_wf_1", task_path: "t.md", track: "implementation", instructions: "go", workspace: "/w/api", scope_id: "api", contract: "TASK-P", call_id: "c" }),
+    )
+    expect(event).toMatchObject({ type: "workflow_start", workspace: "/w/api", scopeId: "api", contract: "TASK-P" })
+    const [plain] = new RustStreamTranslator().feed(JSON.stringify({ type: "workflow.start", workflow_id: "wf_1", session_id: "ses_lcl_wf_1", task_path: "t.md", track: "implementation", instructions: "go", workspace: "", call_id: "c" }))
+    expect(plain).not.toHaveProperty("workspace")
+    expect(plain).not.toHaveProperty("scopeId")
+  })
+
+  test("the runner runs in the scope's workspace and is told where the manager's registry is; its session stays with the manager", async () => {
+    const { folder, workspaces, manager, supervisor, jobs, store } = withWorktrees(["api"])
+    supervisor.start(manager, scopeEvent("api", workspaces.api))
+    await supervisor.idle()
+    const run = jobs.find((j) => !j.history)!
+    expect(run.folder).toBe(folder)
+    expect(run.workspace).toBe(workspaces.api)
+    expect(run.env.NOMAD_WORKFLOW_REGISTRY).toBe(folder)
+    expect(run.env.NOMAD_WORKFLOW_SESSION).toBe("wf_api")
+    expect(store.getSession("ses_lcl_wf_api")).toMatchObject({ folder, workflow: { workspace: workspaces.api, scopeId: "api", contract: "TASK-P", status: "idle" } })
+  })
+
+  test("a workflow that is not a scope runs exactly as before: no workspace, no registry variable", async () => {
+    const { folder, manager, supervisor, jobs } = setup()
+    supervisor.start(manager, startEvent())
+    await supervisor.idle()
+    const run = jobs.find((j) => !j.history)!
+    expect(run.folder).toBe(folder)
+    expect(run).not.toHaveProperty("workspace")
+    expect(run.env).not.toHaveProperty("NOMAD_WORKFLOW_REGISTRY")
+  })
+
+  test("the registry entry is released in the manager's worktree, and nothing is written in the workspace", async () => {
+    const { folder, workspaces, manager, supervisor } = withWorktrees(["api"])
+    const file = registryFile(folder, "wf_api")!
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify({ workflow_id: "wf_api", task_path: "t.md", track: "implementation", state: "running" }))
+    supervisor.start(manager, scopeEvent("api", workspaces.api))
+    await supervisor.idle()
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).state).toBe("idle")
+    expect(fs.existsSync(path.join(workspaces.api, ".codenomad"))).toBe(false)
+  })
+
+  test("two implementation scopes in their own workspaces work at the same time, each in its own folder", async () => {
+    let inside = 0
+    let most = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const { workspaces, manager, supervisor, jobs } = withWorktrees(["api", "ui"], async (job) => {
+      if (job.history) return undefined as unknown as ExecuteResult
+      inside += 1
+      most = Math.max(most, inside)
+      await gate
+      inside -= 1
+      return { stopped: false, isError: false, finalText: `done in ${job.workspace}` }
+    })
+    supervisor.start(manager, scopeEvent("api", workspaces.api))
+    supervisor.start(manager, scopeEvent("ui", workspaces.ui))
+    await new Promise((r) => setTimeout(r, 30))
+    const running = jobs.filter((j) => !j.history)
+    expect(running.map((j) => j.workspace).sort()).toEqual([workspaces.api, workspaces.ui].sort()) // both started before either finished
+    expect(most).toBe(2)
+    release()
+    await supervisor.idle()
+    const told = jobs.filter((j) => j.history).map((j) => j.prompt)
+    expect(told).toHaveLength(2)
+    expect(told.some((t) => t.includes(`done in ${workspaces.api}`)) && told.some((t) => t.includes(`done in ${workspaces.ui}`))).toBe(true)
+  })
+
+  test("a workspace that cannot be used is never run in: the manager is told why, the session fails, the registry is released", async () => {
+    const stranger = fs.mkdtempSync(path.join(os.tmpdir(), "wf-stranger-"))
+    const cases: Array<[string, (w: Record<string, string>) => string, string]> = [
+      ["relative", () => "relative/dir", "it is not an absolute path"],
+      ["missing", () => path.join(os.tmpdir(), "wf-no-such-folder"), "it does not exist"],
+      ["manager", (w) => w.__folder, "it is the manager's own worktree"],
+      ["stranger", () => stranger, "it is not a git worktree of"],
+    ]
+    for (const [name, pick, why] of cases) {
+      const env = withWorktrees([])
+      const file = registryFile(env.folder, `wf_${name}`)!
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, JSON.stringify({ workflow_id: `wf_${name}`, task_path: "t.md", track: "implementation", state: "running" }))
+      env.supervisor.start(env.manager, scopeEvent(name, pick({ __folder: env.folder })))
+      await env.supervisor.idle()
+      expect(env.jobs.filter((j) => !j.history)).toHaveLength(0) // the runner was never started
+      const note = env.jobs.filter((j) => j.history).map((j) => j.prompt)
+      expect(note).toHaveLength(1)
+      expect(note[0].startsWith("[NomadFlow Error] Workflow Runner failed for tasks/todo/T/T.md: its workspace")).toBe(true)
+      expect(note[0]).toContain(why)
+      expect(env.store.getSession(`ses_lcl_wf_${name}`)?.workflow?.status).toBe("failed")
+      expect(JSON.parse(fs.readFileSync(file, "utf8")).state).toBe("idle")
+    }
+    fs.rmSync(stranger, { recursive: true, force: true })
+  })
+
+  test("a workspace that has gone by the time a follow-up comes is not run in", async () => {
+    const { folder, workspaces, manager, supervisor, jobs } = withWorktrees(["api"])
+    supervisor.start(manager, scopeEvent("api", workspaces.api))
+    await supervisor.idle()
+    git(folder, "worktree", "remove", "--force", workspaces.api)
+    const before = jobs.filter((j) => !j.history).length
+    supervisor.prompt(manager, promptEvent({ workflowId: "wf_api", sessionId: "ses_lcl_wf_api", text: "fix the header" }))
+    await supervisor.idle()
+    expect(jobs.filter((j) => !j.history)).toHaveLength(before)
+    const last = jobs.filter((j) => j.history).at(-1)!.prompt
+    expect(last).toContain("[NomadFlow Error]")
+    expect(last).toContain(`its workspace ${workspaces.api} cannot be used: it does not exist`)
+  })
+
+  test("after a server restart a follow-up still runs in the scope's workspace", async () => {
+    const env = withWorktrees(["api"])
+    env.supervisor.start(env.manager, scopeEvent("api", env.workspaces.api))
+    await env.supervisor.idle()
+
+    // A new server: a new supervisor over the same store.
+    const jobs: ExecuteJob[] = []
+    const restarted = new WorkflowSupervisor({
+      store: env.store,
+      isBusy: () => false,
+      execute: async (job) => {
+        jobs.push(job)
+        return { stopped: false, isError: false, finalText: "ok" }
+      },
+    })
+    restarted.prompt(env.manager, promptEvent({ workflowId: "wf_api", sessionId: "ses_lcl_wf_api", text: "second round" }))
+    await restarted.idle()
+    const run = jobs.find((j) => !j.history)!
+    expect(run.workspace).toBe(env.workspaces.api)
+    expect(run.env.NOMAD_WORKFLOW_REGISTRY).toBe(env.folder)
   })
 })
