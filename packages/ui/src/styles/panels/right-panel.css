@@ -993,3 +993,25 @@
   border: 0;
   background: var(--background, #1e1e1e);
 }
+
+/* Git Changes tab — Files | Graph segmented toggle (header). */
+.git-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 2px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.git-view-toggle .git-view-toggle-button {
+  opacity: 0.55;
+}
+
+.git-view-toggle .git-view-toggle-button.active {
+  opacity: 1;
+  color: var(--sw-brand, #d4af37);
+  background: rgba(212, 175, 55, 0.12);
+}

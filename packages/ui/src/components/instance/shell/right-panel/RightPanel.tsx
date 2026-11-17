@@ -934,15 +934,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                     </span>
                   </Show>
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  class={tabClass("git-graph")}
-                  aria-selected={rightPanelTab() === "git-graph"}
-                  onClick={() => setRightPanelTab("git-graph")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.gitGraph")}</span>
-                </button>
               </div>
 
               <div class="tab-strip-spacer" />
@@ -1003,6 +994,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
               onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
               isPhoneLayout={props.isPhoneLayout}
+              renderGraphView={() => (
+                <LazyGitGraphTab
+                  t={props.t}
+                  instanceId={props.instanceId}
+                  worktreeSlug={worktreeSlugForViewer().trim() || null}
+                />
+              )}
             />
           </Suspense>
         </Show>
@@ -1074,16 +1072,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         <Show when={rightPanelTab() === "notify-history"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyNotifyHistoryTab instanceId={props.instanceId} />
-          </Suspense>
-        </Show>
-
-        <Show when={rightPanelTab() === "git-graph"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyGitGraphTab
-              t={props.t}
-              instanceId={props.instanceId}
-              worktreeSlug={worktreeSlugForViewer().trim() || null}
-            />
           </Suspense>
         </Show>
       </div>

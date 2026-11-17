@@ -65,7 +65,8 @@ export function readStoredRightPanelTab(
   if (stored === "files") return "files"
   if (stored === "wiki-lint") return "wiki-lint"
   if (stored === "notify-history") return "notify-history"
-  if (stored === "git-graph") return "git-graph"
+  // "git-graph" was merged into the Git Changes tab as a switchable view.
+  if (stored === "git-graph") return "git-changes"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
   const legacy = window.localStorage.getItem(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)
@@ -97,4 +98,18 @@ export function readStoredEnum<T extends string>(key: string, allowed: readonly 
   const stored = window.localStorage.getItem(key)
   if (!stored) return null
   return (allowed as readonly string[]).includes(stored) ? (stored as T) : null
+}
+
+/** Git Changes tab view mode (file list vs. Git Graph). */
+export const RIGHT_PANEL_GIT_CHANGES_VIEW_KEY = "opencode-session-right-panel-git-changes-view-v1"
+
+export type GitChangesViewMode = "files" | "graph"
+
+export function readStoredGitChangesViewMode(): GitChangesViewMode {
+  return readStoredEnum(RIGHT_PANEL_GIT_CHANGES_VIEW_KEY, ["files", "graph"] as const) ?? "files"
+}
+
+export function writeStoredGitChangesViewMode(mode: GitChangesViewMode): void {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(RIGHT_PANEL_GIT_CHANGES_VIEW_KEY, mode)
 }

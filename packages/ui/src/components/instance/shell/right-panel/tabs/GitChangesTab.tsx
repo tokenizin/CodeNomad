@@ -10,7 +10,7 @@ import {
   type JSX,
 } from "solid-js"
 
-import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-solid"
+import { ChevronDown, ChevronRight, GitBranch, List, RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
@@ -18,6 +18,7 @@ import { ImagePreview } from "../ImagePreview"
 import { isImagePath } from "../fileTypes"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, GitChangeListItem } from "../types"
 import { buildGitChangeListItems } from "../git-changes-model"
+import { readStoredGitChangesViewMode, writeStoredGitChangesViewMode, type GitChangesViewMode } from "../../storage"
 
 const LazyMonacoDiffViewer = lazy(() =>
   import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
@@ -77,6 +78,46 @@ interface GitChangesTabProps {
   onResizeMouseDown: (event: MouseEvent) => void
   onResizeTouchStart: (event: TouchEvent) => void
   isPhoneLayout: Accessor<boolean>
+
+  /** When provided, the tab gains a Files/Graph view toggle and renders this
+   * element (the embedded Git Graph view) in place of the list when Graph is
+   * selected. Supplied by RightPanel to keep the graph tab lazy. */
+  renderGraphView?: () => JSX.Element
+}
+
+/** Segmented Files | Graph control shown in the tab header when a graph view
+ * is available. Keeps the header row identical across both modes. */
+const GitViewToggle: Component<{
+  mode: GitChangesViewMode
+  onMode: (mode: GitChangesViewMode) => void
+  t: (key: string, vars?: Record<string, any>) => string
+}> = (props) => {
+  const buttonClass = (active: boolean) =>
+    `files-header-icon-button git-view-toggle-button${active ? " active" : ""}`
+  return (
+    <div class="git-view-toggle" role="group" aria-label={props.t("instanceShell.rightPanel.gitChanges.viewToggle.ariaLabel")}>
+      <button
+        type="button"
+        class={buttonClass(props.mode === "files")}
+        aria-pressed={props.mode === "files"}
+        title={props.t("instanceShell.rightPanel.gitChanges.viewToggle.files")}
+        aria-label={props.t("instanceShell.rightPanel.gitChanges.viewToggle.files")}
+        onClick={() => props.onMode("files")}
+      >
+        <List class="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        class={buttonClass(props.mode === "graph")}
+        aria-pressed={props.mode === "graph"}
+        title={props.t("instanceShell.rightPanel.gitChanges.viewToggle.graph")}
+        aria-label={props.t("instanceShell.rightPanel.gitChanges.viewToggle.graph")}
+        onClick={() => props.onMode("graph")}
+      >
+        <GitBranch class="h-4 w-4" />
+      </button>
+    </div>
+  )
 }
 
 const GitChangesTab: Component<GitChangesTabProps> = (props) => {
@@ -84,6 +125,15 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
   const entries = createMemo(() => (hasSession() ? props.entries() : null))
   const [imagePreviewEnabled, setImagePreviewEnabled] = createSignal(true)
+
+  // Files | Graph view mode (persisted). "graph" is only offered when the
+  // parent supplies renderGraphView.
+  const [viewMode, setViewMode] = createSignal<GitChangesViewMode>(readStoredGitChangesViewMode())
+  const setView = (mode: GitChangesViewMode) => {
+    setViewMode(mode)
+    writeStoredGitChangesViewMode(mode)
+  }
+  const graphAvailable = () => typeof props.renderGraphView === "function"
 
   const sorted = createMemo<GitChangeEntry[]>(() => {
     const list = entries()
@@ -141,6 +191,21 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     const allItems = listItems()
     const stagedList = stagedItems()
     const unstagedList = unstagedItems()
+
+    // Graph view: same header row (so the toggle never moves), graph body.
+    if (graphAvailable() && viewMode() === "graph") {
+      return (
+        <div class="flex h-full min-h-0 flex-col">
+          <div class="files-tab-header">
+            <div class="files-tab-header-row">
+              <span class="files-tab-selected-path">{props.t("instanceShell.rightPanel.tabs.gitGraph")}</span>
+              <GitViewToggle mode="graph" onMode={setView} t={props.t} />
+            </div>
+          </div>
+          <div class="min-h-0 flex-1 overflow-hidden">{props.renderGraphView!()}</div>
+        </div>
+      )
+    }
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
@@ -395,6 +460,10 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               </span>
               <Show when={props.statusError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
+
+            <Show when={graphAvailable()}>
+              <GitViewToggle mode="files" onMode={setView} t={props.t} />
+            </Show>
 
             <button
               type="button"
