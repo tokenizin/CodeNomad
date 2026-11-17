@@ -60,6 +60,8 @@ export type WorkflowInfo = {
   workspace?: string
   scopeId?: string
   contract?: string
+  /** The commit the scope's workspace was at when its runner first started: what the acceptance check compares with. */
+  baseRef?: string
   status: WorkflowStatus
   /** Prompts waiting behind the run that is going (each owes its manager a notification); kept so a restart can say they were not run. */
   queued?: string[]
@@ -237,6 +239,12 @@ export class LocalEngineStore {
     if (!current?.workflow) return
     const { queued: _before, ...rest } = current.workflow
     this.writeSessions({ ...this.readSessions(), [id]: { ...current, workflow: { ...rest, ...(queued.length ? { queued } : {}) } } })
+  }
+
+  setWorkflowBase(id: string, baseRef: string): void {
+    const current = this.readSessions()[id]
+    if (!current?.workflow) return
+    this.writeSessions({ ...this.readSessions(), [id]: { ...current, workflow: { ...current.workflow, baseRef } } })
   }
 
   setWorkflowStatus(id: string, status: WorkflowStatus): void {

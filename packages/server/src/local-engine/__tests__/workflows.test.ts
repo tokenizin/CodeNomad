@@ -888,4 +888,211 @@ describe("scopes of a scope contract", () => {
     expect(run.workspace).toBe(env.workspaces.api)
     expect(run.env.NOMAD_WORKFLOW_REGISTRY).toBe(env.folder)
   })
+
+  // ------------------------------------------------------------ the acceptance check and restart recovery of scopes
+
+  /** The contract's normalized copy, as `bun run scope:check` writes it (shape: the standard §4.1). */
+  const installCopy = (folder: string, scopes: Array<{ id: string; track?: string; workspace: string; paths: string[]; taskPath?: string }>) => {
+    const dir = path.join(folder, ".codenomad", "runtime", "scope-contracts")
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, "TASK-P.json"),
+      JSON.stringify({
+        scope_contract_version: 1,
+        parent_task: "TASK-P",
+        source: "tasks/todo/TASK-P/TASK-P.md",
+        limits: { max_concurrency: 2 },
+        scopes: scopes.map((s) => ({ scope_id: s.id, track: s.track ?? "implementation", task_path: s.taskPath ?? `tasks/todo/TASK-P/${s.id}/TASK-P-${s.id}.md`, workspace: s.workspace, spawn_depth: 0, paths: s.paths, lease_id: `lease-${s.id}` })),
+      }),
+    )
+  }
+
+  /** Writes files into a workspace (relative paths), making folders as needed. */
+  const writeIn = (workspace: string, files: Record<string, string>) => {
+    for (const [name, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(workspace, name)), { recursive: true })
+      fs.writeFileSync(path.join(workspace, name), text)
+    }
+  }
+
+  /** `withWorktrees(["api"])` whose scope runner does `act(workspace)` when it runs. */
+  function scopeRun(act: (workspace: string, job: ExecuteJob) => void | Promise<void>, over: { paths?: string[]; copy?: boolean } = {}) {
+    const env = withWorktrees(["api"], async (job) => {
+      if (job.history) return undefined as unknown as ExecuteResult
+      await act(job.workspace!, job)
+      return { stopped: false, isError: false, finalText: "scope done", workflowDone: handoverDone(job.env.NOMAD_WORKFLOW_SESSION ?? "") }
+    })
+    if (over.copy !== false) installCopy(env.folder, [{ id: "api", workspace: env.workspaces.api, paths: over.paths ?? ["src/api/**"] }])
+    return env
+  }
+  const startApi = (env: ReturnType<typeof withWorktrees>) => env.supervisor.start(env.manager, scopeEvent("api", env.workspaces.api, { taskPath: "tasks/todo/TASK-P/api/TASK-P-api.md" }))
+  const told = (env: ReturnType<typeof withWorktrees>) => env.jobs.filter((j) => j.history).map((j) => j.prompt)
+
+  test("a scope that kept to its lease adds nothing to the notification", async () => {
+    const env = scopeRun((ws) => writeIn(ws, { "src/api/orders.ts": "x", "src/api/deep/more.ts": "y" }))
+    startApi(env)
+    await env.supervisor.idle()
+    const [note] = told(env)
+    expect(note.startsWith("[NomadFlow Notification] Workflow Runner has finished work for:")).toBe(true)
+    expect(note).not.toContain("SCOPE CHECK")
+  })
+
+  test("a scope that changed files outside its lease is reported, with the files, in the notification the manager evaluates from", async () => {
+    const env = scopeRun((ws) => {
+      writeIn(ws, { "src/api/ok.ts": "ok", "src/ui/stray.ts": "stray", "NEW-ROOT-FILE.md": "x" })
+      fs.writeFileSync(path.join(ws, "README.md"), "# changed\n") // a tracked file
+    })
+    startApi(env)
+    await env.supervisor.idle()
+    const [note] = told(env)
+    expect(note).toContain("SCOPE CHECK (scope `api` of contract TASK-P): 3 file(s) changed in")
+    expect(note).toContain("outside its lease (src/api/**):")
+    expect(note).toContain("  - NEW-ROOT-FILE.md\n  - README.md\n  - src/ui/stray.ts")
+    expect(note).not.toContain("src/api/ok.ts")
+    // It comes before the handover, which is what the manager reads next.
+    expect(note.indexOf("SCOPE CHECK")).toBeLessThan(note.indexOf("HANDOVER FILED"))
+  })
+
+  test("commits and deletions since the start count, a file added to .gitignore does not, and the task file and the filed handover are always allowed", async () => {
+    const env = scopeRun((ws) => {
+      fs.writeFileSync(path.join(ws, ".gitignore"), "ignored.log\n")
+      writeIn(ws, { "ignored.log": "x", "src/api/a.ts": "a", "tasks/todo/TASK-P/api/TASK-P-api.md": "updated", "tasks/todo/T/HANDOVER.md": "# handover" })
+      git(ws, "add", "src/api/a.ts")
+      git(ws, "commit", "-q", "-m", "work") // committed, not just changed
+      fs.rmSync(path.join(ws, "README.md")) // deleted, tracked
+    })
+    startApi(env)
+    await env.supervisor.idle()
+    const [note] = told(env)
+    // .gitignore itself is new and outside the lease; ignored.log is ignored; src/api/a.ts is inside; README.md was deleted; the task file and handover are allowed.
+    expect(note).toContain("2 file(s) changed in")
+    expect(note).toContain("  - .gitignore\n  - README.md")
+    expect(note).not.toContain("ignored.log")
+    expect(note).not.toContain("HANDOVER.md\n")
+  })
+
+  test("a follow-up is compared with the commit the scope started from, which is recorded once and survives a restart", async () => {
+    let round = 0
+    const env = scopeRun((ws) => {
+      round += 1
+      writeIn(ws, { "src/api/a.ts": "a", "docs/first-stray.md": "stray" })
+      git(ws, "add", ".")
+      git(ws, "commit", "-q", "-m", "first round") // committed, so a check that only looked at uncommitted changes would miss it
+    })
+    startApi(env)
+    await env.supervisor.idle()
+    const base = env.store.getSession("ses_lcl_wf_api")?.workflow?.baseRef
+    expect(base).toMatch(/^[0-9a-f]{40}$/)
+    expect(told(env)[0]).toContain("SCOPE CHECK (scope `api` of contract TASK-P): 1 file(s)")
+    expect(told(env)[0]).toContain("  - docs/first-stray.md")
+
+    // A new server. Round two adds another stray file; the first one is still outside the lease, so it is still reported.
+    const restarted = new WorkflowSupervisor({
+      store: env.store,
+      isBusy: () => false,
+      execute: async (job) => {
+        env.jobs.push(job)
+        if (job.history) return { stopped: false, isError: false, finalText: "ok" }
+        writeIn(job.workspace!, { "docs/second-stray.md": "stray" })
+        return { stopped: false, isError: false, finalText: "round two" }
+      },
+    })
+    restarted.prompt(env.manager, promptEvent({ workflowId: "wf_api", sessionId: "ses_lcl_wf_api", text: "round two" }))
+    await restarted.idle()
+    const second = told(env).at(-1)!
+    expect(second).toContain("SCOPE CHECK (scope `api` of contract TASK-P): 2 file(s)")
+    expect(second).toContain("  - docs/first-stray.md\n  - docs/second-stray.md")
+    expect(second).not.toContain("src/api/a.ts")
+    expect(env.store.getSession("ses_lcl_wf_api")?.workflow?.baseRef).toBe(base) // not moved by the second round
+    expect(round).toBe(1)
+  })
+
+  test("when the check cannot be made, the notification says so instead of staying silent", async () => {
+    const noCopy = scopeRun(() => undefined, { copy: false })
+    startApi(noCopy)
+    await noCopy.supervisor.idle()
+    expect(told(noCopy)[0]).toContain("SCOPE CHECK (scope `api` of contract TASK-P): could not be made: the contract's normalized copy (")
+    expect(told(noCopy)[0]).toContain("bun run scope:check")
+
+    const noScope = scopeRun(() => undefined)
+    installCopy(noScope.folder, [{ id: "other", workspace: noScope.workspaces.api, paths: ["x/**"] }])
+    startApi(noScope)
+    await noScope.supervisor.idle()
+    expect(told(noScope)[0]).toContain("scope `api` is not in the contract's normalized copy")
+  })
+
+  test("a scope in the manager's shared worktree is said not to be checkable if it implements, and is left alone otherwise", async () => {
+    for (const track of ["implementation", "spec"]) {
+      const env = setup()
+      installCopy(env.folder, [{ id: "api", track, workspace: "shared", paths: ["src/api/**"] }])
+      env.supervisor.start(env.manager, startEvent({ workflowId: "wf_api", sessionId: "ses_lcl_wf_api", scopeId: "api", contract: "TASK-P" }))
+      await env.supervisor.idle()
+      const [note] = env.jobs.filter((j) => j.history).map((j) => j.prompt)
+      if (track === "implementation") expect(note).toContain("SCOPE CHECK (scope `api` of contract TASK-P): not made: the scope works in the manager's shared worktree")
+      else expect(note).not.toContain("SCOPE CHECK")
+    }
+  })
+
+  test("a run that failed still reports what it changed outside its lease", async () => {
+    const env = withWorktrees(["api"], async (job) => {
+      if (job.history) return undefined as unknown as ExecuteResult
+      writeIn(job.workspace!, { "src/ui/stray.ts": "x" })
+      return { stopped: false, isError: true, finalText: "the build failed" }
+    })
+    installCopy(env.folder, [{ id: "api", workspace: env.workspaces.api, paths: ["src/api/**"] }])
+    startApi(env)
+    await env.supervisor.idle()
+    const [note] = told(env)
+    expect(note.startsWith("[NomadFlow Error] Workflow Runner failed for")).toBe(true)
+    expect(note).toContain("SCOPE CHECK (scope `api` of contract TASK-P): 1 file(s)")
+  })
+
+  describe("after the runner's process is over, nothing it started is left holding the worktree", () => {
+    const writeEntry = (folder: string, id: string, extra: Record<string, unknown> = {}) => {
+      const file = registryFile(folder, id)!
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, JSON.stringify({ workflow_id: id, task_path: "t.md", track: "implementation", state: "running", ...extra }))
+      return file
+    }
+    const state = (file: string) => JSON.parse(fs.readFileSync(file, "utf8")).state
+
+    test("a run that ends releases the runner's entry and every workflow under it, and only those", async () => {
+      const env = withWorktrees(["api"])
+      const own = writeEntry(env.folder, "wf_api", { workspace: env.workspaces.api, contract: "TASK-P", scope_id: "api" })
+      const child = writeEntry(env.folder, "wf_child", { parent: "wf_api", pid: 99999999 })
+      const grandchild = writeEntry(env.folder, "wf_grandchild", { parent: "wf_child" })
+      const other = writeEntry(env.folder, "wf_other") // another workflow of the manager's, not under it
+      installCopy(env.folder, [{ id: "api", workspace: env.workspaces.api, paths: ["src/api/**"] }])
+      startApi(env)
+      await env.supervisor.idle()
+      expect([state(own), state(child), state(grandchild)]).toEqual(["idle", "idle", "idle"])
+      expect(state(other)).toBe("running")
+    })
+
+    test("a restart releases each interrupted scope's entry, and what it started, in the manager's registry, and tells the manager once per scope", async () => {
+      const env = withWorktrees(["api", "ui"])
+      const files: Record<string, string> = {}
+      for (const id of ["api", "ui"]) {
+        env.store.upsertWorkflowSession({
+          sessionId: `ses_lcl_wf_${id}`,
+          folder: env.folder,
+          title: `Workflow Run: ${id}`,
+          workflow: { workflowId: `wf_${id}`, managerSessionId: env.manager.key, managerAgent: "product_manager", managerModel: "m1", taskPath: `tasks/todo/TASK-P/${id}/x.md`, track: "implementation", workspace: env.workspaces[id], scopeId: id, contract: "TASK-P" },
+        })
+        files[id] = writeEntry(env.folder, `wf_${id}`, { workspace: env.workspaces[id], contract: "TASK-P", scope_id: id })
+        files[`${id}-nested`] = writeEntry(env.folder, `wf_${id}_nested`, { parent: `wf_${id}` })
+      }
+      const idle = writeEntry(env.folder, "wf_unrelated")
+      env.supervisor.recoverInterrupted(env.store.reconcileInterruptedWorkflows())
+      await env.supervisor.idle() // the notifications are delivered to the manager one after the other
+
+      for (const file of Object.values(files)) expect(state(file)).toBe("idle")
+      expect(state(idle)).toBe("running")
+      const notes = told(env)
+      expect(notes).toHaveLength(2)
+      expect(notes.filter((n) => n.includes("[NomadFlow Error]") && n.includes("CodeNomad restarted while it was working"))).toHaveLength(2)
+      expect(notes.some((n) => n.includes("tasks/todo/TASK-P/api/x.md")) && notes.some((n) => n.includes("tasks/todo/TASK-P/ui/x.md"))).toBe(true)
+      for (const id of ["api", "ui"]) expect(fs.existsSync(path.join(env.workspaces[id], ".codenomad"))).toBe(false) // nothing is kept in a workspace
+    })
+  })
 })

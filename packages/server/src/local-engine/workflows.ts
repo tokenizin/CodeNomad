@@ -21,6 +21,7 @@ import fs from "fs"
 import path from "path"
 import type { WorkflowDoneEvent, WorkflowPromptEvent, WorkflowStartEvent } from "./rust-runner.js"
 import { safeKey, type InboxEntry, type LocalEngineStore, type LocalSession, type WorkflowStatus } from "./store.js"
+import { headCommit, scopeCheckText } from "./scope-check.js"
 import { workspaceProblem } from "./workspaces.js"
 
 /** The session that started a workflow and is told when it is done. */
@@ -70,6 +71,11 @@ type Runner = {
   folder: string
   /** Where the runner works, when that is a workspace of its own (a scope of a scope contract). */
   workspace?: string
+  /** The scope contract it is a scope of, and its id in it. */
+  contract?: string
+  scopeId?: string
+  /** The commit its workspace was at when its runner first started (see scope-check.ts). */
+  baseRef?: string
   taskPath: string
   manager?: Manager
   queue: Job[]
@@ -96,17 +102,56 @@ export function releaseRegistryEntry(folder: string, workflowId: string): void {
   }
 }
 
+/**
+ * Releases a workflow's registry entry and those of every workflow started under it (the agent records `parent` in each
+ * entry). Workflows that run inside their caller's process cannot outlive it, so when a runner's process is over, whatever
+ * it left `running` is stale: a run that crashed or was stopped, or a restart, would otherwise leave them holding the worktree.
+ */
+export function releaseRegistryTree(folder: string, workflowId: string): void {
+  releaseRegistryEntry(folder, workflowId)
+  const probe = registryFile(folder, workflowId)
+  if (!probe) return
+  const dir = path.dirname(probe)
+  const parents = new Map<string, string>()
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue
+      try {
+        const doc = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))
+        if (typeof doc.workflow_id === "string" && typeof doc.parent === "string") parents.set(doc.workflow_id, doc.parent)
+      } catch {
+        /* an entry that cannot be read is not ours to release */
+      }
+    }
+  } catch {
+    return
+  }
+  const below = new Set<string>()
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const [id, parent] of parents) {
+      if (!below.has(id) && (parent === workflowId || below.has(parent))) {
+        below.add(id)
+        grew = true
+      }
+    }
+  }
+  for (const id of below) releaseRegistryEntry(folder, id)
+}
+
 // ---------------------------------------------------------------- the messages
 
 /** The message the manager receives when a runner is done: NomadWorks' plugin's, then the handover. */
-export function notificationText(input: { identifier: string; sessionId: string; result: ExecuteResult }): string {
-  const { identifier, sessionId, result } = input
+export function notificationText(input: { identifier: string; sessionId: string; result: ExecuteResult; scopeCheck?: string | null }): string {
+  const { identifier, sessionId, result, scopeCheck } = input
   const done = result.workflowDone
   const failure = result.stopped ? "it was stopped before it finished" : done?.error ?? (result.isError ? result.finalText || "the runner failed" : undefined)
   if (failure) {
-    return `[NomadFlow Error] Workflow Runner failed for ${identifier}: ${failure}\n\nIts session (${sessionId}) keeps its progress; send it a prompt with nomadflow_prompt_workflow to continue.`
+    const text = `[NomadFlow Error] Workflow Runner failed for ${identifier}: ${failure}\n\nIts session (${sessionId}) keeps its progress; send it a prompt with nomadflow_prompt_workflow to continue.`
+    return scopeCheck ? `${text}\n\n${scopeCheck}` : text
   }
   const lines = [`[NomadFlow Notification] Workflow Runner has finished work for: ${identifier}.`, "", "FINAL SUMMARY FROM RUNNER:", result.finalText]
+  if (scopeCheck) lines.push("", scopeCheck)
   const h = done?.handover
   if (h) {
     lines.push(
@@ -163,6 +208,8 @@ export class WorkflowSupervisor {
       workflowId: ev.workflowId,
       folder: manager.folder,
       ...(ev.workspace ? { workspace: ev.workspace } : {}),
+      ...(ev.contract ? { contract: ev.contract } : {}),
+      ...(ev.scopeId ? { scopeId: ev.scopeId } : {}),
       taskPath: ev.taskPath,
       manager,
       queue: [],
@@ -197,7 +244,8 @@ export class WorkflowSupervisor {
     for (const session of sessions) {
       const info = session.workflow
       if (!info) continue
-      releaseRegistryEntry(session.folder, info.workflowId)
+      // The runner's own entry, and whatever it started inside its process (which went with it).
+      releaseRegistryTree(session.folder, info.workflowId)
       try {
         this.deps.store.appendHistory(session.id, [
           {
@@ -296,6 +344,9 @@ export class WorkflowSupervisor {
       workflowId: session.workflow.workflowId,
       folder: session.folder,
       ...(session.workflow.workspace ? { workspace: session.workflow.workspace } : {}),
+      ...(session.workflow.contract ? { contract: session.workflow.contract } : {}),
+      ...(session.workflow.scopeId ? { scopeId: session.workflow.scopeId } : {}),
+      ...(session.workflow.baseRef ? { baseRef: session.workflow.baseRef } : {}),
       taskPath: session.workflow.taskPath,
       manager,
       queue: [],
@@ -325,6 +376,15 @@ export class WorkflowSupervisor {
         let result: ExecuteResult
         // A scope's workspace is looked at again before every run: a follow-up can come long after the start.
         const problem = runner.workspace ? workspaceProblem(runner.folder, runner.workspace) : null
+        // The commit it starts from is what the acceptance check compares with; it is taken once, before the first run.
+        if (runner.workspace && runner.scopeId && !problem && !runner.baseRef) {
+          try {
+            runner.baseRef = await headCommit(runner.workspace)
+            this.deps.store.setWorkflowBase(runner.key, runner.baseRef)
+          } catch (error) {
+            this.deps.warn?.("could not record the commit the scope's workspace started from", error)
+          }
+        }
         try {
           if (problem) throw new Error(`its workspace ${runner.workspace} cannot be used: ${problem}`)
           result = await this.deps.execute({
@@ -352,10 +412,26 @@ export class WorkflowSupervisor {
         if (!more) {
           const status: WorkflowStatus = result.stopped ? "aborted" : result.isError ? "failed" : "idle"
           this.deps.store.setWorkflowStatus(runner.key, status)
-          releaseRegistryEntry(runner.folder, runner.workflowId)
+          releaseRegistryTree(runner.folder, runner.workflowId)
         }
         if (job.notify && runner.manager) {
-          this.deliver(runner.manager, notificationText({ identifier: job.identifier, sessionId: runner.key, result }))
+          // What the scope changed outside its lease, if it is a scope of a contract and changed anything it should not.
+          let scopeCheck: string | null = null
+          if (runner.contract && runner.scopeId) {
+            try {
+              scopeCheck = await scopeCheckText({
+                managerFolder: runner.folder,
+                workspace: runner.workspace,
+                contract: runner.contract,
+                scopeId: runner.scopeId,
+                baseRef: runner.baseRef,
+                handoverPath: result.workflowDone?.handover?.path,
+              })
+            } catch (error) {
+              this.deps.warn?.("could not check what the scope changed", error)
+            }
+          }
+          this.deliver(runner.manager, notificationText({ identifier: job.identifier, sessionId: runner.key, result, scopeCheck }))
         }
       }
     } finally {
