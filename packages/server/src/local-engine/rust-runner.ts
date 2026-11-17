@@ -302,3 +302,15 @@ export function recordRustTranscript(playgroundRoot: string, transcript: object[
     child.stdin?.end(transcript.map((line) => JSON.stringify(line)).join("\n") + "\n")
   })
 }
+
+/** Provider id the UI gives the agent's own endpoint (packages/ui/src/lib/local-engine.ts). */
+const RUST_PROVIDER_ID = "claude-code-rust"
+
+/** A saved session model as the agent's --model: bare for its own endpoint, else `provider/model`. */
+export function rustModelArg(model: { providerId?: string; modelId?: string } | undefined): string | undefined {
+  const modelId = model?.modelId?.trim()
+  if (!modelId) return undefined
+  const providerId = model?.providerId?.trim()
+  if (!providerId || providerId === RUST_PROVIDER_ID) return modelId
+  return `${providerId}/${modelId}`
+}

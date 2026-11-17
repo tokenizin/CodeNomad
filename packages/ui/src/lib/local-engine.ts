@@ -8,6 +8,20 @@
 /** Provider id for the agent's models in the model picker. */
 export const RUST_PROVIDER_ID = "claude-code-rust"
 export const RUST_PROVIDER_NAME = "Claude Code (Rust)"
+/**
+ * The `--model` value for Claude Code (Rust): a model from the agent's own
+ * endpoint goes by its bare id; one from any other provider (OpenCode /
+ * CodeNomad settings) goes as `provider/model`, prefix kept, so the engine can
+ * route it to that provider.
+ */
+export function rustModelArg(model: { providerId?: string; modelId?: string } | undefined): string | undefined {
+  const modelId = model?.modelId?.trim()
+  if (!modelId) return undefined
+  const providerId = model?.providerId?.trim()
+  if (!providerId || providerId === RUST_PROVIDER_ID) return modelId
+  return `${providerId}/${modelId}`
+}
+
 /** Agent entry meaning "no --agent": the full agent with all tools and skills. */
 export const RUST_DEFAULT_AGENT = "claude-code"
 

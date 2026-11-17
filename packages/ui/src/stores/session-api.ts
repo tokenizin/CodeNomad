@@ -299,7 +299,10 @@ async function fetchRustCatalogFor(instanceId: string, options?: { fresh?: boole
     })
     setProviders((prev) => {
       const next = new Map(prev)
-      next.set(instanceId, [catalogProvider(catalog)] as any)
+      // The agent's own endpoint first; OpenCode / CodeNomad providers already
+      // loaded for this workspace stay in the picker after it.
+      const others = (prev.get(instanceId) ?? []).filter((provider) => provider.id !== RUST_PROVIDER_ID)
+      next.set(instanceId, [catalogProvider(catalog), ...others] as any)
       return next
     })
     setCommands(instanceId, catalogCommands(catalog) as any)
@@ -974,6 +977,21 @@ async function fetchProviders(instanceId: string): Promise<void> {
   if (localEngineEnabled()) {
     // fetchAgents loads the same catalog; reuse it when it's already here.
     if (!rustCatalogs.has(instanceId)) await loadRustCatalog(instanceId)
+    // The providers configured in OpenCode / CodeNomad are offered too: a model
+    // picked from one reaches Claude Code (Rust) as `--model provider/model`.
+    const instance = instances().get(instanceId)
+    if (!instance?.client) return
+    try {
+      const opencodeProviders = await fetchOpencodeProviders(instanceId)
+      setProviders((prev) => {
+        const next = new Map(prev)
+        const rust = (prev.get(instanceId) ?? []).filter((provider) => provider.id === RUST_PROVIDER_ID)
+        next.set(instanceId, [...rust, ...opencodeProviders.filter((provider) => provider.id !== RUST_PROVIDER_ID)] as any)
+        return next
+      })
+    } catch (error) {
+      log.warn("Failed to load OpenCode providers for Claude Code (Rust)", { instanceId, error })
+    }
     return
   }
   const instance = instances().get(instanceId)
@@ -985,50 +1003,8 @@ async function fetchProviders(instanceId: string): Promise<void> {
     return
   }
 
-  const rootClient = getRootClient(instanceId)
-
   try {
-    log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    const response = await rootClient.config.providers()
-    if (!response.data) return
-
-    // Fetch cached model sync results (capabilities, status) in parallel
-    let syncModelMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
-    try {
-      const syncResp = await fetch("/api/model-sync/cached")
-      if (syncResp.ok) {
-        const syncData = await syncResp.json()
-        syncModelMap = syncData.modelMap ?? {}
-      }
-    } catch {
-      // Non-fatal — sync data is optional enhancement
-    }
-
-    const providerList = response.data.providers.map((provider) => ({
-      id: provider.id,
-      name: provider.name,
-      defaultModelId: response.data?.default?.[provider.id],
-      models: Object.entries(provider.models).map(([id, model]) => {
-        const syncKey = `${provider.id}/${id}`
-        const syncEntry = syncModelMap[syncKey]
-        return {
-          id,
-          name: model.name,
-          providerId: provider.id,
-          limit: model.limit,
-          cost: model.cost,
-          variantKeys: Object.keys(model.variants ?? {}),
-          // Merge capabilities and status from model sync cache
-          capabilities: syncEntry?.capabilities as any,
-          status: syncEntry?.status as any,
-          lastTested: syncEntry?.lastTested,
-          errorDetails: syncEntry?.errorDetails,
-        }
-      }),
-    }))
-
-    const localProvider = await fetchLocalLlmProvider()
-    const mergedProviders = mergeLocalLlmProviders(providerList, localProvider)
+    const mergedProviders = await fetchOpencodeProviders(instanceId)
 
     setProviders((prev) => {
       const next = new Map(prev)
@@ -1040,6 +1016,52 @@ async function fetchProviders(instanceId: string): Promise<void> {
     log.error("Failed to fetch providers:", error)
     completeInstanceResourceFetch(instanceId, "providers", error)
   }
+}
+
+/** The providers OpenCode serves for this workspace, plus CodeNomad's local LLM provider. */
+async function fetchOpencodeProviders(instanceId: string) {
+  const rootClient = getRootClient(instanceId)
+  log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
+  const response = await rootClient.config.providers()
+  if (!response.data) return []
+
+  // Fetch cached model sync results (capabilities, status) in parallel
+  let syncModelMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
+  try {
+    const syncResp = await fetch("/api/model-sync/cached")
+    if (syncResp.ok) {
+      const syncData = await syncResp.json()
+      syncModelMap = syncData.modelMap ?? {}
+    }
+  } catch {
+    // Non-fatal — sync data is optional enhancement
+  }
+
+  const providerList = response.data.providers.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    defaultModelId: response.data?.default?.[provider.id],
+    models: Object.entries(provider.models).map(([id, model]) => {
+      const syncKey = `${provider.id}/${id}`
+      const syncEntry = syncModelMap[syncKey]
+      return {
+        id,
+        name: model.name,
+        providerId: provider.id,
+        limit: model.limit,
+        cost: model.cost,
+        variantKeys: Object.keys(model.variants ?? {}),
+        // Merge capabilities and status from model sync cache
+        capabilities: syncEntry?.capabilities as any,
+        status: syncEntry?.status as any,
+        lastTested: syncEntry?.lastTested,
+        errorDetails: syncEntry?.errorDetails,
+      }
+    }),
+  }))
+
+  const localProvider = await fetchLocalLlmProvider()
+  return mergeLocalLlmProviders(providerList, localProvider)
 }
 
 async function loadMessages(

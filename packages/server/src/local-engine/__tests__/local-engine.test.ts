@@ -6,6 +6,7 @@ import {
   failureText,
   OUTDATED_AGENT_MESSAGE,
   parseCatalog,
+  rustModelArg,
   rustRunArgs,
   RustStreamTranslator,
   toOpencodeTool,
@@ -129,5 +130,19 @@ describe("agent PATH", () => {
     expect(result).toContain(path.join(home, ".cargo", "bin"))
     expect(result).not.toContain(path.join(home, ".bun", "bin"))
     expect(withToolPaths(result.join(":"), home).split(":").filter((p) => p.endsWith(".cargo/bin")).length).toBe(1)
+  })
+})
+
+describe("rustModelArg", () => {
+  test("keeps the provider prefix for OpenCode / CodeNomad providers", () => {
+    expect(rustModelArg({ providerId: "openrouter", modelId: "anthropic/claude-sonnet-4.5" })).toBe("openrouter/anthropic/claude-sonnet-4.5")
+    expect(rustModelArg({ providerId: "ollama", modelId: "qwen3:8b" })).toBe("ollama/qwen3:8b")
+    expect(rustRunArgs({ prompt: "hi", model: rustModelArg({ providerId: "openai", modelId: "gpt-5" }) } as any)).toContain("openai/gpt-5")
+  })
+  test("the agent's own endpoint and empty picks go bare or not at all", () => {
+    expect(rustModelArg({ providerId: "claude-code-rust", modelId: "gemma4:31b-cloud" })).toBe("gemma4:31b-cloud")
+    expect(rustModelArg({ providerId: "", modelId: "qwen3:8b" })).toBe("qwen3:8b")
+    expect(rustModelArg({ providerId: "openai", modelId: "" })).toBeUndefined()
+    expect(rustModelArg(undefined)).toBeUndefined()
   })
 })

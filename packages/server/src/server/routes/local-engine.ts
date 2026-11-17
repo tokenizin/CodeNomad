@@ -46,6 +46,7 @@ import {
   findRustRunner,
   recordRustTranscript,
   runRustAgent,
+  rustModelArg,
   type EngineEvent,
 } from "../../local-engine/rust-runner.js"
 import { LocalEngineStore, safeKey, type HistoryAttachment, type HistoryMessage } from "../../local-engine/store.js"
@@ -81,7 +82,10 @@ const RunSchema = z
     /** CodeNomad session id; keys the saved history. */
     sessionKey: z.string().trim().min(1).max(200).optional(),
     agent: z.string().trim().min(1).max(64).optional(),
-    /** Model id from the agent's catalog. */
+    /**
+     * Passed to the agent as --model unchanged: a bare id from the agent's own
+     * catalog, or `provider/model` for a model from an OpenCode / CodeNomad provider.
+     */
     model: z.string().trim().min(1).max(200).optional(),
     /** Pasted files (images, etc.) sent inline. */
     uploads: z.array(UploadSchema).max(20).optional().default([]),
@@ -432,7 +436,7 @@ export function registerLocalEngineRoutes(app: FastifyInstance, deps: Deps) {
     // "claude-code" is the UI's name for the full agent (no --agent).
     const requestedAgent = body.agent ?? (localSession?.agent || undefined)
     const agent = requestedAgent && requestedAgent !== FULL_AGENT ? requestedAgent : undefined
-    const model = body.model ?? (localSession?.model?.modelId || undefined)
+    const model = body.model ?? rustModelArg(localSession?.model)
     let historyFile: string | undefined
     if (history.length) {
       historyFile = path.join(os.tmpdir(), `codenomad-history-${randomUUID()}.json`)

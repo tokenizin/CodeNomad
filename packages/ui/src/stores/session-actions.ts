@@ -25,7 +25,7 @@ import {
   localEngineRuns,
   localRunKey,
   RUST_DEFAULT_AGENT,
-  RUST_PROVIDER_ID,
+  rustModelArg,
   toOpencodePart,
   type HistoryPart,
   isUnauthorizedError,
@@ -153,8 +153,9 @@ async function sendViaLocalEngine(args: LocalEngineSendArgs): Promise<void> {
 
   const assistantId = createId("msg")
   const agent = rustAgentFor(session.agent)
-  // Models picked from the Claude Code (Rust) provider go to the agent as --model.
-  const model = session.model.providerId === RUST_PROVIDER_ID && session.model.modelId ? session.model.modelId : undefined
+  // The picked model goes to the agent as --model: a bare id for its own
+  // endpoint, `provider/model` for any other provider.
+  const model = rustModelArg(session.model)
   const attachments: LocalEngineAttachment[] = args.extraParts.map((part) =>
     part.type === "file"
       ? { type: "file" as const, url: String(part.url ?? ""), filename: part.filename, mime: part.mime }
