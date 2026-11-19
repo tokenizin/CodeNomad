@@ -21,6 +21,12 @@
  */
 
 import { createSignal } from "solid-js"
+import {
+  suggestionsForEngineSession,
+  type EngineSessionView,
+  type SessionSuggestionContext,
+} from "./session-suggestions.ts"
+import type { Suggestion } from "../../../../packages/logic/suggestions/index.ts"
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -380,4 +386,48 @@ export function resetRecommendations() {
   setRecommendations([])
   setVisible(false)
   setDismissedIds(new Set<string>())
+}
+
+// ── Phase-aware context suggestions ───────────────────────────────────
+//
+// A parallel, phase-aware surface driven by the context-aware suggestion engine
+// (S0, packages/logic/suggestions) via the S1 seam (session-suggestions.ts).
+// Where `generateRecommendations()` is keyword-driven off the last assistant
+// message, `contextSuggestions()` are phase-driven off the live engine session:
+// running/waiting → Continue/Retry/Stop, stopped → Follow-up/Summarize/
+// Diagnose/Fix, plus discussion/agent sub-suggestions when present.
+
+const [contextSuggestions, setContextSuggestions] = createSignal<Suggestion[]>([])
+
+/** The currently generated phase-aware context suggestions. */
+export function getContextSuggestions(): Suggestion[] {
+  return contextSuggestions()
+}
+
+/**
+ * Regenerate phase-aware suggestions for the active session and store them.
+ *
+ * The prompt-input surface calls this on the busy → idle transition (alongside
+ * `generateRecommendations`) so the suggestion bar reflects the engine's current
+ * *phase* rather than only keyword patterns. Pass the engine session view;
+ * the seam folds it into a `SessionPhase` via `SESSION_STATUS_TO_PHASE` and
+ * delegates to the pure `generateSuggestions()`.
+ */
+export function updateContextSuggestions(ctx: SessionSuggestionContext): Suggestion[] {
+  const out = suggestionsForEngineSession(ctx)
+  setContextSuggestions(out)
+  return out
+}
+
+/**
+ * Convenience overload: seed phase-aware suggestions from just an engine session
+ * view (single-agent / `user` session), the common case.
+ */
+export function updateContextSuggestionsForSession(view: EngineSessionView): Suggestion[] {
+  return updateContextSuggestions({ session: view })
+}
+
+/** Clear phase-aware suggestions (e.g. on session switch). */
+export function clearContextSuggestions() {
+  setContextSuggestions([])
 }

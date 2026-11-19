@@ -1,0 +1,13 @@
+{
+  "name": "@codenomad/logic",
+  "version": "0.18.0",
+  "private": true,
+  "description": "Pure, UI/SDK-free business-logic modules shared by the CodeNomad UI (suggestion engine, session-chain state). Mirrors types; never imports SolidJS or the OpenCode SDK.",
+  "type": "module",
+  "main": "./suggestions/index.ts",
+  "exports": {
+    ".": "./suggestions/index.ts",
+    "./suggestions": "./suggestions/index.ts"
+  },
+  "dependencies": {}
+}

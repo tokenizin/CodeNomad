@@ -11,7 +11,8 @@
       "packages/electron-app",
       "packages/tauri-app",
       "packages/opencode-plugin",
-      "packages/api-types"
+      "packages/api-types",
+      "packages/logic"
     ]
   },
   "scripts": {

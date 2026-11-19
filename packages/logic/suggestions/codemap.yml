@@ -1,0 +1,60 @@
+scope: module
+parent: ../codemap.yml
+summary: >
+  Dynamic, context-aware suggestion system (SCR-2026-11-18-001). Pure,
+  SDK/UI-free. Layering:
+    conversation.ts  — phase model, SessionPhase, engine-status map,
+                       Conversation / UserPrompt / AssistantText
+    sessions.ts      — SessionChainEntry, EngineSessions, SessionSnapshot,
+                       append-only chain state management
+    agents.ts        — Agent contract, Suggestion contract,
+                       generateSuggestions() / suggestionsForSession()
+    Context.ts       — engine-projection layer (fromContext / fromPrompt /
+                       fromContextHistory) folding engine emission → Context
+    index.ts         — public barrel
+entrypoints:
+  - path: index.ts
+    description: >
+      Public import surface. The UI imports from this barrel — never from
+      the internal files — so the internal split is private and can evolve
+      without breaking consumers.
+sources_of_truth:
+  - path: conversation.ts
+    description: >
+      Phase model, engine-status → phase map, Conversation / UserPrompt /
+      AssistantText contract. SSOT for "what is a conversation" and
+      "how does engine status map to a product phase".
+  - path: agents.ts
+    description: >
+      Agent contract (id/name/skills/memory/conversation), Suggestion /
+      SuggestionScope / SuggestionAction, and the pure `generateSuggestions()`
+      + `suggestionsForSession()` generators.
+  - path: sessions.ts
+    description: >
+      SessionChainEntry, EngineSessions (engine emission mirror),
+      SessionSnapshot, and the append-only state-management helpers
+      (advanceSessionChain / startSessionChain / currentSession /
+      reprojectPhases / isSessionLive / deriveConversation /
+      emptyConversation).
+  - path: Context.ts
+    description: >
+      Engine-projection layer: fromContext / fromPrompt / fromContextHistory
+      — the thin seam between raw engine emission and the product Context.
+internals:
+  - path: __tests__/suggestions.test.ts
+    description: >
+      S3 foundation — phase base sets, discussion scope, agent scope,
+      engine-status → phase, session-chain state management, generator
+      adapter, Context ingestion. Runner: `bun test`.
+invariants:
+  - `generateSuggestions()` is pure and deterministic; same input → same
+    output array (tested).
+  - Discussion sub-suggestions are gated on `kind === "discussion"`.
+  - Agent sub-suggestions require at least one route skill; zero-skill
+    agents contribute no suggestions.
+  - The engine-status → phase table lives only in
+    `conversation.ts::SESSION_STATUS_TO_PHASE`; never duplicated elsewhere.
+  - The internal file split (conversation/sessions/agents/Context) is private;
+    consumers import only from `index.ts`.
+commands:
+  test: bun test packages/logic/suggestions/__tests__/suggestions.test.ts

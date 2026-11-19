@@ -1,0 +1,20 @@
+scope: module
+parent: ../codemap.yml
+summary: >
+  Pure, UI/SDK-free business-logic modules shared by the CodeNomad UI.
+  Sibling modules own domain logic that must remain importable and testable
+  in isolation (no SolidJS, no @opencode-ai/sdk, no fs/network).
+modules:
+  - path: suggestions
+    summary: >
+      Dynamic, context-aware suggestion system. Session phase projection,
+      agent registry, and the pure `generateSuggestions()` generator
+      (running/waiting → Continue/Retry/Stop; stopped → Follow-up/
+      Summarize/Diagnose/Fix), plus discussion & agent sub-suggestions.
+invariants:
+  - Every module under packages/logic has zero runtime import of SolidJS or
+    the OpenCode SDK; types are *mirrored*, never imported.
+  - All exports are pure and deterministic; no top-level I/O or async.
+commands:
+  test: bun test packages/logic/suggestions/__tests__/suggestions.test.ts
+  typecheck: tsc -p packages/logic/suggestions/tsconfig.json --noEmit
