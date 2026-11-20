@@ -11,6 +11,19 @@ import { getOrnithModels, transformOrnithModels } from "./providers/ornith"
 import { getMLXModels, transformMLXModels } from "./providers/mlx"
 import { getMLXDeepSeekModels, transformMLXDeepSeekModels } from "./providers/mlx-deepseek"
 import { fetchOllamaModels } from "./providers/ollama"
+import {
+  getCloudflareAIGatewayModels,
+  transformCloudflareAIGatewayModels,
+} from "./providers/cloudflare-ai-gateway"
+import {
+  getCloudflareWorkersAIModels,
+  transformCloudflareWorkersAIModels,
+} from "./providers/cloudflare-workers-ai"
+import { getDeepInfraModels, probeDeepInfraModels, transformDeepInfraModels } from "./providers/deepinfra"
+import { getGroqModels, probeGroqModels, transformGroqModels } from "./providers/groq"
+import { getLongCatModels, transformLongCatModels } from "./providers/longcat"
+import { getVercelModels, probeVercelModels, transformVercelModels } from "./providers/vercel"
+import { getXaiModels, probeXaiModels, transformXaiModels } from "./providers/xai"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -62,6 +75,13 @@ const PROVIDER_CONFIGS: ProviderConfig[] = [
   { id: "mlx", name: "MLX Local", enabled: true },
   { id: "mlx-deepseek", name: "MLX DeepSeek", enabled: true },
   { id: "ollama", name: "Ollama Local", enabled: true },
+  { id: "cloudflare-ai-gateway", name: "Cloudflare AI Gateway", enabled: true },
+  { id: "cloudflare-workers-ai", name: "Cloudflare Workers AI", enabled: true },
+  { id: "deepinfra", name: "DeepInfra", enabled: true },
+  { id: "groq", name: "Groq", enabled: true },
+  { id: "longcat", name: "LongCat", enabled: true },
+  { id: "vercel", name: "Vercel AI Gateway", enabled: true },
+  { id: "xai", name: "xAI (Grok)", enabled: true },
 ]
 
 const log = createLogger({ component: "model-sync" })
@@ -343,7 +363,17 @@ export function getCachedModelMap(): Map<string, SyncedModel> {
   return map
 }
 
-async function fetchProviderModels(config: ProviderConfig): Promise<SyncedModel[]> {
+/**
+ * Resolve a provider's models.
+ *
+ * `warnings` collects non-fatal problems (e.g. a live availability probe that
+ * failed); the caller forwards them into `ModelSyncResult.errors[]` so a broken
+ * key degrades the sync instead of aborting it.
+ */
+async function fetchProviderModels(
+  config: ProviderConfig,
+  warnings: string[] = [],
+): Promise<SyncedModel[]> {
   const providerId = config.id
   
   try {
@@ -410,6 +440,47 @@ async function fetchProviderModels(config: ProviderConfig): Promise<SyncedModel[
         models = rawModels.map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "live" }))
         break
       }
+      // The seven providers below take their model list from the models.dev
+      // catalog (`providers/catalog.ts`). The four marked "probe" also call the
+      // provider's /models endpoint, but only to detect reachability: the
+      // endpoint returns ids without limits/cost/capabilities, so the catalog
+      // stays authoritative. A failed probe is reported, never thrown.
+      case "cloudflare-ai-gateway": {
+        models = transformCloudflareAIGatewayModels(getCloudflareAIGatewayModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "cloudflare-workers-ai": {
+        models = transformCloudflareWorkersAIModels(getCloudflareWorkersAIModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "deepinfra": {
+        const probe = await probeDeepInfraModels()
+        if (probe.error) warnings.push(probe.error)
+        models = transformDeepInfraModels(getDeepInfraModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "groq": {
+        const probe = await probeGroqModels()
+        if (probe.error) warnings.push(probe.error)
+        models = transformGroqModels(getGroqModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "longcat": {
+        models = transformLongCatModels(getLongCatModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "vercel": {
+        const probe = await probeVercelModels()
+        if (probe.error) warnings.push(probe.error)
+        models = transformVercelModels(getVercelModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
+      case "xai": {
+        const probe = await probeXaiModels()
+        if (probe.error) warnings.push(probe.error)
+        models = transformXaiModels(getXaiModels()).map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "config" }))
+        break
+      }
       default:
         throw new Error(`Unknown provider: ${providerId}`)
     }
@@ -455,7 +526,7 @@ export async function syncProviderModels(
   let updated = 0
   
   try {
-    const liveModels = await fetchProviderModels(config)
+    const liveModels = await fetchProviderModels(config, errors)
     
     // Create a map of configured models for comparison
     const configuredMap = new Map(configuredModels.map((m) => [`${providerId}/${m.id}`, m]))
