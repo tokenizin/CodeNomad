@@ -9,6 +9,8 @@
 import type { RustCatalog } from "./rust-runner.js"
 import type { SyncedModel, ModelSyncResult } from "../model-sync/service.js"
 import type { OllamaModelConfig } from "../model-sync/providers/ollama.js"
+import type { OpenCodeGoModelConfig } from "../model-sync/providers/opencode-go.js"
+import { getOpenCodeGoModels, transformOpenCodeGoModels } from "../model-sync/providers/opencode-go.js"
 
 export type CatalogModelDetails = Pick<SyncedModel, "limit" | "cost" | "capabilities"> &
   Partial<Pick<SyncedModel, "status" | "lastTested" | "errorDetails">> & {
@@ -96,10 +98,36 @@ export async function enrichRustCatalog(
 ): Promise<EnrichedRustCatalog> {
   const preferred = providerForBaseUrl(catalog.baseUrl)
   const syncResults = deps.syncResults()
+
+  // Start with models enriched from sync results (preferred provider, then Ollama, then others)
   const models: EnrichedRustCatalog["models"] = catalog.models.map((model) => ({
     ...model,
     ...(findModelDetails(model.id, syncResults, preferred) ?? {}),
   }))
+
+  // Also include ALL OpenCode Go models so the Rust agent has the full model catalog
+  // regardless of its base URL provider — this mirrors what the opencode module sees.
+  const opencodeGoModels = transformOpenCodeGoModels(getOpenCodeGoModels())
+  const opencodeGoModelIds = new Set(opencodeGoModels.map((m) => m.id))
+  // Merge opencode-go models in; they take precedence for matching ids
+  for (const ogm of opencodeGoModels) {
+    const existingIdx = models.findIndex((m) => m.id === ogm.id)
+    if (existingIdx >= 0) {
+      // Replace with opencode-go details (capabilities, cost, limit from sync if available)
+      const syncedMatch = syncResults.find((r) => r.providerId === "opencode-go")?.models.find((m) => m.id === ogm.id)
+      models[existingIdx] = {
+        ...models[existingIdx],
+        ...toDetails(syncedMatch ?? ogm, "opencode-go"),
+      }
+    } else {
+      // New model not in current catalog — add it
+      models.push({
+        id: ogm.id,
+        name: ogm.name,
+        ...toDetails(ogm, "opencode-go"),
+      })
+    }
+  }
 
   // Ollama endpoint and some ids still unknown (never synced, or pulled since):
   // ask Ollama itself. One /api/tags + /api/show per model, ~1s for 30 models.

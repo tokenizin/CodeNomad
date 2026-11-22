@@ -7,6 +7,7 @@ import {
   createMemo,
 } from "solid-js"
 import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, XCircle, Info, Globe, Sparkles, Star, KeyRound, Clock } from "lucide-solid"
+
 import { useI18n } from "../../lib/i18n"
 import type React from "react"
 
@@ -60,6 +61,43 @@ function rowsFromSyncResults(results: any[]): SyncedModelRow[] {
 
 const rowKey = (providerId: string, modelId: string) => `${providerId}/${modelId}`
 
+// Search/filter helpers
+function matchesSearch(model: SyncedModelRow, query: string): boolean {
+  if (!query.trim()) return true
+  const lower = query.toLowerCase()
+  return (
+    model.providerName.toLowerCase().includes(lower) ||
+    model.modelName.toLowerCase().includes(lower) ||
+    model.modelId.toLowerCase().includes(lower) ||
+    model.contextWindow.toLowerCase().includes(lower)
+  )
+}
+
+function matchesFilter(model: SyncedModelRow, filter: "capabilities" | "provider" | "model" | "id" | "all", query: string): boolean {
+  if (filter === "all") return true
+  switch (filter) {
+    case "capabilities":
+      // Show models that have at least one capability enabled
+      return (
+        model.capabilities.tools ||
+        model.capabilities.image ||
+        model.capabilities.video ||
+        model.capabilities.reasoning ||
+        model.capabilities.audio ||
+        model.capabilities.cloud
+      )
+    case "provider":
+      // Always show — filtered by search instead
+      return true
+    case "model":
+      return matchesSearch(model, query)
+    case "id":
+      return model.modelId.toLowerCase().includes(query.toLowerCase())
+    default:
+      return true
+  }
+}
+
 // "unknown" plus errorDetails means the model was tested but the result was
 // inconclusive. The server prefixes the details with the cause.
 function inconclusiveKind(errorDetails?: string): "key" | "timeout" | "other" | null {
@@ -76,6 +114,8 @@ export const ModelSyncSettingsSection: Component = () => {
   const [error, setError] = createSignal<string | null>(null)
   const [testSummary, setTestSummary] = createSignal<string | null>(null)
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
+  const [searchQuery, setSearchQuery] = createSignal<string>("")
+  const [selectedFilter, setSelectedFilter] = createSignal<"capabilities" | "provider" | "model" | "id" | "all">("all")
 
   const loadCached = async () => {
     try {
@@ -222,6 +262,34 @@ export const ModelSyncSettingsSection: Component = () => {
     }
   }
 
+  // Test a single model by provider/model ID
+  const testSingleModel = async (model: SyncedModelRow) => {
+    setStatus("testing")
+    setError(null)
+    try {
+      const result = await fetch("/api/model-sync/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerId: model.providerId,
+          modelId: model.modelId,
+          timeoutMs: 15000,
+        }),
+      })
+      const data = await result.json()
+      if (!result.ok) throw new Error(data?.error || `HTTP ${result.status}`)
+
+      // Refresh the cached models to pick up the updated status from server-side applyModelTestResults
+      window.dispatchEvent(new CustomEvent("model-sync-complete"))
+
+      setStatus("idle")
+    } catch (e: unknown) {
+      const err = e as Error
+      setError("Test failed: " + (err.message || "Unknown error"))
+      setStatus("idle")
+    }
+  }
+
   const capabilityIcons = (caps: SyncedModelRow["capabilities"]) => {
     const icons: { icon: typeof Cpu; title: string; color: string }[] = []
     if (caps.tools) icons.push({ icon: Cpu, title: "Tools", color: "text-blue-400" })
@@ -244,6 +312,25 @@ export const ModelSyncSettingsSection: Component = () => {
           )
         })}
       </div>
+    )
+  }
+
+  const testModelButton = (model: SyncedModelRow) => {
+    const isTesting = model.status === "testing"
+    return (
+      <Button
+        class="selector-button selector-button-tertiary text-xs"
+        disabled={isTesting || model.status === "unknown"}
+        title={t("settings.section.modelSync.testModel.tooltip")}
+        onClick={() => void testSingleModel(model)}
+      >
+        {isTesting ? (
+          <span class="spinner spinner-tiny mr-1" />
+        ) : (
+          <RefreshCw class="w-3 h-3" />
+        )}
+        {isTesting ? "Testing" : t("settings.section.modelSync.testModel")}
+      </Button>
     )
   }
 
@@ -353,10 +440,13 @@ export const ModelSyncSettingsSection: Component = () => {
     )
   }
 
-  // Group models by provider for display
+  // Group models by provider for display, with search/filter applied
   const providerGroups = createMemo(() => {
     const groups: Record<string, ProviderGroup> = {}
     for (const model of models()) {
+      // Apply filter and search
+      if (!matchesFilter(model, selectedFilter(), searchQuery())) continue
+      
       const existing = groups[model.providerId]
       if (existing) {
         existing.models.push(model)
@@ -466,6 +556,43 @@ export const ModelSyncSettingsSection: Component = () => {
 
           {models().length > 0 && (
             <div class="model-sync-table-wrapper">
+              <div class="model-sync-filters-bar">
+                <div class="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+                  {/* Search input */}
+                  <div class="flex-1 sm:flex-order-1">
+                    <input
+                      type="text"
+                      placeholder={t("settings.section.modelSync.search.placeholder")}
+                      value={searchQuery()}
+                      onInput={(e: Event) => setSearchQuery((e.target as HTMLInputElement | null)?.value ?? "")}
+                      class="flex-1 input input-bordered w-full"
+                    />
+                  </div>
+                  
+                  {/* Filter selector */}
+                  <div class="sm:flex-order-2">
+                    <select
+                      value={selectedFilter()}
+                      onChange={(e: Event) => setSelectedFilter((e.currentTarget as HTMLSelectElement).value as "capabilities" | "provider" | "model" | "id" | "all")}
+                      class="select select-sm w-32"
+                    >
+                      <option value="all">{t("settings.section.modelSync.filter.provider")}</option>
+                      <option value="capabilities">{t("settings.section.modelSync.filter.capabilities")}</option>
+                      <option value="model">{t("settings.section.modelSync.filter.model")}</option>
+                      <option value="id">{t("settings.section.modelSync.filter.id")}</option>
+                    </select>
+                  </div>
+                  
+                  {/* Clear search */}
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    class="selector-button selector-button-tertiary text-xs sm:ml-2"
+                    title={t("settings.section.modelSync.search.clear")}
+                  >
+                    {t("settings.section.modelSync.search.clear")}
+                  </button>
+                </div>
+              </div>
               <table class="model-sync-table">
                 <thead>
                   <tr>
@@ -482,7 +609,7 @@ export const ModelSyncSettingsSection: Component = () => {
                   {providerGroups().map((group: ProviderGroup) => (
                     <>
                       <tr {...{ key: group.providerId as unknown as React.Key }} class="provider-group">
-                        <td colSpan={7} class="provider-header">
+                        <td colSpan={8} class="provider-header">
                           {t("settings.section.modelSync.provider")}: {group.providerName}
                         </td>
                       </tr>
@@ -498,9 +625,12 @@ export const ModelSyncSettingsSection: Component = () => {
                           <td>
                             <TypeIcon type={model.type} />
                           </td>
-<td style={{ color: "var(--text-muted)" }}>
+                          <td style={{ color: "var(--text-muted)" }}>
   {model.lastTested !== null && model.lastTested > 0 ? new Date(model.lastTested).toLocaleString() : "Never"}
 </td>
+                          <td>
+                            {testModelButton(model)}
+                          </td>
                         </tr>
                       ))}
                     </>
