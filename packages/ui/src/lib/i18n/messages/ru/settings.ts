@@ -427,3 +427,4 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.copied": "Диагностическая информация скопирована в буфер обмена.",
 } as const
+  "settings.section.modelSync.filter.category": "Category",

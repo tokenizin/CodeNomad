@@ -398,6 +398,7 @@ export const settingsMessages = {
   "settings.section.modelSync.filter.provider": "Provider",
   "settings.section.modelSync.filter.model": "Model",
   "settings.section.modelSync.filter.id": "ID",
+  "settings.section.modelSync.filter.category": "Category",
   "settings.section.modelSync.testModel.tooltip": "Test this specific model against its provider",
   "settings.section.modelSync.modelTitle": "Model Status",
   "settings.section.modelSync.modelSubtitle": "Review model capabilities and availability",

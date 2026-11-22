@@ -442,3 +442,4 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Télécharger .txt",
   "settings.info.diagnostics.copied": "Informations de diagnostic copiées dans le presse-papiers.",
 } as const
+  "settings.section.modelSync.filter.category": "Category",

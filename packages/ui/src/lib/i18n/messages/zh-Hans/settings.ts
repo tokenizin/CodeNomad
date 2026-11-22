@@ -427,3 +427,4 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "下载 .txt",
   "settings.info.diagnostics.copied": "诊断信息已复制到剪贴板。",
 } as const
+  "settings.section.modelSync.filter.category": "Category",

@@ -73,7 +73,7 @@ function matchesSearch(model: SyncedModelRow, query: string): boolean {
   )
 }
 
-function matchesFilter(model: SyncedModelRow, filter: "capabilities" | "provider" | "model" | "id" | "all", query: string): boolean {
+function matchesFilter(model: SyncedModelRow, filter: "capabilities" | "provider" | "model" | "id" | "category" | "all", query: string): boolean {
   if (filter === "all") return true
   switch (filter) {
     case "capabilities":
@@ -93,6 +93,9 @@ function matchesFilter(model: SyncedModelRow, filter: "capabilities" | "provider
       return matchesSearch(model, query)
     case "id":
       return model.modelId.toLowerCase().includes(query.toLowerCase())
+    case "category":
+      // Filter by model type (case-insensitive)
+      return (model.type || "").toLowerCase() === query.toLowerCase()
     default:
       return true
   }
@@ -573,13 +576,14 @@ export const ModelSyncSettingsSection: Component = () => {
                   <div class="sm:flex-order-2">
                     <select
                       value={selectedFilter()}
-                      onChange={(e: Event) => setSelectedFilter((e.currentTarget as HTMLSelectElement).value as "capabilities" | "provider" | "model" | "id" | "all")}
+                      onChange={(e: Event) => setSelectedFilter((e.currentTarget as HTMLSelectElement).value as "capabilities" | "provider" | "model" | "id" | "category" | "all")}
                       class="select select-sm w-32"
                     >
                       <option value="all">{t("settings.section.modelSync.filter.provider")}</option>
                       <option value="capabilities">{t("settings.section.modelSync.filter.capabilities")}</option>
                       <option value="model">{t("settings.section.modelSync.filter.model")}</option>
                       <option value="id">{t("settings.section.modelSync.filter.id")}</option>
+                      <option value="category">{t("settings.section.modelSync.filter.category")}</option>
                     </select>
                   </div>
                   

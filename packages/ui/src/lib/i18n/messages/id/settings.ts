@@ -384,3 +384,4 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Unduh .txt",
   "settings.info.diagnostics.copied": "Info diagnostik disalin ke clipboard.",
 } as const
+  "settings.section.modelSync.filter.category": "Category",

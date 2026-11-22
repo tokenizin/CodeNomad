@@ -427,3 +427,4 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt をダウンロード",
   "settings.info.diagnostics.copied": "診断情報をクリップボードにコピーしました。",
 } as const
+  "settings.section.modelSync.filter.category": "Category",
