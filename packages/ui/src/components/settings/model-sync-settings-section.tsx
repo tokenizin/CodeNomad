@@ -61,6 +61,23 @@ function rowsFromSyncResults(results: any[]): SyncedModelRow[] {
 
 const rowKey = (providerId: string, modelId: string) => `${providerId}/${modelId}`
 
+// Category enum for model types
+enum Category {
+  Text = "text",
+  Vision = "vision",
+  Voice = "voice",
+  Code = "code",
+  Agent = "agent",
+}
+
+// Provider options for the dynamic dropdown
+const PROVIDER_OPTIONS = [
+  { value: "ollama", label: "Ollama" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  // add more providers as needed
+]
+
 // Search/filter helpers
 function matchesSearch(model: SyncedModelRow, query: string): boolean {
   if (!query.trim()) return true
@@ -94,8 +111,8 @@ function matchesFilter(model: SyncedModelRow, filter: "capabilities" | "provider
     case "id":
       return model.modelId.toLowerCase().includes(query.toLowerCase())
     case "category":
-      // Filter by model type (case-insensitive)
-      return (model.type || "").toLowerCase() === query.toLowerCase()
+      // Filter by model type containing the category keyword (case-insensitive)
+      return (model.type || "").toLowerCase().includes(query.toLowerCase())
     default:
       return true
   }
@@ -110,6 +127,73 @@ function inconclusiveKind(errorDetails?: string): "key" | "timeout" | "other" | 
   return "other"
 }
 
+// Filter options mapping for search suggestions, keyed by filter type
+const filterOptions: Record<
+  "capabilities" | "provider" | "model" | "id" | "category" | "all",
+  { label: string; options: string[] }
+> = {
+  capabilities: {
+    label: "Capabilities",
+    options: ["tools", "image", "video", "reasoning", "audio", "cloud"],
+  },
+  provider: {
+    label: "Provider",
+    options: ["ollama", "openai", "anthropic"],
+  },
+  model: {
+    label: "Model",
+    options: [], // populated dynamically from models
+  },
+  id: {
+    label: "ID",
+    options: [],
+  },
+  category: {
+    label: "Category",
+    options: ["favorite", "free", "require_credit", "active", "largest_context"],
+  },
+  all: {
+    label: "All",
+    options: [],
+  },
+}
+
+// ModelIcon component that shows provider label + category icon
+function ModelIcon({ providerId, type }: { providerId?: string; type?: string }) {
+  // Provider name mapping
+  const providerNames: Record<string, string> = {
+    ollama: "Ollama",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+  }
+
+  // Category icon mapping
+  const categoryIcons: Record<string, { icon: any; title: string }> = {
+    text: { icon: Cpu, title: "Text" },
+    vision: { icon: Image, title: "Vision" },
+    voice: { icon: Music, title: "Voice" },
+    code: { icon: Globe, title: "Code" },
+    agent: { icon: Brain, title: "Agent" },
+    favorite: { icon: Star, title: "Favorite" },
+    free: { icon: Sparkles, title: "Free" },
+    require_credit: { icon: Info, title: "Requires Credit" },
+    active: { icon: CheckCircle, title: "Active" },
+    largest_context: { icon: Info, title: "Largest Context" },
+  }
+
+  const providerLabel = providerNames[providerId ?? ""] || "Provider"
+  const categoryInfo = categoryIcons[type ?? ""] || { icon: Info, title: "Unknown" }
+
+  return (
+    <span class="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-gray-400">
+      <span title={providerLabel} class="text-xs opacity-70">
+        {providerLabel.split("")[0]}
+      </span>
+      <categoryInfo.icon class="w-3 h-3" title={categoryInfo.title} />
+    </span>
+  )
+}
+
 export const ModelSyncSettingsSection: Component = () => {
   const { t } = useI18n()
   const [status, setStatus] = createSignal<ModelSyncStatus>("idle")
@@ -119,6 +203,7 @@ export const ModelSyncSettingsSection: Component = () => {
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
   const [searchQuery, setSearchQuery] = createSignal<string>("")
   const [selectedFilter, setSelectedFilter] = createSignal<"capabilities" | "provider" | "model" | "id" | "category" | "all">("all")
+  const [selectedProvider, setSelectedProvider] = createSignal<string | null>(null)
 
   const loadCached = async () => {
     try {
@@ -571,6 +656,39 @@ export const ModelSyncSettingsSection: Component = () => {
                       class="flex-1 input input-bordered w-full"
                     />
                   </div>
+                  {/* Search suggestions popover - filter-aware options */}
+                  {searchQuery() && (
+                    <div
+                      class="absolute left-0 mt-1 w-full rounded border bg-white shadow-sm z-10 overflow-auto"
+                      style={{ height: '200px', width: 'calc(100% + 1rem)' }}
+                    >
+                      <div class="p-2 text-sm text-muted-foreground">
+                        {filterOptions[selectedFilter()].label}:{" "}
+                        {filterOptions[selectedFilter()].options
+                          .slice(0, 5)
+                          .map((opt) => (
+                            <div
+                              class="hover:text-primary cursor-pointer px-1 py-0.5 rounded"
+                              onClick={() => {
+                                setSearchQuery(opt)
+                                setSelectedFilter(
+                                  selectedFilter() === "model" || selectedFilter() === "category"
+                                    ? "all"
+                                    : selectedFilter()
+                                )
+                              }}
+                            >
+                              {opt}
+                            </div>
+                          ))}
+                        {filterOptions[selectedFilter()].options.length > 5 && (
+                          <div class="text-caption text-muted-foreground mt-1">
+                            +{filterOptions[selectedFilter()].options.length - 5} more
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Filter selector */}
                   <div class="sm:flex-order-2">
@@ -585,6 +703,22 @@ export const ModelSyncSettingsSection: Component = () => {
                       <option value="id">{t("settings.section.modelSync.filter.id")}</option>
                       <option value="category">{t("settings.section.modelSync.filter.category")}</option>
                     </select>
+                  {selectedFilter() === "provider" && (
+                    <div class="flex items-center gap-2 mt-1">
+                      <select
+                        value={selectedProvider() ?? ""}
+                        onChange={(e: Event) => setSelectedProvider((e.currentTarget as HTMLSelectElement).value || null)}
+                        class="select select-xs w-24"
+                      >
+                        <option value="">-- Select Provider --</option>
+                        {PROVIDER_OPTIONS.map((opt) => (
+                          <option value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   </div>
                   
                   {/* Clear search */}
@@ -627,7 +761,7 @@ export const ModelSyncSettingsSection: Component = () => {
                             <StatusIcon status={model.status} errorDetails={model.errorDetails} />
                           </td>
                           <td>
-                            <TypeIcon type={model.type} />
+                            <ModelIcon providerId={model.providerId} type={model.type} />
                           </td>
                           <td style={{ color: "var(--text-muted)" }}>
   {model.lastTested !== null && model.lastTested > 0 ? new Date(model.lastTested).toLocaleString() : "Never"}
