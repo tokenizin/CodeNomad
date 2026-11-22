@@ -383,5 +383,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Salin ke clipboard",
   "settings.info.diagnostics.download": "Unduh .txt",
   "settings.info.diagnostics.copied": "Info diagnostik disalin ke clipboard.",
+"settings.section.modelSync.filter.category": "Category",
 } as const
-  "settings.section.modelSync.filter.category": "Category",

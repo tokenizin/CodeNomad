@@ -118,7 +118,7 @@ export const ModelSyncSettingsSection: Component = () => {
   const [testSummary, setTestSummary] = createSignal<string | null>(null)
   const [models, setModels] = createSignal<SyncedModelRow[]>([])
   const [searchQuery, setSearchQuery] = createSignal<string>("")
-  const [selectedFilter, setSelectedFilter] = createSignal<"capabilities" | "provider" | "model" | "id" | "all">("all")
+  const [selectedFilter, setSelectedFilter] = createSignal<"capabilities" | "provider" | "model" | "id" | "category" | "all">("all")
 
   const loadCached = async () => {
     try {

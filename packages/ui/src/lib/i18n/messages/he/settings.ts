@@ -426,5 +426,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "העתק ללוח",
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.copied": "מידע האבחון הועתק ללוח.",
+"settings.section.modelSync.filter.category": "Category",
 } as const
-  "settings.section.modelSync.filter.category": "Category",

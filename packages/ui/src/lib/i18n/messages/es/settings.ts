@@ -443,5 +443,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copiar al portapapeles",
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.copied": "Información de diagnóstico copiada al portapapeles.",
+"settings.section.modelSync.filter.category": "Category",
 } as const
-  "settings.section.modelSync.filter.category": "Category",
