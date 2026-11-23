@@ -165,16 +165,89 @@ function persistRemovedModels(): void {
 
 /** Where this server process reads and writes model-sync state */
 export function getModelSyncPaths() {
-  return { home: homedir(), cacheFile: SYNC_CACHE_FILE, removedFile: REMOVED_MODELS_FILE, pid: process.pid }
+  return { home: homedir(), cacheFile: SYNC_CACHE_FILE, removedFile: REMOVED_MODELS_FILE, visibilityFile: VISIBILITY_FILE, pid: process.pid }
 }
 
 export function getRemovedModels(): Array<{ key: string; reason: string; removedAt: number }> {
   return Array.from(removedModels.entries()).map(([key, v]) => ({ key, ...v }))
 }
 
+// User-chosen per-model visibility from the Model Status actions menu.
+//  - hidden:      kept out of the Model Status table unless "show hidden" is on
+//  - deactivated: kept in the table but left out of the model picker
+// Stored separately from the sync cache so a re-sync or cache clear keeps it.
+export interface ModelVisibility {
+  hidden?: boolean
+  deactivated?: boolean
+  updatedAt: number
+}
+const VISIBILITY_FILE = join(homedir(), ".config", "codenomad", "model-sync-visibility.json")
+const modelVisibility = new Map<string, ModelVisibility>()
+
+function loadModelVisibility(): void {
+  try {
+    if (!existsSync(VISIBILITY_FILE)) return
+    const parsed = JSON.parse(readFileSync(VISIBILITY_FILE, "utf-8")) as Record<string, ModelVisibility>
+    for (const [key, value] of Object.entries(parsed)) modelVisibility.set(key, value)
+  } catch (error) {
+    log.warn(`Could not read ${VISIBILITY_FILE}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function persistModelVisibility(): void {
+  try {
+    const dir = join(homedir(), ".config", "codenomad")
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(VISIBILITY_FILE, JSON.stringify(Object.fromEntries(modelVisibility), null, 2), "utf-8")
+  } catch (error) {
+    log.warn(`Could not save model visibility to ${VISIBILITY_FILE}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+export function getModelVisibility(key: string): ModelVisibility | undefined {
+  return modelVisibility.get(key)
+}
+
+/** Set hidden/deactivated for one model ("providerId/modelId"). Undefined fields are left unchanged. */
+export function setModelVisibility(
+  key: string,
+  patch: { hidden?: boolean; deactivated?: boolean },
+): ModelVisibility | undefined {
+  const current = modelVisibility.get(key) ?? { updatedAt: 0 }
+  const next: ModelVisibility = {
+    hidden: patch.hidden ?? current.hidden,
+    deactivated: patch.deactivated ?? current.deactivated,
+    updatedAt: Date.now(),
+  }
+  if (!next.hidden && !next.deactivated) modelVisibility.delete(key)
+  else modelVisibility.set(key, next)
+  persistModelVisibility()
+  return modelVisibility.get(key)
+}
+
+/**
+ * Remove one model by hand: drop it from the sync cache and remember it in the
+ * removed list so the next sync does not bring it back (same as a 404/410).
+ */
+export function removeModelManually(providerId: string, modelId: string): boolean {
+  const key = `${providerId}/${modelId}`
+  const entry = syncCache.get(providerId)
+  const index = entry ? entry.data.models.findIndex((m) => m.id === modelId) : -1
+  if (entry && index >= 0) {
+    entry.data.models.splice(index, 1)
+    persistSyncCache()
+  }
+  removedModels.set(key, { reason: "Removed manually", removedAt: Date.now() })
+  persistRemovedModels()
+  modelVisibility.delete(key)
+  persistModelVisibility()
+  return index >= 0
+}
+
 // Load on module init
 loadSyncCacheFromFile()
 loadRemovedModels()
+loadModelVisibility()
 
 // ─── Config file persistence: write synced models back to opencode.json ───
 

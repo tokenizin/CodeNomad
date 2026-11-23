@@ -1080,7 +1080,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
     if (!response.data) return
 
     // Fetch cached model sync results (capabilities, status) in parallel
-    let syncModelMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
+    let syncModelMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number; deactivated?: boolean }> = {}
     try {
       const syncResp = await fetch("/api/model-sync/cached")
       if (syncResp.ok) {
@@ -1095,7 +1095,8 @@ async function fetchProviders(instanceId: string): Promise<void> {
       id: provider.id,
       name: provider.name,
       defaultModelId: response.data?.default?.[provider.id],
-      models: Object.entries(provider.models).map(([id, model]) => {
+      // Models deactivated in Settings → Model Sync are left out of the picker.
+      models: Object.entries(provider.models).filter(([id]) => !syncModelMap[`${provider.id}/${id}`]?.deactivated).map(([id, model]) => {
         const syncKey = `${provider.id}/${id}`
         const syncEntry = syncModelMap[syncKey]
         return {

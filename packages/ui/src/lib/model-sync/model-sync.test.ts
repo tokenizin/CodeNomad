@@ -24,6 +24,8 @@ import {
   providerGroups,
   inconclusiveKind,
   rowKey,
+  deriveModelCategories,
+  largestContextKeys,
 } from "./filter-models"
 
 // --- formatContext ---
@@ -343,6 +345,49 @@ describe("providerGroups capability toggles", () => {
 
   it("combines with text search", () => {
     assert.deepStrictEqual(ids({ capabilities: ["image"], search: "c" }), ["c"])
+  })
+})
+
+describe("model categories", () => {
+  const row = (modelId: string, extra: Partial<SyncedModelRow> = {}): SyncedModelRow => ({
+    providerId: "p",
+    providerName: "P",
+    modelId,
+    modelName: modelId,
+    contextWindow: "1K",
+    capabilities: { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
+    status: "unknown",
+    type: "config",
+    lastTested: null,
+    ...extra,
+  })
+
+  it("derives categories from real data", () => {
+    const fav = new Set(["p/a"])
+    assert.deepStrictEqual(deriveModelCategories(row("a", { free: true, status: "available" }), { favoriteKeys: fav }), ["favorite", "free", "available"])
+    assert.deepStrictEqual(deriveModelCategories(row("b", { status: "insufficient_funds" })), ["requires_credit"])
+    assert.deepStrictEqual(deriveModelCategories(row("c")), ["untested"])
+    assert.deepStrictEqual(deriveModelCategories(row("d", { status: "error", deactivated: true, hidden: true })), ["error", "deactivated", "hidden"])
+  })
+
+  it("marks the largest context per provider", () => {
+    const rows = [row("a", { contextTokens: 8000 }), row("b", { contextTokens: 200000 }), row("c", { providerId: "q", contextTokens: 0 })]
+    assert.deepStrictEqual([...largestContextKeys(rows)], ["p/b"])
+  })
+
+  it("category filter matches derived categories, spaces as underscores", () => {
+    const r = row("a", { categories: ["requires_credit", "favorite"] })
+    assert.strictEqual(matchesFilter(r, "category", "requires credit", null), true)
+    assert.strictEqual(matchesFilter(r, "category", "fav", null), true)
+    assert.strictEqual(matchesFilter(r, "category", "free", null), false)
+  })
+
+  it("reads cost, hidden and deactivated from sync results", () => {
+    const [r] = rowsFromSyncResults([{ providerId: "p", providerName: "P", models: [{ id: "m", cost: { input: 0, output: 0 }, deactivated: true, limit: { context: 4096 } }] }])
+    assert.strictEqual(r.free, true)
+    assert.strictEqual(r.deactivated, true)
+    assert.strictEqual(r.hidden, undefined)
+    assert.strictEqual(r.contextTokens, 4096)
   })
 })
 

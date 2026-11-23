@@ -28,6 +28,67 @@ export interface SyncedModelRow {
   type: string
   lastTested: number | null
   errorDetails?: string
+  /** Raw context window in tokens (0 when unknown). */
+  contextTokens?: number
+  /** true when the provider reports a price of 0 for input and output; undefined when no price is known. */
+  free?: boolean
+  /** Hidden from this table via the actions menu (server-persisted). */
+  hidden?: boolean
+  /** Deactivated via the actions menu: kept out of the model picker (server-persisted). */
+  deactivated?: boolean
+  /** Derived category keys (see deriveModelCategories); used by the "category" filter. */
+  categories?: ModelCategory[]
+}
+
+/**
+ * Model categories shown in the Model Status table. None of these are stored
+ * on the model: they are derived from real data each render, the same way the
+ * model picker derives Favorite / Free / insufficient credit.
+ */
+export const MODEL_CATEGORIES = [
+  "favorite",
+  "free",
+  "requires_credit",
+  "available",
+  "error",
+  "untested",
+  "largest_context",
+  "deactivated",
+  "hidden",
+] as const
+export type ModelCategory = (typeof MODEL_CATEGORIES)[number]
+
+export function deriveModelCategories(
+  row: SyncedModelRow,
+  ctx: { favoriteKeys?: ReadonlySet<string>; largestContextKeys?: ReadonlySet<string> } = {},
+): ModelCategory[] {
+  const key = rowKey(row.providerId, row.modelId)
+  const out: ModelCategory[] = []
+  if (ctx.favoriteKeys?.has(key)) out.push("favorite")
+  if (row.free === true) out.push("free")
+  if (row.status === "insufficient_funds") out.push("requires_credit")
+  else if (row.status === "available") out.push("available")
+  else if (row.status === "error") out.push("error")
+  else if (row.status === "unknown" && !row.lastTested) out.push("untested")
+  if (ctx.largestContextKeys?.has(key)) out.push("largest_context")
+  if (row.deactivated) out.push("deactivated")
+  if (row.hidden) out.push("hidden")
+  return out
+}
+
+/** Keys of the model(s) with the largest known context window in each provider. */
+export function largestContextKeys(rows: readonly SyncedModelRow[]): Set<string> {
+  const best = new Map<string, number>()
+  for (const row of rows) {
+    const tokens = row.contextTokens ?? 0
+    if (tokens > (best.get(row.providerId) ?? 0)) best.set(row.providerId, tokens)
+  }
+  const keys = new Set<string>()
+  for (const row of rows) {
+    const max = best.get(row.providerId) ?? 0
+    if (max > 0 && (row.contextTokens ?? 0) === max) keys.add(rowKey(row.providerId, row.modelId))
+  }
+  return keys
 }
 
 export interface ProviderGroup {
@@ -79,6 +140,8 @@ export function rowsFromSyncResults(results: readonly unknown[] | null | undefin
     for (const m of models) {
       const model = m as Record<string, unknown>
       const limit = (model.limit ?? undefined) as { context?: number; input?: number } | undefined
+      const cost = (model.cost ?? undefined) as { input?: number; output?: number } | undefined
+      const contextTokens = Number(limit?.context ?? limit?.input ?? 0) || 0
       rows.push({
         providerId,
         providerName,
@@ -90,6 +153,10 @@ export function rowsFromSyncResults(results: readonly unknown[] | null | undefin
         type: String(model.source ?? "unknown"),
         lastTested: model.lastTested === null || model.lastTested === undefined ? null : Number(model.lastTested),
         errorDetails: (model.errorDetails as string | undefined) ?? undefined,
+        contextTokens,
+        free: cost && typeof cost.input === "number" && typeof cost.output === "number" ? cost.input === 0 && cost.output === 0 : undefined,
+        hidden: model.hidden === true || undefined,
+        deactivated: model.deactivated === true || undefined,
       })
     }
   }
@@ -131,8 +198,9 @@ export function hasCapability(model: SyncedModelRow, capability?: string): boole
  * - `provider`     → providerId scope ANDed with free-text search (P0-b).
  * - `model`        → field-scoped to modelName + modelId only. Empty query = no text filter.
  * - `id`           → field-scoped to modelId only. Empty query = no text filter.
- * - `category`     → field-scoped to row `type` (sync source/category label, e.g. "ollama",
- *                    "openai"). Empty query = no text filter.
+ * - `category`     → field-scoped to the row's derived categories (favorite, free,
+ *                    requires_credit, …; "_" may be typed as a space). Rows without
+ *                    derived categories fall back to row `type`. Empty query = no text filter.
  */
 export function matchesFilter(
   model: SyncedModelRow,
@@ -159,8 +227,13 @@ export function matchesFilter(
       // REOPEN-AC-3: field-scoped to model id only; no broad matchesSearch fallback.
       return !q ? true : model.modelId.toLowerCase().includes(q)
     case "category":
-      // REOPEN-AC-3: field-scoped to row.type (sync source/category) only; no broad fallback.
-      return !q ? true : (model.type || "").toLowerCase().includes(q)
+      // REOPEN-AC-3: field-scoped to categories (or row.type when none are derived); no broad fallback.
+      if (!q) return true
+      if (model.categories) {
+        const wanted = q.replace(/\s+/g, "_")
+        return model.categories.some((c) => c.includes(wanted))
+      }
+      return (model.type || "").toLowerCase().includes(q)
     default:
       return true
   }

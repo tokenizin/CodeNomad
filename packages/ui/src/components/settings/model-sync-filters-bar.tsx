@@ -70,7 +70,8 @@ export const ModelSyncFiltersBar: Component<ModelSyncFiltersBarProps> = (props) 
       case "id":
         return dedupe(rows.map((r) => r.modelId))
       case "category":
-        return dedupe(rows.map((r) => r.type))
+        // Derived categories (favorite, free, requires credit, …), shown with spaces.
+        return dedupe(rows.flatMap((r) => (r.categories ?? []).map((c) => c.replace(/_/g, " "))))
       default:
         return dedupe(rows.flatMap((r) => [r.providerName, r.modelName, r.modelId, r.type]))
     }

@@ -5,16 +5,24 @@ import {
   onCleanup,
   type Component,
   createMemo,
+  For,
+  Show,
 } from "solid-js"
-import { Cpu, RefreshCw, Terminal, Image, Brain, Music, AlertCircle, AlertTriangle, CheckCircle, Info, Globe, Star, KeyRound, Clock } from "lucide-solid"
-
-import { useI18n, type TranslateParams } from "../../lib/i18n"
 import {
+  Cpu, RefreshCw, Terminal, AlertCircle, AlertTriangle, CheckCircle, Info, Star, KeyRound, Clock,
+  ChevronDown, ChevronRight, CreditCard, ExternalLink, Eye, EyeOff, Gift, HelpCircle, Maximize2, Power, ScrollText, Trash2,
+} from "lucide-solid"
+
+import { useI18n } from "../../lib/i18n"
+import {
+  deriveModelCategories,
   inconclusiveKind,
+  largestContextKeys,
   providerGroups,
   rowsFromSyncResults,
   rowKey,
   type CapabilityKey,
+  type ModelCategory,
   type ModelSyncFilter,
   type ProviderGroup,
   type SyncedModelRow,
@@ -22,36 +30,25 @@ import {
 import { createModelSyncApi, type ModelSyncApi } from "../../lib/model-sync/api"
 import { ModelSyncFiltersBar } from "./model-sync-filters-bar"
 import { CAPABILITY_META } from "./model-sync-capabilities"
+import { officialDetailsUrl, topUpUrl } from "./model-sync-provider-links"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overflow-menu"
+import { uiState } from "../../stores/preferences"
 
 type ModelSyncStatus = "idle" | "syncing" | "testing" | "syncComplete" | "syncError"
-type Translate = (key: string, params?: TranslateParams) => string
 
-// Type labels for the source/type icons. Unrecognized sources use the "custom" label.
-const TYPE_LABEL_KEYS: Record<string, string> = {
-  star: "settings.section.modelSync.type.star",
-  code: "settings.section.modelSync.type.code",
-  voice: "settings.section.modelSync.type.voice",
-  image: "settings.section.modelSync.type.image",
-  agent: "settings.section.modelSync.type.agent",
-}
-
-// ModelIcon component that shows provider label + category icon
-function ModelIcon({ providerName, type, t }: { providerName?: string; type?: string; t: Translate }) {
-  const label = providerName || t("settings.section.modelSync.provider")
-  const categoryInfo = type
-    ? { icon: Info, title: type }
-    : { icon: Info, title: t("settings.section.modelSync.modelIcon.unknown") }
-
-  return (
-    <span class="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-gray-400">
-      <span title={label} class="text-xs opacity-70">
-        {label.split("")[0]}
-      </span>
-      <span title={categoryInfo.title}>
-        <categoryInfo.icon class="w-3 h-3" />
-      </span>
-    </span>
-  )
+// Category badges for the Model Status table. Categories are derived from real
+// data (see deriveModelCategories). Status-like ones (available / error /
+// untested) already show in the Status column, so they are filter-only.
+const CATEGORY_META: Record<ModelCategory, { icon: typeof Star; color: string; badge: boolean }> = {
+  favorite: { icon: Star, color: "#eab308", badge: true },
+  free: { icon: Gift, color: "#22c55e", badge: true },
+  requires_credit: { icon: CreditCard, color: "#f59e0b", badge: true },
+  largest_context: { icon: Maximize2, color: "#3b82f6", badge: true },
+  deactivated: { icon: Power, color: "var(--text-muted)", badge: true },
+  hidden: { icon: EyeOff, color: "var(--text-muted)", badge: true },
+  available: { icon: CheckCircle, color: "#22c55e", badge: false },
+  error: { icon: AlertCircle, color: "#ef4444", badge: false },
+  untested: { icon: HelpCircle, color: "var(--text-muted)", badge: false },
 }
 
 export const ModelSyncSettingsSection: Component = () => {
@@ -65,6 +62,18 @@ export const ModelSyncSettingsSection: Component = () => {
   const [selectedFilter, setSelectedFilter] = createSignal<ModelSyncFilter>("all")
   const [selectedProvider, setSelectedProvider] = createSignal<string | null>(null)
   const [selectedCapabilities, setSelectedCapabilities] = createSignal<CapabilityKey[]>([])
+  // Provider groups the user collapsed, rows whose exception log is open, and
+  // whether rows hidden via the actions menu are shown.
+  const [collapsedProviders, setCollapsedProviders] = createSignal<ReadonlySet<string>>(new Set())
+  const [openLogs, setOpenLogs] = createSignal<ReadonlySet<string>>(new Set())
+  const [showHidden, setShowHidden] = createSignal(false)
+  const toggleInSet = (setter: typeof setOpenLogs, key: string) =>
+    setter((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   const toggleCapability = (capability: CapabilityKey) =>
     setSelectedCapabilities((current) =>
       current.includes(capability) ? current.filter((c) => c !== capability) : [...current, capability],
@@ -98,7 +107,7 @@ export const ModelSyncSettingsSection: Component = () => {
     rows
       .map(
         (r) =>
-          `${r.providerId}/${r.modelId}:${r.status}:${r.lastTested ?? ""}:${r.contextWindow}:${r.type}:${r.errorDetails ?? ""}`,
+          `${r.providerId}/${r.modelId}:${r.status}:${r.lastTested ?? ""}:${r.contextWindow}:${r.type}:${r.errorDetails ?? ""}:${r.free ?? ""}:${r.hidden ? 1 : 0}:${r.deactivated ? 1 : 0}`,
       )
       .join("|")
 
@@ -269,6 +278,122 @@ export const ModelSyncSettingsSection: Component = () => {
     }
   }
 
+  // ── Row actions (quick-action menu) ──────────────────────────────────────
+  const updateRow = (target: SyncedModelRow, patch: Partial<SyncedModelRow>) =>
+    setModels((rows) =>
+      rows.map((row) => (row.providerId === target.providerId && row.modelId === target.modelId ? { ...row, ...patch } : row)),
+    )
+
+  // Hide / deactivate are saved on the server; update the row first so the
+  // table reacts immediately, and roll back if the save fails.
+  const setVisibility = async (model: SyncedModelRow, patch: { hidden?: boolean; deactivated?: boolean }) => {
+    const before = { hidden: model.hidden, deactivated: model.deactivated }
+    updateRow(model, { hidden: patch.hidden ?? model.hidden, deactivated: patch.deactivated ?? model.deactivated })
+    try {
+      await modelSyncApi.setVisibility({ providerId: model.providerId, modelId: model.modelId, ...patch })
+      // The model picker leaves deactivated models out; let it refresh.
+      if (patch.deactivated !== undefined) window.dispatchEvent(new CustomEvent("model-sync-complete"))
+    } catch (e: unknown) {
+      updateRow(model, before)
+      setError(t("settings.section.modelSync.actions.failed", { message: (e as Error).message || t("settings.section.modelSync.unknownError") }))
+    }
+  }
+
+  const removeModel = async (model: SyncedModelRow) => {
+    if (!window.confirm(t("settings.section.modelSync.actions.removeConfirm", { model: model.modelName }))) return
+    try {
+      await modelSyncApi.removeModel({ providerId: model.providerId, modelId: model.modelId })
+      setModels((rows) => rows.filter((row) => !(row.providerId === model.providerId && row.modelId === model.modelId)))
+      window.dispatchEvent(new CustomEvent("model-sync-complete"))
+    } catch (e: unknown) {
+      setError(t("settings.section.modelSync.actions.failed", { message: (e as Error).message || t("settings.section.modelSync.unknownError") }))
+    }
+  }
+
+  const openExternal = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  const rowActions = (model: SyncedModelRow): ActionOverflowMenuItem[] => {
+    const key = rowKey(model.providerId, model.modelId)
+    const topUp = topUpUrl(model.providerId)
+    const details = officialDetailsUrl(model.providerId, model.modelId)
+    const iconClass = "w-3.5 h-3.5"
+    return [
+      {
+        key: "log",
+        label: openLogs().has(key) ? t("settings.section.modelSync.actions.hideLog") : t("settings.section.modelSync.actions.viewLog"),
+        icon: <ScrollText class={iconClass} />,
+        disabled: !model.errorDetails,
+        onSelect: () => {
+          toggleInSet(setOpenLogs, key)
+        },
+      },
+      {
+        key: "retest",
+        label: t("settings.section.modelSync.actions.retest"),
+        icon: <RefreshCw class={iconClass} />,
+        disabled: status() !== "idle" || model.status === "testing",
+        onSelect: () => testSingleModel(model),
+      },
+      {
+        key: "topup",
+        label: t("settings.section.modelSync.actions.topUp"),
+        icon: <CreditCard class={iconClass} />,
+        disabled: !topUp,
+        onSelect: () => {
+          if (topUp) openExternal(topUp)
+        },
+      },
+      {
+        key: "details",
+        label: t("settings.section.modelSync.actions.details"),
+        icon: <ExternalLink class={iconClass} />,
+        disabled: !details,
+        onSelect: () => {
+          if (details) openExternal(details)
+        },
+      },
+      {
+        key: "hide",
+        label: model.hidden ? t("settings.section.modelSync.actions.unhide") : t("settings.section.modelSync.actions.hide"),
+        icon: model.hidden ? <Eye class={iconClass} /> : <EyeOff class={iconClass} />,
+        onSelect: () => setVisibility(model, { hidden: !model.hidden }),
+      },
+      {
+        key: "deactivate",
+        label: model.deactivated ? t("settings.section.modelSync.actions.reactivate") : t("settings.section.modelSync.actions.deactivate"),
+        icon: <Power class={iconClass} />,
+        onSelect: () => setVisibility(model, { deactivated: !model.deactivated }),
+      },
+      {
+        key: "remove",
+        label: t("settings.section.modelSync.actions.remove"),
+        icon: <Trash2 class={iconClass} />,
+        destructive: true,
+        onSelect: () => removeModel(model),
+      },
+    ]
+  }
+
+  const categoryBadges = (model: SyncedModelRow) => {
+    const shown = (model.categories ?? []).filter((c) => CATEGORY_META[c].badge)
+    if (shown.length === 0) return <span class="text-muted-foreground text-xs">—</span>
+    return (
+      <div class="model-sync-category-badges">
+        {shown.map((category) => {
+          const meta = CATEGORY_META[category]
+          return (
+            <span class="model-sync-category-badge" style={{ color: meta.color }} title={t(`settings.section.modelSync.category.${category}`)}>
+              <meta.icon class="w-3 h-3" />
+              <span>{t(`settings.section.modelSync.category.${category}`)}</span>
+            </span>
+          )
+        })}
+      </div>
+    )
+  }
+
   const capabilityIcons = (caps: SyncedModelRow["capabilities"]) => {
     const enabled = CAPABILITY_META.filter((cap) => caps?.[cap.key])
     if (enabled.length === 0) return <span class="text-muted-foreground text-xs">—</span>
@@ -281,25 +406,6 @@ export const ModelSyncSettingsSection: Component = () => {
           </span>
         ))}
       </div>
-    )
-  }
-
-  const testModelButton = (model: SyncedModelRow) => {
-    const isTesting = model.status === "testing"
-    return (
-      <Button
-        class="selector-button selector-button-tertiary text-xs"
-        disabled={isTesting}
-        title={t("settings.section.modelSync.testModel.tooltip")}
-        onClick={() => void testSingleModel(model)}
-      >
-        {isTesting ? (
-          <span class="spinner spinner-tiny mr-1" />
-        ) : (
-          <RefreshCw class="w-3 h-3" />
-        )}
-        {isTesting ? t("settings.section.modelSync.status.testing") : t("settings.section.modelSync.testModel")}
-      </Button>
     )
   }
 
@@ -378,40 +484,25 @@ export const ModelSyncSettingsSection: Component = () => {
     )
   }
 
-  // Type icon component with generic fallback for unrecognized source values
-  function TypeIcon({ type }: { type?: string }) {
-    if (!type) return null
-
-    const typeConfigs: Record<string, { icon: any; title: string; color: string }> = {
-      star: { icon: Star, title: t(TYPE_LABEL_KEYS.star), color: "text-yellow-400" },
-      code: { icon: Globe, title: t(TYPE_LABEL_KEYS.code), color: "text-blue-400" },
-      voice: { icon: Music, title: t(TYPE_LABEL_KEYS.voice), color: "text-pink-400" },
-      image: { icon: Image, title: t(TYPE_LABEL_KEYS.image), color: "text-green-400" },
-      agent: { icon: Brain, title: t(TYPE_LABEL_KEYS.agent), color: "text-orange-400" },
-    }
-
-    // Generic fallback for unrecognized source values
-    const fallback: { icon: any; title: string; color: string } = {
-      icon: Info,
-      title: t("settings.section.modelSync.type.custom"),
-      color: "text-gray-500",
-    }
-
-    const config = typeConfigs[type.toLowerCase()] || fallback
-    const Icon = config.icon
-    return (
-      <span
-        class={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
-        title={config.title}
-      >
-        <Icon class="w-3 h-3" />
-      </span>
-    )
-  }
-
   // Group models by provider for display, with search/filter applied (pure module; P0-a/P0-b fixed)
+  // Rows with derived categories. Favourites come from the model picker's preferences.
+  const favoriteKeys = createMemo(() => {
+    const keys = new Set<string>()
+    for (const item of uiState().models.favorites ?? []) {
+      if (item.providerId && item.modelId) keys.add(rowKey(item.providerId, item.modelId))
+    }
+    return keys
+  })
+  const enrichedRows = createMemo<SyncedModelRow[]>(() => {
+    const rows = models()
+    const largest = largestContextKeys(rows)
+    const favorites = favoriteKeys()
+    return rows.map((row) => ({ ...row, categories: deriveModelCategories(row, { favoriteKeys: favorites, largestContextKeys: largest }) }))
+  })
+  const hiddenCount = createMemo(() => models().filter((row) => row.hidden).length)
+
   const visibleGroups = createMemo<ProviderGroup[]>(() =>
-    providerGroups(models(), {
+    providerGroups(showHidden() ? enrichedRows() : enrichedRows().filter((row) => !row.hidden), {
       search: searchQuery(),
       filter: selectedFilter(),
       providerId: selectedFilter() === "provider" ? selectedProvider() : null,
@@ -512,7 +603,7 @@ export const ModelSyncSettingsSection: Component = () => {
         <div class="settings-card-content">
           {/* Render filters bar unconditionally so the search field and category filter are always available */}
           <ModelSyncFiltersBar
-            rows={models()}
+            rows={enrichedRows()}
             searchQuery={searchQuery()}
             onSearchChange={setSearchQuery}
             filter={selectedFilter()}
@@ -533,51 +624,100 @@ export const ModelSyncSettingsSection: Component = () => {
             <p class="text-muted-foreground">{t("settings.section.modelSync.noModelsYet")}</p>
           )}
 
+          {hiddenCount() > 0 && (
+            <label class="model-sync-show-hidden">
+              <input type="checkbox" checked={showHidden()} onChange={(e) => setShowHidden(e.currentTarget.checked)} />
+              {t("settings.section.modelSync.showHidden", { count: hiddenCount() })}
+            </label>
+          )}
+
           {visibleModels().length > 0 && (
             <div class="model-sync-table-scroll">
             <table class="model-sync-table">
               <thead>
                 <tr>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.provider")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.modelName")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.contextWindow")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.capabilities")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.status")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.type")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.lastTested")}</th>
-                  <th style={{ color: "var(--text-muted)" }}>{t("settings.section.modelSync.actions")}</th>
+                  <th>{t("settings.section.modelSync.provider")}</th>
+                  <th>{t("settings.section.modelSync.modelName")}</th>
+                  <th>{t("settings.section.modelSync.contextWindow")}</th>
+                  <th>{t("settings.section.modelSync.capabilities")}</th>
+                  <th>{t("settings.section.modelSync.status")}</th>
+                  <th>{t("settings.section.modelSync.filter.category")}</th>
+                  <th>{t("settings.section.modelSync.lastTested")}</th>
+                  <th>{t("settings.section.modelSync.actions")}</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleGroups().map((group: ProviderGroup) => (
-                  <>
-                    <tr class="provider-group">
-                      <td colSpan={8} class="provider-header">
-                        {t("settings.section.modelSync.provider")}: {group.providerName}
-                      </td>
-                    </tr>
-                    {group.models.map((model: SyncedModelRow) => (
-                        <tr class="model-row">
-                        <td style={{ color: "var(--text-primary)" }}>{model.providerName}</td>
-                        <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
-                        <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>
-                        <td>{capabilityIcons(model.capabilities)}</td>
-                        <td>
-                          <StatusIcon status={model.status} errorDetails={model.errorDetails} />
-                        </td>
-                        <td>
-                          <ModelIcon providerName={model.providerName} type={model.type} t={t} />
-                        </td>
-                        <td style={{ color: "var(--text-muted)" }}>
-                          {model.lastTested !== null && model.lastTested > 0 ? new Date(model.lastTested).toLocaleString() : t("settings.section.modelSync.lastTested.never")}
-                        </td>
-                        <td>
-                          {testModelButton(model)}
-                        </td>
-                      </tr>
-                    ))}
-                  </>
-                ))}
+                <For each={visibleGroups()}>
+                  {(group: ProviderGroup) => {
+                    const collapsed = () => collapsedProviders().has(group.providerId)
+                    return (
+                      <>
+                        {/* Provider row: click to collapse/expand; sticky while its models scroll */}
+                        <tr class="provider-group">
+                          <td colSpan={8} class="provider-header model-sync-provider-sticky">
+                            <button
+                              type="button"
+                              class="model-sync-group-toggle"
+                              aria-expanded={!collapsed()}
+                              onClick={() => toggleInSet(setCollapsedProviders, group.providerId)}
+                            >
+                              {collapsed() ? <ChevronRight class="w-3.5 h-3.5" /> : <ChevronDown class="w-3.5 h-3.5" />}
+                              <span>{group.providerName}</span>
+                              <span class="model-sync-group-count">{group.models.length}</span>
+                            </button>
+                          </td>
+                        </tr>
+                        <Show when={!collapsed()}>
+                          <For each={group.models}>
+                            {(model: SyncedModelRow) => {
+                              const key = rowKey(model.providerId, model.modelId)
+                              return (
+                                <>
+                                  <tr class="model-row" classList={{ "is-deactivated": !!model.deactivated, "is-hidden": !!model.hidden }}>
+                                    <td style={{ color: "var(--text-primary)" }}>{model.providerName}</td>
+                                    <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
+                                    <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>
+                                    <td>{capabilityIcons(model.capabilities)}</td>
+                                    <td>
+                                      <StatusIcon status={model.status} errorDetails={model.errorDetails} />
+                                    </td>
+                                    <td>{categoryBadges(model)}</td>
+                                    <td style={{ color: "var(--text-muted)" }}>
+                                      {model.lastTested !== null && model.lastTested > 0 ? new Date(model.lastTested).toLocaleString() : t("settings.section.modelSync.lastTested.never")}
+                                    </td>
+                                    <td>
+                                      <div class="model-sync-row-actions">
+                                        {model.status === "testing" && <span class="spinner spinner-tiny" />}
+                                        <ActionOverflowMenu
+                                          label={t("settings.section.modelSync.actions.menu", { model: model.modelName })}
+                                          items={rowActions(model)}
+                                          triggerClass="model-sync-actions-trigger"
+                                        />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  <Show when={openLogs().has(key) && model.errorDetails}>
+                                    <tr class="model-sync-log-row">
+                                      <td colSpan={8}>
+                                        <div class="model-sync-log">
+                                          <div class="model-sync-log-meta">
+                                            {t("settings.section.modelSync.actions.logTitle")} · {model.status}
+                                            {model.lastTested ? ` · ${new Date(model.lastTested).toLocaleString()}` : ""}
+                                          </div>
+                                          <pre>{model.errorDetails}</pre>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  </Show>
+                                </>
+                              )
+                            }}
+                          </For>
+                        </Show>
+                      </>
+                    )
+                  }}
+                </For>
               </tbody>
             </table>
             </div>

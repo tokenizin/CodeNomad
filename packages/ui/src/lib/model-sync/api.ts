@@ -61,6 +61,8 @@ export interface ModelSyncApi {
   clearCache(): Promise<{ success: boolean }>
   testModels(input: { tests: Array<{ providerId: string; modelId: string; timeoutMs?: number }>; concurrency?: number }): Promise<{ results: ModelSyncTestResult[] }>
   testModel(input: { providerId: string; modelId: string; timeoutMs?: number }): Promise<{ result: ModelSyncTestResult }>
+  setVisibility(input: { providerId: string; modelId: string; hidden?: boolean; deactivated?: boolean }): Promise<{ hidden: boolean; deactivated: boolean }>
+  removeModel(input: { providerId: string; modelId: string }): Promise<{ success: boolean }>
 }
 
 export function createModelSyncApi(options: ModelSyncApiClientOptions = {}): ModelSyncApi {
@@ -111,6 +113,24 @@ export function createModelSyncApi(options: ModelSyncApiClientOptions = {}): Mod
         }),
       }, base.fetchImpl)
       return { result: (data.result ?? {}) as ModelSyncTestResult }
+    },
+
+    async setVisibility(input) {
+      const data = await modelSyncFetch<{ hidden?: boolean; deactivated?: boolean }>("/api/model-sync/model/visibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }, base.fetchImpl)
+      return { hidden: Boolean(data.hidden), deactivated: Boolean(data.deactivated) }
+    },
+
+    async removeModel(input) {
+      const data = await modelSyncFetch<{ success?: boolean }>("/api/model-sync/model/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }, base.fetchImpl)
+      return { success: Boolean(data.success) }
     },
   }
 }

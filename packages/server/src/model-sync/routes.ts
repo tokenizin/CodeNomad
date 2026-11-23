@@ -1,5 +1,5 @@
 import { createLogger } from "../logger"
-import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig, applyModelTestResults, getRemovedModels, getModelSyncPaths } from "./service"
+import { syncAllProviders, syncProviderModels, clearSyncCache, getProviderConfigs, getCachedSyncResults, getCachedModelMap, persistSyncedModelsToConfig, applyModelTestResults, getRemovedModels, getModelSyncPaths, getModelVisibility, setModelVisibility, removeModelManually } from "./service"
 import { testModel, testModelsBatch, type TestModelOptions, type ModelTestResult } from "./tester"
 import type { ModelSyncResult } from "./service"
 
@@ -135,16 +135,27 @@ export async function handleGetCachedSync(): Promise<Response> {
   const results = getCachedSyncResults()
   const modelMap = getCachedModelMap()
   // Return both the per-provider results and a flat model lookup map
-  const flatMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number }> = {}
+  const flatMap: Record<string, { capabilities: Record<string, boolean>; status: string; errorDetails?: string; lastTested: number; hidden?: boolean; deactivated?: boolean }> = {}
   for (const [key, model] of modelMap.entries()) {
+    const visibility = getModelVisibility(key)
     flatMap[key] = {
       capabilities: model.capabilities as unknown as Record<string, boolean>,
       status: model.status,
       errorDetails: model.errorDetails,
       lastTested: model.lastTested,
+      hidden: visibility?.hidden || undefined,
+      deactivated: visibility?.deactivated || undefined,
     }
   }
-  return Response.json({ results, modelMap: flatMap })
+  // Annotate per-provider results with visibility too (Model Status table reads these).
+  const annotated = results.map((result) => ({
+    ...result,
+    models: result.models.map((model) => {
+      const visibility = getModelVisibility(`${result.providerId}/${model.id}`)
+      return visibility ? { ...model, hidden: visibility.hidden || undefined, deactivated: visibility.deactivated || undefined } : model
+    }),
+  }))
+  return Response.json({ results: annotated, modelMap: flatMap })
 }
 
 // Persist synced models to opencode.json config
@@ -196,6 +207,30 @@ export async function handleModelSyncRoutes(request: Request, path: string): Pro
   // GET /api/model-sync/removed - models removed after a 404/410, plus where state is stored
   if (method === "GET" && path === "/api/model-sync/removed") {
     return Response.json({ ...getModelSyncPaths(), removed: getRemovedModels() })
+  }
+
+  // POST /api/model-sync/model/visibility - { providerId, modelId, hidden?, deactivated? }
+  if (method === "POST" && path === "/api/model-sync/model/visibility") {
+    const body = (await request.json().catch(() => ({}))) as { providerId?: unknown; modelId?: unknown; hidden?: unknown; deactivated?: unknown }
+    if (typeof body.providerId !== "string" || !body.providerId || typeof body.modelId !== "string" || !body.modelId) {
+      return Response.json({ error: "providerId and modelId are required" }, { status: 400 })
+    }
+    const patch: { hidden?: boolean; deactivated?: boolean } = {}
+    if (typeof body.hidden === "boolean") patch.hidden = body.hidden
+    if (typeof body.deactivated === "boolean") patch.deactivated = body.deactivated
+    const visibility = setModelVisibility(`${body.providerId}/${body.modelId}`, patch)
+    return Response.json({ success: true, hidden: !!visibility?.hidden, deactivated: !!visibility?.deactivated })
+  }
+
+  // POST /api/model-sync/model/remove - { providerId, modelId }; stays removed across syncs
+  if (method === "POST" && path === "/api/model-sync/model/remove") {
+    const body = (await request.json().catch(() => ({}))) as { providerId?: unknown; modelId?: unknown }
+    if (typeof body.providerId !== "string" || !body.providerId || typeof body.modelId !== "string" || !body.modelId) {
+      return Response.json({ error: "providerId and modelId are required" }, { status: 400 })
+    }
+    const found = removeModelManually(body.providerId, body.modelId)
+    log.info(`Model removed manually: ${body.providerId}/${body.modelId} (was cached: ${found})`)
+    return Response.json({ success: true, found })
   }
 
   // GET /api/model-sync/providers - get provider configs
