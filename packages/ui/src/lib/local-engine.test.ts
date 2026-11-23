@@ -214,10 +214,10 @@ describe("delegated tasks in the live reply", () => {
       assert.equal(task.agent, "worker")
       assert.equal(task.status, "completed")
       assert.match(task.sessionId, /^ses_lcl_t_task_/)
-      assert.equal(task.prompt, `do-sub-${task.parentCallId.at(-1)}`)
+      assert.equal(task.prompt, `do-sub-${task.parentCallId.slice(-1)[0]}`)
       assert.equal(task.userMessageId.startsWith("msg_tu_"), true)
       assert.equal(task.assistantMessageId.startsWith("msg_ta_"), true)
-      assert.deepEqual(task.parts, [{ type: "text", text: `answer-${task.parentCallId.at(-1)}` }], `task ${i}`)
+      assert.deepEqual(task.parts, [{ type: "text", text: `answer-${task.parentCallId.slice(-1)[0]}` }], `task ${i}`)
     }
     // Distinct sessions, one per task.
     assert.equal(new Set(reply.tasks.map((t) => t.sessionId)).size, 3)
@@ -356,7 +356,7 @@ describe("delegated tasks in the live reply", () => {
     assert.equal(record.parentId, task.parentSessionId)
     assert.equal(record.kind, "task")
     assert.equal(record.taskStatus, "completed")
-    assert.equal(record.title, "[worker] job " + task.parentCallId.at(-1))
+    assert.equal(record.title, "[worker] job " + task.parentCallId.slice(-1)[0])
     assert.deepEqual(record.model, { providerId: RUST_PROVIDER_ID, modelId: "m" })
   })
 

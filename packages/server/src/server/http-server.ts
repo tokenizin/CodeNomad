@@ -1154,6 +1154,25 @@ async function proxyToDevServer(request: FastifyRequest, reply: FastifyReply, up
     }
 
     const buffer = Buffer.from(await response.arrayBuffer())
+    const contentType = response.headers.get("content-type") ?? ""
+    // fetch() transparently decompresses the body; forwarding the upstream content-encoding would
+    // make the browser decode the decoded bytes a second time. Recompute length against what we send.
+    if (response.headers.has("content-encoding")) {
+      reply.removeHeader("content-encoding")
+      reply.header("content-length", buffer.byteLength.toString())
+    }
+    // The dev-proxy branch of `/` and the SPA fallback return before the static paths call
+    // injectUiRuntimeConfig(), so inject here — the single choke point for every proxied UI HTML.
+    if (response.status >= 200 && response.status < 300 && contentType.includes("text/html")) {
+      const html = buffer.toString("utf-8")
+      // Guard against double injection (e.g. a dev server that already serves the config script).
+      if (!html.includes("__CODENOMAD_AUTH_PROVIDER__")) {
+        const injected = injectUiRuntimeConfig(html)
+        reply.header("content-length", Buffer.byteLength(injected).toString())
+        reply.send(injected)
+        return
+      }
+    }
     reply.send(buffer)
   } catch (error) {
     request.log.error({ err: error }, "Failed to proxy UI request to dev server")

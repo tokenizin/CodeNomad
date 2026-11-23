@@ -40,3 +40,27 @@
   font-size: 0.8125rem;
   vertical-align: middle;
 }
+
+/* Visually-hidden live region for announcing the visible result count. */
+.model-sync-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Respect the user's motion preference for the in-flight status indicators. */
+@media (prefers-reduced-motion: reduce) {
+  .model-sync-table-wrapper .animate-pulse,
+  .model-sync-table-wrapper .spinner {
+    animation: none !important;
+  }
+  .model-sync-table tbody tr {
+    transition: none !important;
+  }
+}
