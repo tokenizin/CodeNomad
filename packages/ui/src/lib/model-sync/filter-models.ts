@@ -118,10 +118,16 @@ export function hasCapability(model: SyncedModelRow, capability?: string): boole
 
 /**
  * Filter composition for the Model Sync panel.
- * - `all` + search → free-text search applies (P0-a fix).
- * - `capabilities` + query → capability-scoped filtering (P1-b fix); empty query → any enabled capability.
- * - `provider` + providerId → provider scoping ANDed with free-text search (P0-b fix).
- * - `model` / `id` / `category` → query-scoped text filters.
+ *
+ * Semantics (REOPEN-AC-3: scoped filters do not fall back to broad matchesSearch):
+ * - `all`          → free-text search over provider/model/id/context (P0-a).
+ * - `capabilities` → capability-scoped (P1-b). Empty query = any enabled capability;
+ *                    non-empty query matches enabled capability key (exact/substring).
+ * - `provider`     → providerId scope ANDed with free-text search (P0-b).
+ * - `model`        → field-scoped to modelName + modelId only. Empty query = no text filter.
+ * - `id`           → field-scoped to modelId only. Empty query = no text filter.
+ * - `category`     → field-scoped to row `type` (sync source/category label, e.g. "ollama",
+ *                    "openai"). Empty query = no text filter.
  */
 export function matchesFilter(
   model: SyncedModelRow,
@@ -142,14 +148,14 @@ export function matchesFilter(
       if (providerId && model.providerId !== providerId) return false
       return matchesSearch(model, query)
     case "model":
-      // Query-scoped to model name/id; empty query → no text filtering.
-      return !q ? true : `${model.modelName} ${model.modelId}`.toLowerCase().includes(q) || matchesSearch(model, query)
+      // REOPEN-AC-3: field-scoped to model name/id only; no broad matchesSearch fallback.
+      return !q ? true : `${model.modelName} ${model.modelId}`.toLowerCase().includes(q)
     case "id":
-      // Query-scoped to model id; empty query → no text filtering.
-      return !q ? true : model.modelId.toLowerCase().includes(q) || matchesSearch(model, query)
+      // REOPEN-AC-3: field-scoped to model id only; no broad matchesSearch fallback.
+      return !q ? true : model.modelId.toLowerCase().includes(q)
     case "category":
-      // Query-scoped to model source/type; empty query → no text filtering.
-      return !q ? true : (model.type || "").toLowerCase().includes(q) || matchesSearch(model, query)
+      // REOPEN-AC-3: field-scoped to row.type (sync source/category) only; no broad fallback.
+      return !q ? true : (model.type || "").toLowerCase().includes(q)
     default:
       return true
   }

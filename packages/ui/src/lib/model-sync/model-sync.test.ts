@@ -333,3 +333,74 @@ describe("inconclusiveKind", () => {
     assert.strictEqual(inconclusiveKind("Some other error"), "other")
   })
 })
+
+// --- matchesFilter (REOPEN-AC-3/AC-4 scoped semantics) ---
+describe("matchesFilter", () => {
+  const base: SyncedModelRow = {
+    providerId: "ollama",
+    providerName: "Ollama",
+    modelId: "qwen3:8b",
+    modelName: "Qwen 3 8B",
+    contextWindow: "32K",
+    capabilities: { tools: true, image: false, video: false, reasoning: true, audio: false, cloud: false },
+    status: "available",
+    type: "ollama",
+    lastTested: Date.now(),
+  }
+
+  it("all: applies broad search (P0-a)", () => {
+    assert.strictEqual(matchesFilter(base, "all", "qwen", null), true)
+    assert.strictEqual(matchesFilter(base, "all", "ollama", null), true)
+    assert.strictEqual(matchesFilter(base, "all", "32K", null), true)
+    assert.strictEqual(matchesFilter(base, "all", "missing", null), false)
+  })
+
+  it("provider: scopes by providerId and ANDs with search (P0-b)", () => {
+    assert.strictEqual(matchesFilter(base, "provider", "", "ollama"), true)
+    assert.strictEqual(matchesFilter(base, "provider", "", "openai"), false)
+    assert.strictEqual(matchesFilter(base, "provider", "qwen", "ollama"), true)
+    assert.strictEqual(matchesFilter(base, "provider", "missing", "ollama"), false)
+  })
+
+  it("model: field-scoped to model name/id only (REOPEN-AC-3)", () => {
+    assert.strictEqual(matchesFilter(base, "model", "qwen", null), true)
+    assert.strictEqual(matchesFilter(base, "model", "8b", null), true)
+    // Must NOT match provider name or context window (over-broad fallback removed)
+    assert.strictEqual(matchesFilter(base, "model", "ollama", null), false)
+    assert.strictEqual(matchesFilter(base, "model", "32K", null), false)
+    assert.strictEqual(matchesFilter(base, "model", "", null), true)
+  })
+
+  it("id: field-scoped to model id only (REOPEN-AC-3)", () => {
+    assert.strictEqual(matchesFilter(base, "id", "qwen3:8b", null), true)
+    assert.strictEqual(matchesFilter(base, "id", "8b", null), true)
+    // Must NOT match model display name-only tokens, provider, or context
+    assert.strictEqual(matchesFilter(base, "id", "Ollama", null), false)
+    assert.strictEqual(matchesFilter(base, "id", "32K", null), false)
+    assert.strictEqual(matchesFilter(base, "id", "", null), true)
+  })
+
+  it("category: field-scoped to row.type (source/category) only (REOPEN-AC-3)", () => {
+    assert.strictEqual(matchesFilter(base, "category", "ollama", null), true)
+    // Must NOT match model name/provider name/context as broad fallback
+    assert.strictEqual(matchesFilter(base, "category", "qwen", null), false)
+    assert.strictEqual(matchesFilter(base, "category", "32K", null), false)
+    assert.strictEqual(matchesFilter(base, "category", "", null), true)
+  })
+
+  it("capabilities: empty query means any enabled capability (REOPEN-AC-4)", () => {
+    assert.strictEqual(matchesFilter(base, "capabilities", "", null), true)
+    const none: SyncedModelRow = {
+      ...base,
+      capabilities: { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false },
+    }
+    assert.strictEqual(matchesFilter(none, "capabilities", "", null), false)
+  })
+
+  it("capabilities: query matches enabled capability only (REOPEN-AC-4)", () => {
+    assert.strictEqual(matchesFilter(base, "capabilities", "tools", null), true)
+    assert.strictEqual(matchesFilter(base, "capabilities", "reasoning", null), true)
+    assert.strictEqual(matchesFilter(base, "capabilities", "image", null), false)
+    assert.strictEqual(matchesFilter(base, "capabilities", "video", null), false)
+  })
+})
