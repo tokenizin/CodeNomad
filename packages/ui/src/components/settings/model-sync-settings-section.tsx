@@ -5,14 +5,11 @@ import {
   onCleanup,
   type Component,
   createMemo,
-  For,
 } from "solid-js"
 import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, Info, Globe, Star, KeyRound, Clock } from "lucide-solid"
 
 import { useI18n, type TranslateParams } from "../../lib/i18n"
-import type React from "react"
 import {
-  CAPABILITY_KEYS,
   inconclusiveKind,
   providerGroups,
   rowsFromSyncResults,
@@ -22,19 +19,10 @@ import {
   type SyncedModelRow,
 } from "../../lib/model-sync/filter-models"
 import { createModelSyncApi, type ModelSyncApi } from "../../lib/model-sync/api"
+import { ModelSyncFiltersBar } from "./model-sync-filters-bar"
 
 type ModelSyncStatus = "idle" | "syncing" | "testing" | "syncComplete" | "syncError"
 type Translate = (key: string, params?: TranslateParams) => string
-
-// i18n keys for the filter selector labels (values live in all 10 locale files).
-const FILTER_LABEL_KEYS: Record<ModelSyncFilter, string> = {
-  all: "settings.section.modelSync.filter.all",
-  capabilities: "settings.section.modelSync.filter.capabilities",
-  provider: "settings.section.modelSync.filter.provider",
-  model: "settings.section.modelSync.filter.model",
-  id: "settings.section.modelSync.filter.id",
-  category: "settings.section.modelSync.filter.category",
-}
 
 // Type labels for the source/type icons. Unrecognized sources use the "custom" label.
 const TYPE_LABEL_KEYS: Record<string, string> = {
@@ -74,10 +62,6 @@ export const ModelSyncSettingsSection: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal<string>("")
   const [selectedFilter, setSelectedFilter] = createSignal<ModelSyncFilter>("all")
   const [selectedProvider, setSelectedProvider] = createSignal<string | null>(null)
-  // Search suggestion listbox state (P2-b / a11y)
-  const [suggestionsOpen, setSuggestionsOpen] = createSignal(false)
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = createSignal(-1)
-  let searchWrapRef: HTMLDivElement | undefined
 
   const modelSyncApi: ModelSyncApi = createModelSyncApi({ fetchImpl: (input, init) => fetch(input, init) })
 
@@ -100,8 +84,6 @@ export const ModelSyncSettingsSection: Component = () => {
     setSearchQuery("")
     setSelectedFilter("all")
     setSelectedProvider(null)
-    setSuggestionsOpen(false)
-    setActiveSuggestionIndex(-1)
   }
 
   const rowsSignature = (rows: SyncedModelRow[]) =>
@@ -145,20 +127,7 @@ export const ModelSyncSettingsSection: Component = () => {
     const interval = setInterval(() => {
       if (status() === "idle") void loadCached()
     }, 5_000)
-    // REOPEN-AC-2: close suggestions on outside click without breaking option mousedown selection.
-    const handleDocumentMouseDown = (event: MouseEvent) => {
-      const target = event.target as Node | null
-      if (!searchWrapRef || !target) return
-      if (!searchWrapRef.contains(target)) {
-        setSuggestionsOpen(false)
-        setActiveSuggestionIndex(-1)
-      }
-    }
-    document.addEventListener("mousedown", handleDocumentMouseDown)
-    onCleanup(() => {
-      clearInterval(interval)
-      document.removeEventListener("mousedown", handleDocumentMouseDown)
-    })
+    onCleanup(() => clearInterval(interval))
   })
 
   const handleSyncModels = async () => {
@@ -452,61 +421,6 @@ export const ModelSyncSettingsSection: Component = () => {
   )
   const visibleModels = createMemo(() => visibleGroups().flatMap((group) => group.models))
 
-  // P1-d: derive suggestions from the loaded rows instead of permanently-empty
-  // static arrays. Capabilities stay a fixed vocabulary from the pure module.
-  const suggestionOptions = createMemo<string[]>(() => {
-    const dedupe = (values: string[]) => Array.from(new Set(values.filter(Boolean)))
-    const rows = models()
-    switch (selectedFilter()) {
-      case "capabilities":
-        return [...CAPABILITY_KEYS]
-      case "provider":
-        return dedupe(rows.map((r) => r.providerId))
-      case "model":
-        return dedupe(rows.flatMap((r) => [r.modelName, r.modelId]))
-      case "id":
-        return dedupe(rows.map((r) => r.modelId))
-      case "category":
-        return dedupe(rows.map((r) => r.type))
-      default:
-        return dedupe(rows.flatMap((r) => [r.providerName, r.modelName, r.modelId, r.type]))
-    }
-  })
-
-  // P1-c: selecting a suggestion only sets the search query; it never changes
-  // the active filter, so the current scope is preserved.
-  const selectSuggestion = (option: string) => {
-    setSearchQuery(option)
-    setSuggestionsOpen(false)
-    setActiveSuggestionIndex(-1)
-  }
-
-  // P2-b: full combobox keyboard support.
-  const handleSearchKeyDown = (event: KeyboardEvent) => {
-    const options = suggestionOptions()
-    if (event.key === "Escape") {
-      setSuggestionsOpen(false)
-      setActiveSuggestionIndex(-1)
-      return
-    }
-    if (!suggestionsOpen() || options.length === 0) return
-    if (event.key === "ArrowDown") {
-      event.preventDefault()
-      setActiveSuggestionIndex((index) => (index + 1) % options.length)
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault()
-      setActiveSuggestionIndex((index) => (index <= 0 ? options.length - 1 : index - 1))
-    } else if (event.key === "Home") {
-      event.preventDefault()
-      setActiveSuggestionIndex(0)
-    } else if (event.key === "End") {
-      event.preventDefault()
-      setActiveSuggestionIndex(options.length - 1)
-    } else if (event.key === "Enter" && activeSuggestionIndex() >= 0) {
-      event.preventDefault()
-      selectSuggestion(options[activeSuggestionIndex()])
-    }
-  }
 
   return (
     <div class="settings-section-stack">
@@ -598,121 +512,17 @@ export const ModelSyncSettingsSection: Component = () => {
 
         <div class="settings-card-content">
           {/* Render filters bar unconditionally so the search field and category filter are always available */}
-          <div class="model-sync-filters-bar">
-            <div class="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-              {/* Search input + suggestions (REOPEN-AC-2: relative anchor, outside click, accessible listbox) */}
-              <div class="flex-1 sm:flex-order-1 relative" ref={searchWrapRef}>
-                <input
-                  type="text"
-                  id="model-sync-search"
-                  role="combobox"
-                  aria-label={t("settings.section.modelSync.search.placeholder")}
-                  aria-autocomplete="list"
-                  aria-controls="model-sync-suggestion-list"
-                  aria-expanded={suggestionsOpen() && suggestionOptions().length > 0}
-                  aria-activedescendant={
-                    suggestionsOpen() && activeSuggestionIndex() >= 0
-                      ? `model-sync-suggestion-${activeSuggestionIndex()}`
-                      : undefined
-                  }
-                  placeholder={t("settings.section.modelSync.search.placeholder")}
-                  value={searchQuery()}
-                  onInput={(e: Event) => {
-                    setSearchQuery((e.target as HTMLInputElement | null)?.value ?? "")
-                    setSuggestionsOpen(true)
-                    setActiveSuggestionIndex(-1)
-                  }}
-                  onFocus={() => setSuggestionsOpen(true)}
-                  onBlur={() => {
-                    // Close when focus leaves the search wrapper. Option mousedown preventDefault
-                    // keeps input focus, so option selection is unaffected.
-                    setTimeout(() => {
-                      if (!searchWrapRef?.contains(document.activeElement)) {
-                        setSuggestionsOpen(false)
-                        setActiveSuggestionIndex(-1)
-                      }
-                    }, 0)
-                  }}
-                  onKeyDown={handleSearchKeyDown}
-                  class="flex-1 input input-bordered w-full"
-                />
-                {searchQuery() && suggestionsOpen() && suggestionOptions().length > 0 && (
-                  <div
-                    id="model-sync-suggestion-list"
-                    role="listbox"
-                    aria-label={t(FILTER_LABEL_KEYS[selectedFilter()])}
-                    class="absolute left-0 mt-1 w-full rounded border bg-white shadow-sm z-10 overflow-auto"
-                    style={{ "max-height": "200px" }}
-                  >
-                    <div class="p-2 text-sm text-muted-foreground" role="presentation">
-                      <span class="text-caption">{t(FILTER_LABEL_KEYS[selectedFilter()])}:</span>{" "}
-                      <For each={suggestionOptions()}>
-                        {(opt, index) => (
-                          <div
-                            id={`model-sync-suggestion-${index()}`}
-                            role="option"
-                            aria-selected={index() === activeSuggestionIndex()}
-                            class={`cursor-pointer px-1 py-0.5 rounded ${index() === activeSuggestionIndex() ? "text-primary bg-[var(--surface-hover)]" : "hover:text-primary"}`}
-                            onMouseDown={(e: MouseEvent) => e.preventDefault()}
-                            onClick={() => selectSuggestion(opt)}
-                          >
-                            {opt}
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Filter selector */}
-              <div class="sm:flex-order-2">
-                <select
-                  value={selectedFilter()}
-                  onChange={(e: Event) => {
-                    setSelectedFilter((e.currentTarget as HTMLSelectElement).value as ModelSyncFilter)
-                    setSuggestionsOpen(false)
-                    setActiveSuggestionIndex(-1)
-                  }}
-                  class="select select-sm w-32"
-                >
-                  <option value="all">{t("settings.section.modelSync.filter.all")}</option>
-                  <option value="capabilities">{t("settings.section.modelSync.filter.capabilities")}</option>
-                  <option value="provider">{t("settings.section.modelSync.filter.provider")}</option>
-                  <option value="model">{t("settings.section.modelSync.filter.model")}</option>
-                  <option value="id">{t("settings.section.modelSync.filter.id")}</option>
-                  <option value="category">{t("settings.section.modelSync.filter.category")}</option>
-                </select>
-              {selectedFilter() === "provider" && (
-                <div class="flex items-center gap-2 mt-1">
-                  <select
-                    value={selectedProvider() ?? ""}
-                    onChange={(e: Event) => setSelectedProvider((e.currentTarget as HTMLSelectElement).value || null)}
-                    class="select select-xs w-24"
-                  >
-                    <option value="">{t("settings.section.modelSync.provider.placeholder")}</option>
-                    <For each={providerOptions()}>
-                      {(opt) => <option value={opt.value}>{opt.label}</option>}
-                    </For>
-                  </select>
-                </div>
-              )}
-              </div>
-              
-              {/* Clear search */}
-              <button
-                onClick={() => {
-                  setSearchQuery("")
-                  setSuggestionsOpen(false)
-                  setActiveSuggestionIndex(-1)
-                }}
-                class="selector-button selector-button-tertiary text-xs sm:ml-2"
-                title={t("settings.section.modelSync.search.clear")}
-              >
-                {t("settings.section.modelSync.search.clear")}
-              </button>
-            </div>
-          </div>
+          <ModelSyncFiltersBar
+            rows={models()}
+            searchQuery={searchQuery()}
+            onSearchChange={setSearchQuery}
+            filter={selectedFilter()}
+            onFilterChange={setSelectedFilter}
+            providerId={selectedProvider()}
+            onProviderChange={setSelectedProvider}
+            providerOptions={providerOptions()}
+          />
+
           {/* Visually-hidden polite announcement of the visible result count (P2-b) */}
           <span class="model-sync-sr-only" role="status" aria-live="polite">
             {t("settings.section.modelSync.resultsAnnouncement", { count: visibleModels().length })}
@@ -739,13 +549,13 @@ export const ModelSyncSettingsSection: Component = () => {
               <tbody>
                 {visibleGroups().map((group: ProviderGroup) => (
                   <>
-                    <tr {...{ key: group.providerId as unknown as React.Key }} class="provider-group">
+                    <tr class="provider-group">
                       <td colSpan={8} class="provider-header">
                         {t("settings.section.modelSync.provider")}: {group.providerName}
                       </td>
                     </tr>
                     {group.models.map((model: SyncedModelRow) => (
-                        <tr {...{ key: `${model.providerId}-${model.modelId}` as unknown as React.Key }} class="model-row">
+                        <tr class="model-row">
                         <td style={{ color: "var(--text-primary)" }}>{model.providerName}</td>
                         <td style={{ color: "var(--text-secondary)" }}>{model.modelName}</td>
                         <td style={{ color: "var(--text-secondary)" }}>{model.contextWindow}</td>

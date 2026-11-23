@@ -64,3 +64,75 @@
     transition: none !important;
   }
 }
+/* Search + filter bar (ModelSyncFiltersBar) — sits between the card header and the table. */
+.model-sync-filters-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.model-sync-filters-search {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.model-sync-filters-input {
+  width: 100%;
+}
+
+.model-sync-filters-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.model-sync-filters-select {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 8rem;
+}
+
+/* .selector-button is full-width by default; keep Clear compact. */
+.model-sync-filters-clear {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.model-sync-filters-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin-top: 0.25rem;
+  max-height: 200px;
+  overflow: auto;
+  padding: 0.5rem;
+  font-size: 0.875rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+}
+
+.model-sync-filters-option {
+  cursor: pointer;
+  padding: 0.125rem 0.25rem;
+  border-radius: 3px;
+  color: var(--text-primary);
+}
+
+.model-sync-filters-option:hover,
+.model-sync-filters-option.is-active {
+  background: var(--surface-hover);
+}
+
+@media (max-width: 640px) {
+  .model-sync-filters-search {
+    flex-basis: 100%;
+  }
+}
