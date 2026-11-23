@@ -601,8 +601,9 @@ export const ModelSyncSettingsSection: Component = () => {
             <p class="text-muted-foreground">{t("settings.section.modelSync.noModelsYet")}</p>
           )}
 
-          {models().length > 0 && visibleModels().length > 0 && (
-            <div class="model-sync-table-wrapper">
+          {/* Filters bar is always rendered so the search input keeps focus and stays
+              reachable when a query matches nothing (or before models have synced). */}
+          <div class="model-sync-table-wrapper">
               <div class="model-sync-filters-bar">
                 <div class="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
                   {/* Search input + suggestions (REOPEN-AC-2: relative anchor, outside click, accessible listbox) */}
@@ -722,6 +723,7 @@ export const ModelSyncSettingsSection: Component = () => {
               <span class="model-sync-sr-only" role="status" aria-live="polite">
                 {t("settings.section.modelSync.resultsAnnouncement", { count: visibleModels().length })}
               </span>
+              {visibleModels().length > 0 && (
               <table class="model-sync-table">
                 <thead>
                   <tr>
@@ -767,20 +769,20 @@ export const ModelSyncSettingsSection: Component = () => {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
+              )}
 
-          {models().length > 0 && visibleModels().length === 0 && (
-            <div class="settings-sync-status">
-              <span class="text-muted-foreground">{t("settings.section.modelSync.noResults")}</span>
-              <button
-                class="selector-button selector-button-tertiary text-xs"
-                onClick={handleClearFilters}
-              >
-                {t("settings.section.modelSync.clearAllFilters")}
-              </button>
-            </div>
-          )}
+              {models().length > 0 && visibleModels().length === 0 && (
+                <div class="settings-sync-status">
+                  <span class="text-muted-foreground">{t("settings.section.modelSync.noResults")}</span>
+                  <button
+                    class="selector-button selector-button-tertiary text-xs"
+                    onClick={handleClearFilters}
+                  >
+                    {t("settings.section.modelSync.clearAllFilters")}
+                  </button>
+                </div>
+              )}
+          </div>
 
           {status() !== "syncComplete" && models().length === 0 && (
             <p class="text-muted-foreground text-sm">{t("settings.section.modelSync.waitingForSync")}</p>
