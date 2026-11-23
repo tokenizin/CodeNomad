@@ -313,6 +313,39 @@ describe("providerGroups", () => {
   })
 })
 
+describe("providerGroups capability toggles", () => {
+  const row = (modelId: string, caps: Partial<SyncedModelRow["capabilities"]>): SyncedModelRow => ({
+    providerId: "p",
+    providerName: "P",
+    modelId,
+    modelName: modelId,
+    contextWindow: "1K",
+    capabilities: { tools: false, image: false, video: false, reasoning: false, audio: false, cloud: false, ...caps },
+    status: "available",
+    type: "p",
+    lastTested: null,
+  })
+  const models = [row("a", { tools: true }), row("b", { tools: true, image: true }), row("c", { image: true })]
+  const ids = (caps: Parameters<typeof providerGroups>[1]) =>
+    providerGroups(models, caps).flatMap((g) => g.models.map((m) => m.modelId))
+
+  it("no toggles → no restriction", () => {
+    assert.deepStrictEqual(ids({ capabilities: [] }), ["a", "b", "c"])
+  })
+
+  it("single toggle keeps models with that capability", () => {
+    assert.deepStrictEqual(ids({ capabilities: ["tools"] }), ["a", "b"])
+  })
+
+  it("multiple toggles use AND logic", () => {
+    assert.deepStrictEqual(ids({ capabilities: ["tools", "image"] }), ["b"])
+  })
+
+  it("combines with text search", () => {
+    assert.deepStrictEqual(ids({ capabilities: ["image"], search: "c" }), ["c"])
+  })
+})
+
 // --- inconclusiveKind ---
 describe("inconclusiveKind", () => {
   it("returns null for no errorDetails", () => {

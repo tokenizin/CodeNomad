@@ -6,7 +6,7 @@ import {
   type Component,
   createMemo,
 } from "solid-js"
-import { Cpu, RefreshCw, Terminal, Image, Video, Brain, Music, Cloud, AlertCircle, AlertTriangle, CheckCircle, Info, Globe, Star, KeyRound, Clock } from "lucide-solid"
+import { Cpu, RefreshCw, Terminal, Image, Brain, Music, AlertCircle, AlertTriangle, CheckCircle, Info, Globe, Star, KeyRound, Clock } from "lucide-solid"
 
 import { useI18n, type TranslateParams } from "../../lib/i18n"
 import {
@@ -14,12 +14,14 @@ import {
   providerGroups,
   rowsFromSyncResults,
   rowKey,
+  type CapabilityKey,
   type ModelSyncFilter,
   type ProviderGroup,
   type SyncedModelRow,
 } from "../../lib/model-sync/filter-models"
 import { createModelSyncApi, type ModelSyncApi } from "../../lib/model-sync/api"
 import { ModelSyncFiltersBar } from "./model-sync-filters-bar"
+import { CAPABILITY_META } from "./model-sync-capabilities"
 
 type ModelSyncStatus = "idle" | "syncing" | "testing" | "syncComplete" | "syncError"
 type Translate = (key: string, params?: TranslateParams) => string
@@ -62,6 +64,11 @@ export const ModelSyncSettingsSection: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal<string>("")
   const [selectedFilter, setSelectedFilter] = createSignal<ModelSyncFilter>("all")
   const [selectedProvider, setSelectedProvider] = createSignal<string | null>(null)
+  const [selectedCapabilities, setSelectedCapabilities] = createSignal<CapabilityKey[]>([])
+  const toggleCapability = (capability: CapabilityKey) =>
+    setSelectedCapabilities((current) =>
+      current.includes(capability) ? current.filter((c) => c !== capability) : [...current, capability],
+    )
 
   const modelSyncApi: ModelSyncApi = createModelSyncApi({ fetchImpl: (input, init) => fetch(input, init) })
 
@@ -84,6 +91,7 @@ export const ModelSyncSettingsSection: Component = () => {
     setSearchQuery("")
     setSelectedFilter("all")
     setSelectedProvider(null)
+    setSelectedCapabilities([])
   }
 
   const rowsSignature = (rows: SyncedModelRow[]) =>
@@ -262,26 +270,16 @@ export const ModelSyncSettingsSection: Component = () => {
   }
 
   const capabilityIcons = (caps: SyncedModelRow["capabilities"]) => {
-    const icons: { icon: typeof Cpu; key: string; color: string }[] = []
-    if (caps.tools) icons.push({ icon: Cpu, key: "settings.section.modelSync.capability.tools", color: "text-blue-400" })
-    if (caps.image) icons.push({ icon: Image, key: "settings.section.modelSync.capability.image", color: "text-green-400" })
-    if (caps.video) icons.push({ icon: Video, key: "settings.section.modelSync.capability.video", color: "text-purple-400" })
-    if (caps.reasoning) icons.push({ icon: Brain, key: "settings.section.modelSync.capability.reasoning", color: "text-orange-400" })
-    if (caps.audio) icons.push({ icon: Music, key: "settings.section.modelSync.capability.audio", color: "text-pink-400" })
-    if (caps.cloud) icons.push({ icon: Cloud, key: "settings.section.modelSync.capability.cloud", color: "text-cyan-400" })
-
-    if (icons.length === 0) return <span class="text-muted-foreground text-xs">—</span>
+    const enabled = CAPABILITY_META.filter((cap) => caps?.[cap.key])
+    if (enabled.length === 0) return <span class="text-muted-foreground text-xs">—</span>
 
     return (
       <div class="flex items-center gap-1">
-        {icons.map((item, idx) => {
-          const Icon = item.icon
-          return (
-            <div class="relative" title={t(item.key)} {...{ key: idx }}>
-              <Icon class="w-3.5 h-3.5 opacity-70 hover:opacity-100 transition-opacity" style={{ color: item.color }} />
-            </div>
-          )
-        })}
+        {enabled.map((cap) => (
+          <span class="relative" title={t(cap.labelKey)}>
+            <cap.icon class="w-3.5 h-3.5 opacity-80 hover:opacity-100 transition-opacity" style={{ color: cap.color }} />
+          </span>
+        ))}
       </div>
     )
   }
@@ -417,6 +415,7 @@ export const ModelSyncSettingsSection: Component = () => {
       search: searchQuery(),
       filter: selectedFilter(),
       providerId: selectedFilter() === "provider" ? selectedProvider() : null,
+      capabilities: selectedCapabilities(),
     }),
   )
   const visibleModels = createMemo(() => visibleGroups().flatMap((group) => group.models))
@@ -521,6 +520,8 @@ export const ModelSyncSettingsSection: Component = () => {
             providerId={selectedProvider()}
             onProviderChange={setSelectedProvider}
             providerOptions={providerOptions()}
+            selectedCapabilities={selectedCapabilities()}
+            onToggleCapability={toggleCapability}
           />
 
           {/* Visually-hidden polite announcement of the visible result count (P2-b) */}
@@ -533,6 +534,7 @@ export const ModelSyncSettingsSection: Component = () => {
           )}
 
           {visibleModels().length > 0 && (
+            <div class="model-sync-table-scroll">
             <table class="model-sync-table">
               <thead>
                 <tr>
@@ -578,6 +580,7 @@ export const ModelSyncSettingsSection: Component = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           {models().length > 0 && visibleModels().length === 0 && (

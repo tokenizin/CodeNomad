@@ -1,7 +1,8 @@
 import { createMemo, createSignal, For, onCleanup, onMount, type Component } from "solid-js"
 
 import { useI18n } from "../../lib/i18n"
-import { CAPABILITY_KEYS, type ModelSyncFilter, type SyncedModelRow } from "../../lib/model-sync/filter-models"
+import { CAPABILITY_KEYS, type CapabilityKey, type ModelSyncFilter, type SyncedModelRow } from "../../lib/model-sync/filter-models"
+import { CAPABILITY_META } from "./model-sync-capabilities"
 
 // i18n keys for the filter selector labels (values live in all 10 locale files).
 const FILTER_LABEL_KEYS: Record<ModelSyncFilter, string> = {
@@ -23,6 +24,9 @@ export interface ModelSyncFiltersBarProps {
   providerId: string | null
   onProviderChange: (providerId: string | null) => void
   providerOptions: Array<{ value: string; label: string }>
+  /** Capability icon toggles; a model must have ALL selected capabilities. */
+  selectedCapabilities: readonly CapabilityKey[]
+  onToggleCapability: (capability: CapabilityKey) => void
 }
 
 /**
@@ -236,6 +240,36 @@ export const ModelSyncFiltersBar: Component<ModelSyncFiltersBarProps> = (props) 
         >
           {t("settings.section.modelSync.search.clear")}
         </button>
+
+        {/* Capability icon toggles — same pattern as the model picker's filter bar */}
+        <div
+          class="selector-capability-filters model-sync-capability-filters"
+          role="group"
+          aria-label={t("settings.section.modelSync.capabilities")}
+        >
+          <For each={CAPABILITY_META}>
+            {(cap) => {
+              const active = () => props.selectedCapabilities.includes(cap.key)
+              return (
+                <button
+                  type="button"
+                  class="selector-capability-toggle"
+                  data-active={active()}
+                  aria-pressed={active()}
+                  title={t(cap.labelKey)}
+                  style={{ color: active() ? cap.color : "var(--text-muted)" }}
+                  onClick={() => props.onToggleCapability(cap.key)}
+                >
+                  <cap.icon
+                    class="w-3.5 h-3.5"
+                    style={{ color: active() ? cap.color : "var(--text-muted)", opacity: active() ? 1 : 0.6 }}
+                  />
+                  <span class="selector-capability-toggle-label">{t(cap.labelKey)}</span>
+                </button>
+              )
+            }}
+          </For>
+        </div>
     </div>
   )
 }

@@ -43,6 +43,11 @@ export interface ModelFilterOptions {
   filter?: ModelSyncFilter
   /** Provider id to restrict rows to (provider selector). `null`/undefined → no restriction. */
   providerId?: string | null
+  /**
+   * Capability toggles (icon bar). A model must have ALL of these enabled
+   * (AND logic, same as the model picker). Empty/undefined → no restriction.
+   */
+  capabilities?: readonly CapabilityKey[]
 }
 
 export const CAPABILITY_KEYS = ["tools", "image", "video", "reasoning", "audio", "cloud"] as const
@@ -165,12 +170,14 @@ export function providerGroups(models: readonly SyncedModelRow[], opts?: ModelFi
   const search = opts?.search ?? ""
   const filter = opts?.filter ?? "all"
   const providerId = opts?.providerId ?? null
+  const requiredCaps = opts?.capabilities ?? []
 
   const groups: ProviderGroup[] = []
   const byId = new Map<string, ProviderGroup>()
   for (const model of models ?? []) {
     if (providerId && model.providerId !== providerId) continue
     if (!matchesFilter(model, filter, search, providerId)) continue
+    if (requiredCaps.length > 0 && !requiredCaps.every((cap) => model.capabilities?.[cap])) continue
 
     let group = byId.get(model.providerId)
     if (!group) {

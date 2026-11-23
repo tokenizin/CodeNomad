@@ -136,3 +136,21 @@
     flex-basis: 100%;
   }
 }
+
+/* Capability toggles reuse .selector-capability-filters from the model picker;
+   here they sit on their own full-width row inside the filters bar. */
+.model-sync-capability-filters {
+  flex-basis: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: 4px;
+}
+
+/* Keep column headers on one line ("Provider", "Context") at narrow widths. */
+.model-sync-table thead th {
+  white-space: nowrap;
+}
+
+/* Scroll the table sideways on narrow screens instead of squashing columns. */
+.model-sync-table-scroll {
+  overflow-x: auto;
+}
