@@ -36,3 +36,13 @@ valid StarGuard account is let in (the old behaviour).
 sudo -u <user> -H sh -c 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
 sudo -u <user> -H sh -c 'curl -fsSL https://bun.sh/install | bash'
 ```
+
+## After every build: sync per-user instances
+
+Per-user instances run their own copy in `~<user>/CodeNomad`, so a build in the admin's checkout doesn't reach them by itself (Prestix runs straight from the admin's tree). `sync-codenomad-user.sh` copies the source, the vendored `resources/*/node_modules`, and the built UI bundle (`packages/server/public`) and OpenCode plugin (`packages/server/dist/opencode-plugin`). It runs `npm ci` as the user only when `package-lock.json` changed, then kickstarts `system/com.tokenizin.codenomad.<user>`:
+
+```bash
+sudo scripts/multi-user/sync-codenomad-user.sh --user stas
+```
+
+StarWorld's `bun run codenomad:build-restart` does this automatically for every `/Library/LaunchDaemons/com.tokenizin.codenomad.<user>.plist` after it restarts Tokenizin and Prestix. It doesn't re-run the OpenCode migration, so per-user config edits (such as disabled MCP servers) are kept.

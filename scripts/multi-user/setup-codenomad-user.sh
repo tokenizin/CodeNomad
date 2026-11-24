@@ -84,18 +84,9 @@ chmod 700 "$TARGET_HOME"
 
 echo "==> Copying CodeNomad from $SOURCE_REPO to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$WORKSPACE_ROOT" "$LOG_DIR"
-# Copy tracked source only: no node_modules, build output, local .env files or the admin's tasks/evidence.
-rsync -a --delete \
-  --exclude node_modules --exclude dist --exclude .env --exclude '.env.*' \
-  --exclude tasks --exclude evidences --exclude temp --exclude .nomadworks \
-  "$SOURCE_REPO"/ "$INSTALL_DIR"/
-# The exclude above also drops vendored, git-tracked node_modules that npm ci does not recreate, e.g.
-# packages/server/resources/git-graph/node_modules/vscode (the shim Git Graph's require("vscode") needs).
-# Copy those explicitly with plain rsync (macOS openrsync may not support '***' include patterns).
-while IFS= read -r vendored; do
-  mkdir -p "$INSTALL_DIR/$vendored"
-  rsync -a --delete "$SOURCE_REPO/$vendored/" "$INSTALL_DIR/$vendored/"
-done < <(cd "$SOURCE_REPO" && find packages/*/resources -type d -name node_modules -prune 2>/dev/null)
+# Same copy as every later build-restart (source, vendored node_modules, built UI/plugin); this script then
+# installs dependencies, builds and installs the launchd job itself.
+bash "$SOURCE_REPO/scripts/multi-user/sync-codenomad-user.sh" --user "$TARGET_USER" --source "$SOURCE_REPO" --no-install --no-restart
 chown -R "$TARGET_USER:$TARGET_GROUP" "$INSTALL_DIR" "$TARGET_HOME/.config" "$WORKSPACE_ROOT" "$LOG_DIR"
 chmod 700 "$CONFIG_DIR"
 
