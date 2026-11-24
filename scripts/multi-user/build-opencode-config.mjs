@@ -114,7 +114,10 @@ async function main() {
   for (const line of skipped) console.log(`    - ${line}`)
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+// Run only when executed directly, so other scripts can import parseJsonc without triggering a build.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}
