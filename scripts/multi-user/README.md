@@ -6,7 +6,7 @@
 - own config, `auth.json` login, sessions, NomadWorks tasks and workspaces (`~<user>/Projects`); the user's home is locked to `700`
 - shares the host's Ollama models over `http://127.0.0.1:11434` (no copies)
 - `CODENOMAD_AUTH_PROVIDER=password`: remote visitors see the CodeNomad username/password page instead of the StarGuard portal, and StarGuard JWTs are refused
-- served at `https://<user>.codenomad.tokenizin.com` through the existing cloudflared tunnel (ingress + DNS steps are printed at the end)
+- served at `https://codenomad-<user>.tokenizin.com` (one level under `tokenizin.com`, so Cloudflare's free Universal SSL certificate covers it; `<user>.codenomad.tokenizin.com` would not be covered) through the existing cloudflared tunnel (ingress + DNS steps are printed at the end)
 
 ```bash
 sudo scripts/multi-user/setup-codenomad-user.sh --user stas --port 9990

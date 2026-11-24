@@ -21,11 +21,12 @@ OLLAMA_URL="http://127.0.0.1:11434"
 
 usage() {
   cat <<EOF
-Usage: sudo $0 --user <macos-user> [--port 9990] [--hostname <user>.codenomad.tokenizin.com] [--source <repo>]
+Usage: sudo $0 --user <macos-user> [--port 9990] [--hostname codenomad-<user>.tokenizin.com] [--source <repo>]
 
   --user      Existing macOS account that will own the instance (required)
   --port      Loopback HTTP port for this instance (default 9990; must be unused)
-  --hostname  Public hostname routed through the tunnel (default <user>.codenomad.tokenizin.com)
+  --hostname  Public hostname routed through the tunnel (default codenomad-<user>.tokenizin.com; keep it one level
+              under tokenizin.com so Cloudflare Universal SSL covers it)
   --source    CodeNomad checkout to copy from (default: this repository)
 EOF
 }
@@ -47,7 +48,7 @@ done
 id "$TARGET_USER" >/dev/null 2>&1 || { echo "macOS user '$TARGET_USER' does not exist." >&2; exit 1; }
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "--port must be a number." >&2; exit 1; }
 
-PUBLIC_HOST="${HOSTNAME_OVERRIDE:-${TARGET_USER}.codenomad.tokenizin.com}"
+PUBLIC_HOST="${HOSTNAME_OVERRIDE:-codenomad-${TARGET_USER}.tokenizin.com}"
 TARGET_HOME="$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | awk '{print $2}')"
 TARGET_GROUP="$(id -gn "$TARGET_USER")"
 INSTALL_DIR="$TARGET_HOME/CodeNomad"
