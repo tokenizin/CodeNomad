@@ -27,3 +27,12 @@ CODENOMAD_OWNER_EMAILS=owner@example.com   # comma-separated, case-insensitive
 Other StarGuard accounts get 403 at `/auth/starguard` and 401 on the CodeNomad API. StarWorld chat (`/api/tokidapp/*`)
 still accepts any valid StarGuard account because it authorizes per user. If unset, startup logs a warning and any
 valid StarGuard account is let in (the old behaviour).
+
+## Local engine (Claude Code Rust)
+
+`/api/local-engine` needs a `build-your-own-claude-code` checkout and an agent roster. The setup script copies the admin's `~/0-claudecode/build-your-own-claude-code` (without `target/`) to the user, and sets `CLAUDE_CODE_PLAYGROUND` and `CLAUDE_CODE_ROSTER` (the migrated `~/.config/opencode/opencode.json`) in the LaunchDaemon. The runner compiles with `cargo build --release` on first use and calls `bun`, so install both for the user:
+
+```bash
+sudo -u <user> -H sh -c 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+sudo -u <user> -H sh -c 'curl -fsSL https://bun.sh/install | bash'
+```

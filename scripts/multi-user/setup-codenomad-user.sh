@@ -72,7 +72,7 @@ if [[ -z "$NODE_BIN" || "$NODE_BIN" == /Users/* ]]; then
   exit 1
 fi
 NODE_DIR="$(dirname "$NODE_BIN")"
-USER_PATH="$TARGET_HOME/.opencode/bin:$TARGET_HOME/.local/bin:$TARGET_HOME/.bun/bin:$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+USER_PATH="$TARGET_HOME/.opencode/bin:$TARGET_HOME/.local/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.cargo/bin:$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && ! launchctl print "system/$LABEL" >/dev/null 2>&1; then
   echo "Port $PORT is already in use by another process; pick another with --port." >&2
@@ -140,6 +140,41 @@ else
   fi
 fi
 
+echo "==> Local engine (Claude Code Rust playground) for $TARGET_USER"
+# /api/local-engine needs a build-your-own-claude-code checkout (playground/rust/your_program.sh) and an agent
+# roster. Copy the admin's checkout without build output (cargo rebuilds on first run) and point the roster at the
+# migrated OpenCode config, which holds every agent and subagent.
+PLAYGROUND_DIR="$TARGET_HOME/0-claudecode/build-your-own-claude-code"
+PLAYGROUND_SRC=""
+for candidate in "${ADMIN_HOME:-/nonexistent}/0-claudecode/build-your-own-claude-code" \
+  "$(dirname "$SOURCE_REPO")/0-claudecode/build-your-own-claude-code" \
+  "$(dirname "$(dirname "$SOURCE_REPO")")/0-claudecode/build-your-own-claude-code"; do
+  if [[ -f "$candidate/playground/rust/your_program.sh" ]]; then PLAYGROUND_SRC="$candidate"; break; fi
+done
+if [[ -n "$PLAYGROUND_SRC" ]]; then
+  mkdir -p "$PLAYGROUND_DIR"
+  rsync -a --delete --exclude target --exclude node_modules --exclude .env --exclude '.env.*' \
+    "$PLAYGROUND_SRC"/ "$PLAYGROUND_DIR"/
+  chown -R "$TARGET_USER:$TARGET_GROUP" "$TARGET_HOME/0-claudecode"
+  echo "    copied $PLAYGROUND_SRC -> $PLAYGROUND_DIR"
+elif [[ ! -f "$PLAYGROUND_DIR/playground/rust/your_program.sh" ]]; then
+  echo "WARNING: no build-your-own-claude-code checkout found; the local engine will report 'Claude Code (Rust) not found'." >&2
+fi
+ROSTER=""
+for candidate in "$TARGET_HOME/.config/opencode/opencode.json" "$TARGET_HOME/.config/opencode/opencode.jsonc"; do
+  if [[ -f "$candidate" ]]; then ROSTER="$candidate"; break; fi
+done
+for tool in cargo bun; do
+  if ! as_user bash -c "command -v $tool" >/dev/null 2>&1; then
+    echo "WARNING: '$tool' is not on $TARGET_USER's PATH; the local engine needs it (see scripts/multi-user/README.md)." >&2
+  fi
+done
+LOCAL_ENGINE_ENV=""
+[[ -f "$PLAYGROUND_DIR/playground/rust/your_program.sh" ]] && LOCAL_ENGINE_ENV+="    <key>CLAUDE_CODE_PLAYGROUND</key><string>${PLAYGROUND_DIR}</string>
+"
+[[ -n "$ROSTER" ]] && LOCAL_ENGINE_ENV+="    <key>CLAUDE_CODE_ROSTER</key><string>${ROSTER}</string>
+"
+
 echo "==> Setting the CodeNomad login for $TARGET_USER"
 if [[ -f "$CONFIG_DIR/auth.json" ]]; then
   read -r -p "auth.json exists. Replace the password? [y/N] " replace
@@ -203,7 +238,7 @@ cat >"$PLIST" <<PLIST
     <key>TUNNEL_PUBLIC_URL</key><string>https://${PUBLIC_HOST}</string>
     <key>OLLAMA_BASE_URL</key><string>${OLLAMA_URL}</string>
     <key>OLLAMA_HOST</key><string>${OLLAMA_URL}</string>
-  </dict>
+${LOCAL_ENGINE_ENV}  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
