@@ -112,6 +112,26 @@ for required in "$TSX_CLI" "$SERVER_ENTRY" "$INSTALL_DIR/packages/server/public/
   [[ -f "$required" ]] || { echo "Missing $required after the build; aborting before installing the launchd job." >&2; exit 1; }
 done
 
+echo "==> Giving $TARGET_USER the shared Ollama models and agents (OpenCode config)"
+# OpenCode only reads the open workspace's .opencode/ and ~/.config/opencode/, so without this the model and
+# agent pickers are empty. Runs as root because agent prompts live in the admin's tree (e.g. ~/starworld).
+OPENCODE_DIR="$TARGET_HOME/.config/opencode"
+OPENCODE_SOURCE="$SOURCE_REPO/.opencode/opencode.jsonc"
+if [[ ! -f "$OPENCODE_SOURCE" ]]; then
+  echo "WARNING: $OPENCODE_SOURCE not found; skipping. Models and agents must be configured by hand." >&2
+else
+  write_opencode="y"
+  if [[ -f "$OPENCODE_DIR/opencode.jsonc" ]]; then
+    read -r -p "$OPENCODE_DIR/opencode.jsonc exists. Regenerate it (old one kept as .bak)? [y/N] " write_opencode
+    [[ "$write_opencode" =~ ^[Yy]$ ]] && cp "$OPENCODE_DIR/opencode.jsonc" "$OPENCODE_DIR/opencode.jsonc.bak"
+  fi
+  if [[ "$write_opencode" =~ ^[Yy]$ ]]; then
+    "$NODE_BIN" "$INSTALL_DIR/scripts/multi-user/build-opencode-config.mjs" \
+      --source "$OPENCODE_SOURCE" --target "$OPENCODE_DIR" --ollama "$OLLAMA_URL"
+    chown -R "$TARGET_USER:$TARGET_GROUP" "$OPENCODE_DIR"
+  fi
+fi
+
 echo "==> Setting the CodeNomad login for $TARGET_USER"
 if [[ -f "$CONFIG_DIR/auth.json" ]]; then
   read -r -p "auth.json exists. Replace the password? [y/N] " replace
