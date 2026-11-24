@@ -180,8 +180,27 @@ PLIST
 chown root:wheel "$PLIST"
 chmod 644 "$PLIST"
 
-launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
-launchctl bootstrap system "$PLIST"
+# bootout returns before launchd has finished removing the job; bootstrapping while it is still loaded
+# fails with "Bootstrap failed: 5: Input/output error". Wait until it is gone, then retry briefly.
+if launchctl print "system/$LABEL" >/dev/null 2>&1; then
+  echo "==> Unloading the previous launchd job"
+  launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    launchctl print "system/$LABEL" >/dev/null 2>&1 || break
+    sleep 1
+  done
+fi
+bootstrapped=false
+for _ in 1 2 3 4 5; do
+  if launchctl bootstrap system "$PLIST" 2>/dev/null; then bootstrapped=true; break; fi
+  sleep 2
+done
+if [[ "$bootstrapped" != true ]]; then
+  launchctl bootstrap system "$PLIST" || {
+    echo "launchctl could not load $PLIST. Try: sudo launchctl bootout system/$LABEL; sleep 5; sudo launchctl bootstrap system $PLIST" >&2
+    exit 1
+  }
+fi
 
 echo "==> Waiting for the server on 127.0.0.1:$PORT"
 for _ in $(seq 1 45); do
