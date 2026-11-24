@@ -21,6 +21,7 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { StarGuardJwtHandler } from "./auth/starguard-jwt"
+import { isStarGuardJwtAllowed, resolveAuthProvider } from "./auth/auth-provider"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
@@ -314,11 +315,14 @@ async function main() {
     logger.child({ component: "auth" }),
   )
 
+  // Password-only instances (per-person CodeNomad) must not accept portal JWTs, even if AUTH_SECRET leaks into env.
   const starGuardJwtHandler = new StarGuardJwtHandler(
-    process.env.AUTH_SECRET,
+    isStarGuardJwtAllowed() ? process.env.AUTH_SECRET : undefined,
     logger.child({ component: "starguard-jwt" }),
   )
-  if (starGuardJwtHandler.isEnabled()) {
+  if (!isStarGuardJwtAllowed()) {
+    logger.info({ authProvider: resolveAuthProvider() }, "Password-only authentication; StarGuard JWTs disabled")
+  } else if (starGuardJwtHandler.isEnabled()) {
     logger.info("StarGuard JWT authentication enabled (AUTH_SECRET)")
   }
 
