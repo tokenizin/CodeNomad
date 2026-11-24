@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
 import {
+  isStarGuardJwtAllowed,
   resolveAuthProvider,
   resolveStarGuardPublicUrl,
   shouldRedirectLoginToStarGuard,
@@ -35,5 +36,23 @@ describe("auth-provider", () => {
     process.env.CODENOMAD_AUTH_PROVIDER = "cloudflare-access"
     process.env.CODENOMAD_PUBLIC_URL = "https://codenomad.tokenizin.com"
     expect(resolveAuthProvider()).toBe("cloudflare-access")
+  })
+
+  it("password provider shows the local login page and refuses StarGuard JWTs", () => {
+    process.env.CODENOMAD_AUTH_PROVIDER = "password"
+    process.env.CODENOMAD_PUBLIC_URL = "https://stas.codenomad.tokenizin.com"
+    expect(resolveAuthProvider()).toBe("password")
+    expect(shouldRedirectLoginToStarGuard()).toBe(false)
+    expect(isStarGuardJwtAllowed()).toBe(false)
+  })
+
+  it("accepts local as an alias for password", () => {
+    process.env.CODENOMAD_AUTH_PROVIDER = "Local"
+    expect(resolveAuthProvider()).toBe("password")
+  })
+
+  it("keeps StarGuard JWTs allowed for the default tokenizin instance", () => {
+    process.env.CODENOMAD_PUBLIC_URL = "https://codenomad.tokenizin.com"
+    expect(isStarGuardJwtAllowed()).toBe(true)
   })
 })

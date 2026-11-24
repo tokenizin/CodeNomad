@@ -9,6 +9,7 @@ import {
   tryBootstrapCloudflareAccessSession,
 } from "../../auth/auth-provider"
 import { isLoopbackAddress } from "../../auth/http-auth"
+import { isOwnerIdentity } from "../../auth/owner-allowlist"
 import { CODENOMAD_HANDOFF_AUDIENCE, exchangeStarGuardHandoff } from "../../auth/starguard-handoff"
 
 interface RouteDeps {
@@ -145,6 +146,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const payload = await handler.verify(token)
     if (!payload) {
       reply.code(401).type("text/plain").send("Invalid or expired StarGuard session")
+      return
+    }
+    if (!isOwnerIdentity(payload)) {
+      // 403, not a /login redirect: redirecting would bounce back to the portal and loop.
+      reply.code(403).type("text/plain").send("This CodeNomad belongs to another account.")
       return
     }
 

@@ -1,7 +1,13 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 import type { AuthManager } from "./manager"
 
-export type CodeNomadAuthProvider = "starguard" | "cloudflare-access"
+/**
+ * - starguard: remote visitors sign in through the StarWorld portal (tokenizin.com SSO).
+ * - cloudflare-access: Cloudflare Access authenticates at the edge (Prestix).
+ * - password: remote visitors get CodeNomad's own username/password page; StarGuard JWTs are ignored.
+ *   Used for per-person instances (e.g. one macOS user per CodeNomad) on their own hostname.
+ */
+export type CodeNomadAuthProvider = "starguard" | "cloudflare-access" | "password"
 
 const CLOUDFLARE_ACCESS_EMAIL_HEADER = "cf-access-authenticated-user-email"
 
@@ -12,6 +18,9 @@ export function resolveAuthProvider(): CodeNomadAuthProvider {
   }
   if (explicit === "starguard") {
     return "starguard"
+  }
+  if (explicit === "password" || explicit === "local") {
+    return "password"
   }
 
   const publicUrl = (
@@ -28,6 +37,11 @@ export function resolveAuthProvider(): CodeNomadAuthProvider {
 
 export function shouldRedirectLoginToStarGuard(): boolean {
   return resolveAuthProvider() === "starguard"
+}
+
+/** StarGuard JWTs grant access only when the instance is not in password-only mode. */
+export function isStarGuardJwtAllowed(): boolean {
+  return resolveAuthProvider() !== "password"
 }
 
 export function resolveStarGuardPublicUrl(): string {

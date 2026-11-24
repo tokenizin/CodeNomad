@@ -52,6 +52,7 @@ import { NotifyRegistry } from "../notify/registry.js"
 import { getAllTokidappSockets } from "./ws-socket-registry.js"  
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth.js"
 import { resolveAuthProvider, resolveStarGuardPublicUrl, tryBootstrapCloudflareAccessSession } from "../auth/auth-provider.js"
+import { isMultiUserChatPath, isOwnerIdentity } from "../auth/owner-allowlist.js"
 import type { SpeechService } from "../speech/service.js"
 import { getTokidappDb } from "../lib/db.js"
 import { ClientConnectionManager } from "../clients/connection-manager.js"
@@ -128,7 +129,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     deps.logger.child({ component: "agent-sessions" }),
   )
 
-  async function checkStarGuardJwt(request: FastifyRequest): Promise<boolean> {
+  async function checkStarGuardJwt(request: FastifyRequest, pathname: string): Promise<boolean> {
     const handler = deps.starGuardJwtHandler
     if (!handler?.isEnabled()) return false
 
@@ -147,7 +148,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     if (!token) return false
     const payload = await handler.verify(token)
-    return payload !== null
+    if (!payload) return false
+    // StarWorld chat is multi-user; everything else is the instance owner's CodeNomad.
+    return isMultiUserChatPath(pathname) || isOwnerIdentity(payload)
   }
 
   const sseClients = new Set<() => void>()
@@ -354,7 +357,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/") || isUnderstandAnythingPath || isGitGraphPath(pathname)
     if (requiresAuthForApi && !session) {
       // Allow StarGuard JWT (Authorization: Bearer <token>).
-      if (await checkStarGuardJwt(request)) {
+      if (await checkStarGuardJwt(request, pathname)) {
         return
       }
 
@@ -629,7 +632,7 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
       }
       if (token) {
         const payload = await handler.verify(token)
-        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN")) {
+        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN") && isOwnerIdentity(payload)) {
           return true
         }
       }
@@ -1534,7 +1537,7 @@ async function proxySideCarWebSocketUpgrade(args: {
       const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : null
       if (token) {
         const payload = await starGuardJwtHandler.verify(token)
-        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN")) {
+        if (payload && (payload.role === "ADMIN" || payload.role === "SUPER_ADMIN") && isOwnerIdentity(payload)) {
           adminGranted = true
         }
       }
