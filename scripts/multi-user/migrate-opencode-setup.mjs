@@ -268,6 +268,20 @@ function main() {
     console.log("  kept as-is, but OpenCode sends these literally (same for the admin today):")
     for (const p of r.shellPlaceholders) console.log(`    - ${p}`)
   }
+  // A local MCP server that cannot start, or waits for a browser login, stalls every OpenCode workspace start
+  // (no request is answered until MCP setup finishes). List each enabled one so it can be checked or disabled.
+  const localMcp = Object.entries(merged.mcp ?? {}).filter(([, m]) => isObject(m) && m.type === "local" && m.enabled !== false)
+  if (localMcp.length) {
+    console.log("  local MCP servers the user's OpenCode will start (each must run as the user, or set \"enabled\": false):")
+    for (const [name, m] of localMcp) {
+      const cmd = Array.isArray(m.command) ? m.command.join(" ") : String(m.command ?? "")
+      const notes = [
+        /mcp-remote/.test(cmd) ? "uses mcp-remote: needs a one-time browser login as the user, or it waits forever" : "",
+        cmd.includes(adminHome) || String(m.cwd ?? "").includes(adminHome) ? "runs from the admin's home" : "",
+      ].filter(Boolean)
+      console.log(`    - ${name}: ${cmd}${notes.length ? `  ⚠ ${notes.join("; ")}` : ""}`)
+    }
+  }
   if (r.adminPaths.length) {
     console.log("  still pointing into the admin's home (the user may not be able to read these):")
     for (const p of r.adminPaths) console.log(`    - ${p}`)
