@@ -7,8 +7,9 @@
 //   1. discovers the admin's config layers (global → ~/starworld → ~/starworld/CodeNomad, OpenCode's
 //      own precedence: later layers override earlier ones) plus any --source you add;
 //   2. deep-merges them (plugin/instructions arrays are unioned);
-//   3. copies every {file:...} prompt and every instructions file into the target and rewrites the
-//      references to absolute target paths, so nothing points into the admin's home;
+//   3. copies every {file:...} prompt, instructions file and local plugin file into the target and rewrites the
+//      references to absolute target paths, so nothing points into the admin's home (missing local plugins are
+//      dropped, since one bad entry stops every OpenCode session);
 //   4. copies the auto-loaded folders (agent(s)/, command(s)/, plugin(s)/, skill(s)/, tool(s)/, mode(s)/,
 //      themes/) from each layer;
 //   5. by default REMOVES literal credentials (API keys, tokens, auth headers, MCP secret env values) and
@@ -131,6 +132,26 @@ function rewriteFileRefs(value, configDir, state, trail) {
   return value
 }
 
+/** Local plugin entries ("./x.mjs", "/abs/x.mjs", "~/x.mjs", "file://...") resolve against the config that names
+ * them. Point them at the copy in the target: the copied asset folder when the file lives in one (so sibling
+ * imports keep working), otherwise a copy under plugin-imports/. npm plugin names are left untouched. */
+function rewritePlugins(list, configDir, state) {
+  return list.map((entry) => {
+    if (typeof entry !== "string" || !/^(\.{1,2}\/|\/|~\/|file:)/.test(entry)) return entry
+    const raw = entry.startsWith("file:") ? decodeURIComponent(new URL(entry, `file://${configDir}/`).pathname) : expandHome(entry, state.adminHome)
+    const abs = path.resolve(configDir, raw)
+    // A missing local plugin makes every OpenCode session fail to start, so drop it (and report it).
+    if (!fs.existsSync(abs)) { state.report.missingFiles.push(`plugin (dropped): ${abs}`); return null }
+    for (const layer of state.layers) {
+      for (const dir of layer.assets) {
+        const root = path.join(layer.dir, dir)
+        if (abs.startsWith(`${root}${path.sep}`)) return `file://${path.join(state.target, dir, path.relative(root, abs))}`
+      }
+    }
+    return `file://${importFile(state, abs, "plugin-imports")}`
+  }).filter((entry) => entry !== null)
+}
+
 function rewriteInstructions(list, configDir, state) {
   return list.map((entry) => {
     if (typeof entry !== "string" || /^https?:/.test(entry) || /[*?]/.test(entry)) return entry
@@ -195,12 +216,14 @@ function main() {
 
   const layers = discoverLayers(adminHome, args.sources)
   if (layers.length === 0) throw new Error(`No OpenCode config found under ${adminHome}`)
+  state.layers = layers
 
   let merged = {}
   for (const layer of layers) {
     for (const file of layer.configFiles) {
       let config = parseJsonc(fs.readFileSync(file, "utf8"))
       if (Array.isArray(config.instructions)) config.instructions = rewriteInstructions(config.instructions, path.dirname(file), state)
+      if (Array.isArray(config.plugin)) config.plugin = rewritePlugins(config.plugin, path.dirname(file), state)
       config = rewriteFileRefs(config, path.dirname(file), state, "")
       merged = deepMerge(merged, config)
     }
