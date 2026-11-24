@@ -112,23 +112,31 @@ for required in "$TSX_CLI" "$SERVER_ENTRY" "$INSTALL_DIR/packages/server/public/
   [[ -f "$required" ]] || { echo "Missing $required after the build; aborting before installing the launchd job." >&2; exit 1; }
 done
 
-echo "==> Giving $TARGET_USER the shared Ollama models and agents (OpenCode config)"
+echo "==> Migrating the admin's OpenCode setup to $TARGET_USER (models, agents, subagents, plugins, MCP, tools)"
 # OpenCode only reads the open workspace's .opencode/ and ~/.config/opencode/, so without this the model and
-# agent pickers are empty. Runs as root because agent prompts live in the admin's tree (e.g. ~/starworld).
+# agent pickers are empty. Runs as root because the admin's configs and agent prompts live in the admin's home.
 OPENCODE_DIR="$TARGET_HOME/.config/opencode"
-OPENCODE_SOURCE="$SOURCE_REPO/.opencode/opencode.jsonc"
-if [[ ! -f "$OPENCODE_SOURCE" ]]; then
-  echo "WARNING: $OPENCODE_SOURCE not found; skipping. Models and agents must be configured by hand." >&2
+ADMIN_USER="${SUDO_USER:-}"
+ADMIN_HOME=""
+[[ -n "$ADMIN_USER" && "$ADMIN_USER" != "root" ]] && ADMIN_HOME="$(dscl . -read "/Users/$ADMIN_USER" NFSHomeDirectory | awk '{print $2}')"
+if [[ -z "$ADMIN_HOME" || ! -d "$ADMIN_HOME" ]]; then
+  echo "WARNING: could not tell whose OpenCode setup to copy (run this script with sudo from the admin account); skipping." >&2
 else
-  write_opencode="y"
-  if [[ -f "$OPENCODE_DIR/opencode.jsonc" ]]; then
-    read -r -p "$OPENCODE_DIR/opencode.jsonc exists. Regenerate it (old one kept as .bak)? [y/N] " write_opencode
-    [[ "$write_opencode" =~ ^[Yy]$ ]] && cp "$OPENCODE_DIR/opencode.jsonc" "$OPENCODE_DIR/opencode.jsonc.bak"
+  migrate_opencode="y"
+  if [[ -f "$OPENCODE_DIR/opencode.json" || -f "$OPENCODE_DIR/opencode.jsonc" ]]; then
+    read -r -p "$OPENCODE_DIR already has a config. Replace it with $ADMIN_USER's setup (old one kept as .bak)? [y/N] " migrate_opencode
   fi
-  if [[ "$write_opencode" =~ ^[Yy]$ ]]; then
-    "$NODE_BIN" "$INSTALL_DIR/scripts/multi-user/build-opencode-config.mjs" \
-      --source "$OPENCODE_SOURCE" --target "$OPENCODE_DIR" --ollama "$OLLAMA_URL"
+  if [[ "$migrate_opencode" =~ ^[Yy]$ ]]; then
+    for existing in "$OPENCODE_DIR/opencode.json" "$OPENCODE_DIR/opencode.jsonc"; do
+      [[ -f "$existing" ]] && mv "$existing" "$existing.bak"
+    done
+    read -r -p "Also copy $ADMIN_USER's API keys/tokens and OpenCode logins (shares your paid accounts)? [y/N] " share_secrets
+    secrets_flag=()
+    [[ "$share_secrets" =~ ^[Yy]$ ]] && secrets_flag=(--with-secrets)
+    "$NODE_BIN" "$INSTALL_DIR/scripts/multi-user/migrate-opencode-setup.mjs" \
+      --admin-home "$ADMIN_HOME" --target "$OPENCODE_DIR" ${secrets_flag[@]+"${secrets_flag[@]}"}
     chown -R "$TARGET_USER:$TARGET_GROUP" "$OPENCODE_DIR"
+    [[ -d "$TARGET_HOME/.local" ]] && chown -R "$TARGET_USER:$TARGET_GROUP" "$TARGET_HOME/.local"
   fi
 fi
 
