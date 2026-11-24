@@ -94,6 +94,16 @@ chmod 700 "$CONFIG_DIR"
 echo "==> Installing dependencies and building (as $TARGET_USER)"
 as_user bash -c "cd '$INSTALL_DIR' && npm ci && npm run build --prefix packages/server"
 
+# Run the server from source via tsx. packages/server/tsconfig.json sets rootDir to "../../../..", so the
+# compiled output lands under a path-dependent folder (e.g. dist/stas/CodeNomad/...) that cannot find
+# dist/server/routes/auth-pages or packages/server/public. The source entry finds both; the build above
+# is still needed because it puts the UI bundle into packages/server/public.
+TSX_CLI="$INSTALL_DIR/node_modules/tsx/dist/cli.mjs"
+SERVER_ENTRY="$INSTALL_DIR/packages/server/src/index.ts"
+for required in "$TSX_CLI" "$SERVER_ENTRY" "$INSTALL_DIR/packages/server/public/index.html"; do
+  [[ -f "$required" ]] || { echo "Missing $required after the build; aborting before installing the launchd job." >&2; exit 1; }
+done
+
 echo "==> Setting the CodeNomad login for $TARGET_USER"
 if [[ -f "$CONFIG_DIR/auth.json" ]]; then
   read -r -p "auth.json exists. Replace the password? [y/N] " replace
@@ -135,7 +145,8 @@ cat >"$PLIST" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_BIN}</string>
-    <string>${INSTALL_DIR}/packages/server/dist/bin.js</string>
+    <string>${TSX_CLI}</string>
+    <string>${SERVER_ENTRY}</string>
     <string>--host</string><string>127.0.0.1</string>
     <string>--http</string><string>true</string>
     <string>--https</string><string>false</string>
@@ -172,14 +183,19 @@ launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
 launchctl bootstrap system "$PLIST"
 
 echo "==> Waiting for the server on 127.0.0.1:$PORT"
-for _ in $(seq 1 30); do
-  curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/auth/status" && break
+for _ in $(seq 1 45); do
+  curl -fs -o /dev/null "http://127.0.0.1:$PORT/api/auth/status" && break
   sleep 2
 done
 if curl -fsS "http://127.0.0.1:$PORT/api/auth/status"; then
   echo
 else
-  echo "Server did not answer; check $LOG_DIR/server.err.log" >&2
+  echo "Server did not answer on port $PORT. launchd state:" >&2
+  launchctl print "system/$LABEL" 2>&1 | grep -E "state =|last exit|runs =" >&2 || true
+  echo "--- last lines of $LOG_DIR/server.err.log:" >&2
+  tail -n 40 "$LOG_DIR/server.err.log" >&2 2>/dev/null || true
+  echo "--- last lines of $LOG_DIR/server.log:" >&2
+  tail -n 20 "$LOG_DIR/server.log" >&2 2>/dev/null || true
   exit 1
 fi
 
