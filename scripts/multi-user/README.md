@@ -13,3 +13,16 @@ sudo scripts/multi-user/setup-codenomad-user.sh --user stas --port 9990
 ```
 
 Re-run the script to update the user's copy of CodeNomad after pulling new code; answer `N` to keep the current password.
+
+## Lock the main (StarGuard) instance to its owner
+
+The main `codenomad.tokenizin.com` instance accepts StarGuard sign-ins. Set this in its launch environment so only
+the owner's account can open workspaces, the API, sidecars or a session:
+
+```
+CODENOMAD_OWNER_EMAILS=owner@example.com   # comma-separated, case-insensitive
+```
+
+Other StarGuard accounts get 403 at `/auth/starguard` and 401 on the CodeNomad API. StarWorld chat (`/api/tokidapp/*`)
+still accepts any valid StarGuard account because it authorizes per user. If unset, startup logs a warning and any
+valid StarGuard account is let in (the old behaviour).
