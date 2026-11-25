@@ -15,6 +15,19 @@ sudo scripts/multi-user/setup-codenomad-user.sh --user stas --port 9990
 
 Re-run the script to update the user's copy of CodeNomad after pulling new code; answer `N` to keep the current password.
 
+## Give an instance its own look (UI skin)
+
+Set `CODENOMAD_UI_SKIN` in the user's LaunchDaemon to give that instance its own skin; other instances are unaffected.
+`matriza` is the dark theme of matriza.vercel.app (near-black, gold and purple, Lato) over a turning gold globe, with
+the spinning Tokenizin logo, on both the sign-in page and the app. It keeps dark mode on.
+
+```bash
+sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:CODENOMAD_UI_SKIN string matriza" /Library/LaunchDaemons/com.tokenizin.codenomad.stas.plist
+sudo launchctl kickstart -k system/com.tokenizin.codenomad.stas
+```
+
+The instance needs a build that includes the skin (sync it as below). Unknown names are ignored with a warning.
+
 ## Lock the main (StarGuard) instance to its owner
 
 The main `codenomad.tokenizin.com` instance accepts StarGuard sign-ins. Set this in its launch environment so only

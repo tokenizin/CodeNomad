@@ -2,6 +2,7 @@ import { createContext, createEffect, createMemo, createSignal, onMount, useCont
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
+import { skinLocksDarkMode } from "./ui-skin"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -84,9 +85,12 @@ export function ThemeProvider(props: { children: JSX.Element }) {
 
   const themeMode = () => themePreference() as ThemeMode
 
+  // A dark-only instance skin (CODENOMAD_UI_SKIN, e.g. matriza) keeps dark mode on whatever the saved preference says.
+  const darkLocked = skinLocksDarkMode()
+
   const resolveDarkTheme = () => {
     const mode = themeMode()
-    if (mode === "dark") return true
+    if (darkLocked || mode === "dark") return true
     if (mode === "light") return false
     return mediaQuery?.matches ?? false
   }
@@ -94,7 +98,9 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   const applyResolvedTheme = () => {
     const mode = themeMode()
     const dark = resolveDarkTheme()
-    if (mode === "system") {
+    if (darkLocked) {
+      applyThemeMode("dark")
+    } else if (mode === "system") {
       applyThemeMode("system")
     } else {
       applyThemeMode(mode)

@@ -70,6 +70,8 @@ declare global {
       __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
       __CODENOMAD_AUTH_PROVIDER__?: "starguard" | "cloudflare-access" | string
       __STARGUARD_PUBLIC_URL__?: string
+      /** Per-instance UI skin from the server (CODENOMAD_UI_SKIN); see src/lib/ui-skin.ts. */
+      __CODENOMAD_UI_SKIN__?: string
       electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

@@ -22,6 +22,7 @@ import { openRemoteServerWindow } from "../lib/native/remote-window"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
 import TokenizinLogo3D from "./tokenizin-logo-3d"
 import StarWorldGlobe from "./starworld-globe"
+import SkinBackdrop from "./skin-backdrop"
 import { PRESTIX_LANDING_COPY, isPrestixSilo } from "../lib/silo-brand"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -621,6 +622,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
       >
+        <SkinBackdrop />
         <div
           class="folder-home-shell w-full px-4 sm:px-8 pb-2 flex flex-col"
           aria-busy={isLoading() ? "true" : "false"}

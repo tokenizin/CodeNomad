@@ -10,6 +10,7 @@ import {
 } from "../../auth/auth-provider"
 import { isLoopbackAddress } from "../../auth/http-auth"
 import { isOwnerIdentity } from "../../auth/owner-allowlist"
+import { resolveUiSkin, type UiSkin } from "../ui-skin"
 import { CODENOMAD_HANDOFF_AUDIENCE, exchangeStarGuardHandoff } from "../../auth/starguard-handoff"
 
 interface RouteDeps {
@@ -46,6 +47,31 @@ function readTemplate(url: URL, cache: string | null): string {
   return content
 }
 
+const loginSkinCache = new Map<UiSkin, { head: string; brand: string }>()
+
+/**
+ * The sign-in page parts for an instance skin (CODENOMAD_UI_SKIN): an attribute for <html>, extra styles for <head>
+ * and the branding block (globe backdrop, spinning logo) for <body>, from auth-pages/skins/<skin>.{head,brand}.html.
+ * Empty without a skin, so the default page is unchanged; a missing partial falls back to the default page.
+ */
+export function loginSkinParts(skin: UiSkin | null): { attrs: string; head: string; brand: string } {
+  if (!skin) return { attrs: "", head: "", brand: "" }
+  let parts = loginSkinCache.get(skin)
+  if (!parts) {
+    try {
+      parts = {
+        head: fs.readFileSync(new URL(`./auth-pages/skins/${skin}.head.html`, import.meta.url), "utf-8"),
+        brand: fs.readFileSync(new URL(`./auth-pages/skins/${skin}.brand.html`, import.meta.url), "utf-8"),
+      }
+    } catch (error) {
+      console.warn(`[ui-skin] Sign-in page parts for "${skin}" are missing; using the default page`, error)
+      return { attrs: "", head: "", brand: "" }
+    }
+    loginSkinCache.set(skin, parts)
+  }
+  return { attrs: ` data-skin="${skin}"`, ...parts }
+}
+
 function getLoginHtml(defaultUsername: string, autoLoginTicket?: string): string {
   if (!cachedLoginTemplate) {
     cachedLoginTemplate = readTemplate(LOGIN_TEMPLATE_URL, null)
@@ -53,7 +79,12 @@ function getLoginHtml(defaultUsername: string, autoLoginTicket?: string): string
 
   const escapedUsername = escapeHtml(defaultUsername)
   const escapedTicket = escapeHtml(autoLoginTicket ?? "")
+  const skin = loginSkinParts(resolveUiSkin())
+  // Function replacers: the inserted HTML must not be read as replacement patterns ($&, $1, ...).
   return cachedLoginTemplate
+    .replace(/\{\{HTML_SKIN_ATTRS\}\}/g, () => skin.attrs)
+    .replace(/\{\{SKIN_HEAD\}\}/g, () => skin.head)
+    .replace(/\{\{SKIN_BRAND\}\}/g, () => skin.brand)
     .replace(/\{\{DEFAULT_USERNAME\}\}/g, escapedUsername)
     .replace(/\{\{AUTO_LOGIN_TICKET\}\}/g, escapedTicket)
 }

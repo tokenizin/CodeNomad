@@ -25,6 +25,7 @@ The `ws` package is already a dependency. Server-side WebSocket *servers* (`WebS
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
+- Per-instance skins live in `src/styles/skins/<name>.css` and apply only under `html[data-skin="<name>"]`, by redefining the `--sw-*` brand variables of `tokens-starworld.css` (as the Prestix silo does). The server sets `data-skin` from `CODENOMAD_UI_SKIN`; add new names to `UI_SKINS` in both `packages/server/src/server/ui-skin.ts` and `packages/ui/src/lib/ui-skin.ts`, and the sign-in page parts to `packages/server/src/server/routes/auth-pages/skins/<name>.{head,brand}.html`.
 
 ## Coding Principles
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.

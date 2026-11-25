@@ -1,0 +1,144 @@
+/**
+ * Matriza skin — per-instance look for CODENOMAD_UI_SKIN=matriza (stas). Active only under html[data-skin="matriza"],
+ * which the server sets before first paint (packages/server/src/server/ui-skin.ts); the theme provider keeps dark
+ * mode on. Mirrors the dark theme of matriza.vercel.app (tokenizin/matriza src/app/globals.css [data-theme="dark"]):
+ * near-black page, gold primary, purple secondary, warm white text, Lato, gold glow on primary actions.
+ * Layered over tokens-starworld.css by redefining its --sw-* brand variables, like the Prestix silo does.
+ */
+
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/lato-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/lato-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/lato-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/lato-latin-ext-700-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+html[data-skin="matriza"] {
+  color-scheme: dark;
+  --mx-gold: #d4af37;
+  --mx-gold-bright: #e3bf4a;
+  --mx-amber: #f0c98a;
+  --mx-purple: #9d4edd;
+  --mx-purple-soft: #c79bf0;
+
+  /* Brand layer read by tokens-starworld.css */
+  --sw-brand: var(--mx-gold);
+  --sw-brand-bright: var(--mx-gold-bright);
+  --sw-brand-dim: #b8962e;
+  --sw-brand-hover: var(--mx-gold-bright);
+  --sw-bg: #09090b;
+  --sw-surface: #0b0d14;
+  --sw-card: #12131b;
+  --sw-text: #f5f5f0;
+  --sw-text-muted: #9ca3af;
+  --sw-glass-bg: rgba(11, 13, 20, 0.6);
+  --sw-pill-border: 1px solid rgba(255, 255, 255, 0.1);
+  --sw-pill-border-hover: rgba(212, 175, 55, 0.5);
+  --sw-pill-fill:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.012) 45%, rgba(0, 0, 0, 0.12) 100%),
+    radial-gradient(120% 90% at 10% 0%, rgba(212, 175, 55, 0.08) 0%, transparent 50%),
+    radial-gradient(90% 80% at 100% 100%, rgba(157, 78, 221, 0.1) 0%, transparent 55%);
+  --sw-mesh:
+    radial-gradient(ellipse 70% 55% at 50% 35%, rgba(157, 78, 221, 0.08) 0%, transparent 65%),
+    radial-gradient(circle at 1px 1px, rgba(212, 175, 55, 0.14) 1px, transparent 0);
+
+  --font-family-sans: "Lato", "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Values tokens-starworld.css hard-codes for the dark theme, re-tuned to matriza's neutral black */
+  --surface-hover: #17171f;
+  --markdown-table-row-odd: #0b0d14;
+  --markdown-table-row-even: #101119;
+  --border-base: rgba(255, 255, 255, 0.1);
+  --border-secondary: rgba(255, 255, 255, 0.1);
+  --border-muted: rgba(255, 255, 255, 0.06);
+  --list-item-highlight-bg-solid: #1f1a10;
+
+  /* Purple is matriza's secondary accent: assistant messages, selection, active tabs, neutral badges */
+  --message-assistant-border: var(--mx-purple);
+  --selection-highlight-bg: rgba(157, 78, 221, 0.22);
+  --selection-highlight-strong-bg: rgba(157, 78, 221, 0.34);
+  --tab-active-bg: color-mix(in oklab, var(--mx-purple) 16%, var(--sw-surface));
+  --tab-active-hover-bg: color-mix(in oklab, var(--mx-purple) 24%, var(--sw-surface));
+  --new-tab-hover-bg: color-mix(in oklab, var(--mx-purple) 14%, var(--sw-card));
+  --badge-neutral-bg: rgba(157, 78, 221, 0.16);
+  --badge-neutral-text: var(--mx-purple-soft);
+}
+
+/* The page itself: MUI's CssBaseline paints body from the palette, which can lag the skin on first render. */
+html[data-skin="matriza"] body {
+  background-color: var(--sw-bg);
+}
+
+/* Landing: matriza's gold → purple → amber headline, and a gold + purple halo on the spinning logo */
+html[data-skin="matriza"] .empty-state-brand-title,
+html[data-skin="matriza"] .folder-home-brand-title,
+html[data-skin="matriza"] .folder-home-hero h1 {
+  background-image: linear-gradient(90deg, var(--mx-gold) 0%, var(--mx-purple) 52%, var(--mx-amber) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  /* Size the gradient to the words, not the full-width heading row, so short titles show all three colours. */
+  display: inline-block;
+}
+
+html[data-skin="matriza"] .empty-state-logo,
+html[data-skin="matriza"] .folder-home-logo,
+html[data-skin="matriza"] .loading-logo {
+  filter: drop-shadow(0 12px 28px rgba(212, 175, 55, 0.24)) drop-shadow(0 0 36px rgba(157, 78, 221, 0.2));
+}
+
+/* Primary actions glow gold like matriza's call to action (the focus ring keeps its own shadow) */
+html[data-skin="matriza"] .button-primary:not(:focus-visible) {
+  font-weight: 700;
+  box-shadow: 0 0 18px rgba(212, 175, 55, 0.32);
+}
+html[data-skin="matriza"] .button-primary:hover:not(:disabled):not(:focus-visible) {
+  box-shadow: 0 0 26px rgba(212, 175, 55, 0.48);
+}
+
+/* Globe backdrop behind the landing page (components/skin-backdrop.tsx) */
+html[data-skin="matriza"] .folder-home-root {
+  isolation: isolate;
+}
+.skin-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.12;
+}
+.skin-backdrop-globe {
+  width: min(92vmin, 880px) !important;
+  height: min(92vmin, 880px) !important;
+}
