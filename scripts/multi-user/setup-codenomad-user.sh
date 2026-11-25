@@ -86,7 +86,7 @@ echo "==> Copying CodeNomad from $SOURCE_REPO to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$WORKSPACE_ROOT" "$LOG_DIR"
 # Same copy as every later build-restart (source, vendored node_modules, built UI/plugin); this script then
 # installs dependencies, builds and installs the launchd job itself.
-bash "$SOURCE_REPO/scripts/multi-user/sync-codenomad-user.sh" --user "$TARGET_USER" --source "$SOURCE_REPO" --no-install --no-restart
+bash "$SOURCE_REPO/scripts/multi-user/sync-codenomad-user.sh" --user "$TARGET_USER" --source "$SOURCE_REPO" --mode root --no-install --no-restart
 chown -R "$TARGET_USER:$TARGET_GROUP" "$INSTALL_DIR" "$TARGET_HOME/.config" "$WORKSPACE_ROOT" "$LOG_DIR"
 chmod 700 "$CONFIG_DIR"
 

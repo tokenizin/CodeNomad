@@ -39,10 +39,37 @@ sudo -u <user> -H sh -c 'curl -fsSL https://bun.sh/install | bash'
 
 ## After every build: sync per-user instances
 
-Per-user instances run their own copy in `~<user>/CodeNomad`, so a build in the admin's checkout doesn't reach them by itself (Prestix runs straight from the admin's tree). `sync-codenomad-user.sh` copies the source, the vendored `resources/*/node_modules`, and the built UI bundle (`packages/server/public`) and OpenCode plugin (`packages/server/dist/opencode-plugin`). It runs `npm ci` as the user only when `package-lock.json` changed, then kickstarts `system/com.tokenizin.codenomad.<user>`:
+Per-user instances run their own copy in `~<user>/CodeNomad`, so a build in the admin's checkout doesn't reach them by itself (Prestix runs straight from the admin's tree). `sync-codenomad-user.sh` copies the source, the vendored `resources/*/node_modules`, the built UI bundle (`packages/server/public`), the OpenCode plugin (`packages/server/dist/opencode-plugin`) and `build-stamp.json`. It runs `npm ci` as the user only when `package-lock.json` changed, kickstarts `system/com.tokenizin.codenomad.<user>`, then waits until the instance reports the build that was just made:
 
 ```bash
-sudo scripts/multi-user/sync-codenomad-user.sh --user stas
+scripts/multi-user/sync-codenomad-user.sh --user stas
 ```
 
-StarWorld's `bun run codenomad:build-restart` does this automatically for every `/Library/LaunchDaemons/com.tokenizin.codenomad.<user>.plist` after it restarts Tokenizin and Prestix. It doesn't re-run the OpenCode migration, so per-user config edits (such as disabled MCP servers) are kept.
+Exit status: `0` synced and running the new build; `3` restarted but still reporting another build (**stale**); `1` failed. StarWorld's `bun run codenomad:build-restart` runs this for every `/Library/LaunchDaemons/com.tokenizin.codenomad.<user>.plist` after it restarts Tokenizin and Prestix, and turns a `3` or `1` into an alert without stopping the rest of the deploy. It doesn't re-run the OpenCode migration, so per-user config edits (such as disabled MCP servers) are kept.
+
+### Build stamp
+
+`npm run build` ends by writing `packages/server/build-stamp.json` (commit, branch, uncommitted-changes flag, build time; git-ignored). A server reads it once at startup and reports it on `GET /api/build-stamp`, so the stamp describes the build the process was *started* from. The route needs no login but answers only a direct loopback request: anything carrying a proxy or tunnel header (`X-Forwarded-*`, `Forwarded`, `Cf-Connecting-Ip`, `Cf-Ray`, `Cf-Visitor`) gets a 404, so it isn't published through the tunnel.
+
+### Passwordless sync (one-time)
+
+Without this, the sync asks for your sudo password (or fails with no terminal). Install it once:
+
+```bash
+sudo scripts/multi-user/install-sync-helper.sh --admin alexshapiro --user stas
+```
+
+Give it every per-user account each time you run it. It installs a root-owned copy of `peer-sync-apply.sh` in `/usr/local/libexec/codenomad/`, a drop folder `/Users/Shared/codenomad-sync/<user>` that only the admin can write, and `/etc/sudoers.d/codenomad-sync` (checked with `visudo -cf` before it is used). The sudoers file allows the admin exactly two things, with no wildcards: run that helper, with no arguments, as `<user>`; and `/bin/launchctl kickstart -k system/com.tokenizin.codenomad.<user>`.
+
+Why it is safe to leave passwordless:
+- Nothing runs as root from a folder you can edit (a password-free rule on a script inside your repo would hand root to anything running as you), and root never writes into `<user>`'s home: the admin copies the build into the drop folder, and the helper then runs *as `<user>`* and pulls from it.
+- Both commands are things the admin account can already do by typing its password; this removes the prompt for those exact commands only.
+- The helper accepts no arguments and is steered by nothing but who runs it, so it can't be pointed at another path or user.
+
+Check it (no password prompt; it should say nothing is staged yet and exit 1):
+
+```bash
+sudo -n -u stas /usr/local/libexec/codenomad/peer-sync-apply; echo exit=$?
+```
+
+Remove it with `sudo scripts/multi-user/install-sync-helper.sh --uninstall`.
