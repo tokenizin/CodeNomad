@@ -23,10 +23,14 @@ the spinning Tokenizin logo, on both the sign-in page and the app. It keeps dark
 
 ```bash
 sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:CODENOMAD_UI_SKIN string matriza" /Library/LaunchDaemons/com.tokenizin.codenomad.stas.plist
-sudo launchctl kickstart -k system/com.tokenizin.codenomad.stas
+sudo launchctl bootout system/com.tokenizin.codenomad.stas
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.tokenizin.codenomad.stas.plist
 ```
 
-The instance needs a build that includes the skin (sync it as below). Unknown names are ignored with a warning.
+`kickstart -k` is not enough here: it restarts the job with the definition launchd already loaded, so a changed
+environment needs `bootout` + `bootstrap`. If `bootstrap` fails with `5: Input/output error`, the job was still being
+unloaded; wait a few seconds and run it again. The instance needs a build that includes the skin (sync it as below).
+Unknown names are ignored with a warning.
 
 ## Lock the main (StarGuard) instance to its owner
 
