@@ -17,7 +17,7 @@
     "codenomad": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run prepare-plugin",
+    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run prepare-plugin && node ./scripts/write-build-stamp.mjs",
     "build:ui": "npm run build --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
     "prepare-plugin": "node ./scripts/package-opencode-plugin.mjs",

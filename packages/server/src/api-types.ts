@@ -599,6 +599,14 @@ export interface SupportMeta {
   latestServerUrl?: string
 }
 
+export interface BuildStampMeta {
+  id: string
+  short: string
+  branch: string
+  dirty: boolean
+  builtAt: string
+}
+
 export interface ServerMeta {
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
@@ -621,6 +629,8 @@ export interface ServerMeta {
   /** Reachable addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
+  /** Which build this process was started from (packages/server/build-stamp.json), when one exists. */
+  build?: BuildStampMeta
   ui?: UiMeta
   support?: SupportMeta
   /** Optional update info (dev channel only). */

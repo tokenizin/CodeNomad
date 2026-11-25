@@ -1,5 +1,10 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
+import { isLoopbackAddress } from "../../auth/http-auth"
+
+// Headers a reverse proxy or the Cloudflare tunnel adds. cloudflared connects from 127.0.0.1, so the socket address
+// alone cannot tell the host's own curl apart from a visitor on the internet.
+const PROXY_HEADERS = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "cf-connecting-ip", "cf-ray", "cf-visitor"]
  
 
 interface RouteDeps {
@@ -8,6 +13,18 @@ interface RouteDeps {
 
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/meta", async () => buildMetaResponse(deps.serverMeta))
+
+  // Which build is this process running? Used by the deploy scripts on the host (no login there). Unauthenticated,
+  // so it answers only a direct loopback request; anything that came through the tunnel gets the same 404 as an
+  // unknown path.
+  app.get("/api/build-stamp", async (request, reply) => {
+    const viaProxy = PROXY_HEADERS.some((name) => request.headers[name] !== undefined)
+    if (viaProxy || !isLoopbackAddress(request.socket.remoteAddress)) {
+      reply.code(404)
+      return { error: "Not found" }
+    }
+    return { build: deps.serverMeta.build ?? null, serverVersion: deps.serverMeta.serverVersion ?? null }
+  })
 }
 
 function buildMetaResponse(meta: ServerMeta): ServerMeta {

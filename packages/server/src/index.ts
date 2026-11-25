@@ -23,6 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { StarGuardJwtHandler } from "./auth/starguard-jwt"
 import { isStarGuardJwtAllowed, resolveAuthProvider } from "./auth/auth-provider"
 import { isOwnerLockEnabled, resolveOwnerEmails } from "./auth/owner-allowlist"
+import { readBuildStamp } from "./build-stamp"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
@@ -410,6 +411,7 @@ async function main() {
   })
 
   serverMeta.serverVersion = packageJson.version
+  serverMeta.build = readBuildStamp() ?? undefined
   serverMeta.ui = {
     version: uiResolution.uiVersion,
     source: uiResolution.source,
