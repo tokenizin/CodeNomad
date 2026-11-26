@@ -11,9 +11,14 @@ interface OllamaTagsResponse {
   }>
 }
 
-function normalizeHost(baseUrl?: string): string {
-  const raw = baseUrl?.trim() || DEFAULT_LOCAL_LLM_HOST
-  return raw.replace(/\/+$/, "")
+/**
+ * Ollama's native endpoints live at the host root (`/api/tags`, `/api/show`),
+ * while OpenAI-compatible clients append `/v1`. Accept either form so a host
+ * configured for the compatible API doesn't turn into `/v1/api/tags` (404).
+ */
+export function normalizeHost(baseUrl?: string): string {
+  const raw = (baseUrl?.trim() || DEFAULT_LOCAL_LLM_HOST).replace(/\/+$/, "")
+  return raw.replace(/\/v1$/i, "")
 }
 
 export async function isLocalLlmReachable(baseUrl?: string): Promise<boolean> {

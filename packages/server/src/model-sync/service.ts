@@ -75,6 +75,7 @@ const PROVIDER_CONFIGS: ProviderConfig[] = [
   { id: "mlx", name: "MLX Local", enabled: true },
   { id: "mlx-deepseek", name: "MLX DeepSeek", enabled: true },
   { id: "ollama", name: "Ollama Local", enabled: true },
+  { id: "ollama-cloud", name: "Ollama Cloud", enabled: true },
   { id: "cloudflare-ai-gateway", name: "Cloudflare AI Gateway", enabled: true },
   { id: "cloudflare-workers-ai", name: "Cloudflare Workers AI", enabled: true },
   { id: "deepinfra", name: "DeepInfra", enabled: true },
@@ -437,6 +438,12 @@ async function fetchProviderModels(
       }
       case "ollama": {
         const rawModels = await fetchOllamaModels(config.baseUrl)
+        models = rawModels.map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "live" }))
+        break
+      }
+      case "ollama-cloud": {
+        // Public Ollama catalog — no shared tunnel host and no API key.
+        const rawModels = await fetchOllamaModels("https://api.ollama.com", "ollama-cloud")
         models = rawModels.map((m) => ({ ...m, status: "unknown" as ModelStatus, lastTested: 0, source: "live" }))
         break
       }

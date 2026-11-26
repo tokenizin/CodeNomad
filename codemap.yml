@@ -23,6 +23,14 @@ internals:
     description: Deterministic limiter and backpressure tests.
   - path: packages/server/src/model-throttle-harness.ts
     description: Fake-upstream before/after throughput harness.
+  - path: packages/server/src/local-llm/service.ts
+    description: Native Ollama host normalization, model listing, and per-model metadata.
+  - path: packages/server/src/local-llm/service.test.ts
+    description: Unit tests for host normalization and Ollama metadata extraction.
+  - path: packages/server/src/model-sync/providers/ollama.ts
+    description: Ollama model transform with caller-supplied provider id (local + cloud).
+  - path: packages/server/src/model-sync/service.ts
+    description: Provider registry and sync orchestration, including the ollama-cloud catalog.
 invariants:
   - One limiter is shared by all workspaces in a CodeNomad server process.
   - Budgets are keyed by exact provider/model and never inferred as provider quota.

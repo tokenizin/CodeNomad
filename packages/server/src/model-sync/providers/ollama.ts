@@ -43,7 +43,10 @@ export function guessOllamaCapabilities(modelId: string, remote: boolean): Model
   }
 }
 
-export async function fetchOllamaModels(baseUrl?: string): Promise<OllamaModelConfig[]> {
+export async function fetchOllamaModels(
+  baseUrl?: string,
+  providerId = "ollama",
+): Promise<OllamaModelConfig[]> {
   const response = await listLocalLlmModels(baseUrl)
 
   if (!response.available || response.models.length === 0) {
@@ -59,7 +62,7 @@ export async function fetchOllamaModels(baseUrl?: string): Promise<OllamaModelCo
       return {
         id: model.id,
         name: model.name,
-        providerId: "ollama",
+        providerId,
         limit: {
           context: details.context,
           input: details.context,

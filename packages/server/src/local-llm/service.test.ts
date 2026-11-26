@@ -9,7 +9,26 @@ import {
   getOllamaModelDetails,
   getOllamaModelLimits,
   listLocalLlmModels,
+  normalizeHost,
 } from "./service"
+
+describe("normalizeHost", () => {
+  it("strips a trailing /v1 so native Ollama endpoints resolve at the host root", () => {
+    assert.equal(normalizeHost("https://ollama.tokenizin.com/v1"), "https://ollama.tokenizin.com")
+  })
+
+  it("strips a trailing /v1/ after removing trailing slashes", () => {
+    assert.equal(normalizeHost("https://ollama.tokenizin.com/v1/"), "https://ollama.tokenizin.com")
+  })
+
+  it("leaves a plain host unchanged", () => {
+    assert.equal(normalizeHost("http://localhost:11434"), "http://localhost:11434")
+  })
+
+  it("strips /v1 case-insensitively", () => {
+    assert.equal(normalizeHost("https://ollama.tokenizin.com/V1"), "https://ollama.tokenizin.com")
+  })
+})
 
 describe("local llm service", () => {
   it("returns an empty provider payload when Ollama is unreachable", async () => {
