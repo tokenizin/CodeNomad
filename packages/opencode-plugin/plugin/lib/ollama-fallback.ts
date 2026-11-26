@@ -12,7 +12,21 @@ type PromptPart = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartIn
  * can carry any agent's tools and instructions, not just simple chat.
  */
 const OLLAMA_PROVIDER_ID = "ollama"
-const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434").replace(/\/+$/, "")
+const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
+
+/**
+ * Ollama's native endpoints live at the host root (`/api/tags`), while
+ * OLLAMA_BASE_URL is often configured as an OpenAI-compatible `/v1` URL.
+ * Strip a trailing `/v1` (case-insensitive, optional trailing slash) so the
+ * fallback probe doesn't 404. Kept local on purpose: only this plugin's
+ * `dist/` is packed, so it cannot import the server's `normalizeHost()`.
+ */
+export function normalizeOllamaHost(baseUrl?: string): string {
+  const raw = (baseUrl?.trim() || DEFAULT_OLLAMA_HOST).replace(/\/+$/, "")
+  return raw.replace(/\/v1$/i, "")
+}
+
+const OLLAMA_BASE_URL = normalizeOllamaHost(process.env.OLLAMA_BASE_URL)
 const OLLAMA_FALLBACK_MODEL_ID = process.env.CODENOMAD_OLLAMA_FALLBACK_MODEL?.trim() || "qwen3.6:latest"
 
 const QUOTA_MESSAGE_PATTERN =

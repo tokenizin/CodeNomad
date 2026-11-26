@@ -67,7 +67,17 @@ describe("catalog enrichment", () => {
       syncResults: () => [],
       fetchOllamaModels: async () => { throw new Error("down") },
     })
-    assert.equal(result.models.length, 3)
-    assert.equal(result.models[0].capabilities, undefined)
+    // The enricher deliberately merges all five static opencode-go models on
+    // top of the three catalog ids, even though Ollama is unreachable.
+    assert.equal(result.models.length, 8)
+    const byId = Object.fromEntries(result.models.map((m) => [m.id, m]))
+    for (const id of ["qwen3:8b", "gemma4:26b", "new-pull:latest"]) {
+      assert.ok(byId[id], `${id} should remain in the catalog`)
+      assert.equal(byId[id].capabilities, undefined, `${id} should stay bare when Ollama is down`)
+    }
+    for (const id of ["mimo-v2.5", "mimo-v2.5-pro", "kimi-k3", "qwen3.7-plus", "grok-4.5"]) {
+      assert.equal(byId[id]?.detailsFrom, "opencode-go")
+      assert.ok(byId[id]?.capabilities, `${id} should come from the static opencode-go catalog`)
+    }
   })
 })
