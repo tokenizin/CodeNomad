@@ -120,10 +120,10 @@ export const DEFAULT_SIDECARS: Array<Omit<SideCar, "status">> = [
     updatedAt: new Date().toISOString(),
   },
   {
-    id: "imagegen-sidecar",
+    id: "matriza",
     kind: "port",
-    name: "Image Studio (Local Engine)",
-    port: 9974,
+    name: "Matriza (Local Kiri)",
+    port: 9934,
     insecure: false,
     prefixMode: "strip",
     createdAt: new Date().toISOString(),
